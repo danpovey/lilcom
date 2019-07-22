@@ -1,0 +1,2 @@
+# lilcom
+Small compression utility 
