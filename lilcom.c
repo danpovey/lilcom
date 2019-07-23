@@ -276,23 +276,51 @@ inline int sgn(int val) {
 }
 
 /**
-   Returns a value in the range [0, 11] which can be used together with a
-   6-bit mantissa (i.e. in the range [-32, 31]) to represent the
-   residual.
+   Computes the least exponent (subject to a caller-specified floor) which
+   is sufficient to encode (an approximation of) this residual; also
+   computes the associated mantissa.
 
-   `residual` is a 32-bit number in the range [-65535, 65535].  It will be
-   computed as the observed 'y' value minus the predicted value 'y_pred'.
-   Since both y and y_pred are 16-bit numbers, that gives us the limit on
-   the range of `residual`
+      @param [in] residual  The residual that we are trying to encode,
+                     meaning: the observed value minus the value that was
+                     predicted by the linear prediction.  This is a
+                     difference of int16_t's, but such differences cannot
+                     always be represented as int16_t, so it's represented
+                     as an int32_t.
+      @param [in] predicted   The predicted sample (so the residual
+                     is the observed sample minus this).  The only reason
+                     this needs to be specified is to detect situations
+                     where, due to quantization effects, we would exceed
+                     the range of int16_t; in those cases, we need to
+                     reduce the magnitude of the mantissa to stay within
+                     the allowed range.
+       @param [in] min_exponent  A caller-supplied floor on the exponent;
+                     must be in the range [0, 11].  This function will
+                     never return a value less than this.  min_exponent
+                     will normally be the previous sample's exponent
+                     minus 1, but may be more than that if we are
+                     backtracking.
+        @param [out] mantissa  This function will write an integer in
+                     the range [-32, 31] to here, such that
+                     (mantissa << exponent) is a close approximation
+                     of `residual` and satisfies the property that
+                     `predicted + (mantissa << exponent)` does not
+                     exceed the range of int16_t.
 
-   `min_exponent` is a caller-supplied floor on the exponent, which must be in
-   the range [0, 10].  No value less than this will be returned.  This will
-   normally be the previous sample's exponent minus 1, as the exponent cannot
-   decrease by more than 1 from sample to sample.
+        @return  Returns the value in the range [min_exponent..11] which,
+                 together with `mantissa`, provides a close approximation
+                 to `residual` while not allowing the next sample
+                 to exceed the range of int16_t.
 
-   This function will write to `mantissa` a value in the range [-32, 31]
-   that is the result of rounding `residual / (float)(1<<exponent)` to
-   the closest integer (rounding towards zero in case of ties).
+                 The intention of this function is to return the exponent in the
+                 range [min_exponent..11] which gives the closest approximation
+                 to `residual`, while choosing the lower exponent and
+                 lower-magnitude mantissa in case of ties.  This is largely what
+                 it does, although it may not always do so in situations where
+                 we needed to modify the mantissa to not exceed the range of
+                 int16_t.
+
+
+   The following explains the internals of how this function operates.
 
    Define the exact mantissa m(e), which is a function of the exponent e,
    as:
@@ -316,6 +344,7 @@ inline int sgn(int val) {
    if m(e) is -33, letting am(e) be -32).
 */
 inline static int least_exponent(int32_t residual,
+                                 int16_t predicted,
                                  int min_exponent,
                                  int *mantissa) {
   assert (((uint32_t)min_exponent) <= 10);
@@ -328,19 +357,18 @@ inline static int least_exponent(int32_t residual,
     maximum *= 2;
     exponent++;
   }
-  assert(exponent <= 10);
+  assert(exponent <= 11);
 
   {
-    // This block computes 'mantissa', the integer mantissa which we call
-    // am(e) for `exact mantissa` in the math above, and which should be a value in the range
+    // This code block computes 'mantissa', the integer mantissa which we call
+    // m(e) in the math above, and which should be a value in the range
     // [-32, 31].
     //
-    // am(e) is the result of rounding (residual / (float)2^exponent)
+    // m(e) is the result of rounding (residual / (float)2^exponent)
     // to the nearest integer, rounding towards zero in case of ties; and
     // then, if the result is -33, changing it to -32.
     //
-    // Here, I try to do this in integer arithmetic, which I'm not sure
-    // is worth it speed-wise (should test).  What we'd like to do is compute:
+    // What we'd like to do is compute:
     //
     //     mantissa = residual / (1<<exponent)
     //
@@ -357,100 +385,33 @@ inline static int least_exponent(int32_t residual,
     //
     // Of course, the correct behavior of this relies on the fact that
     // C integer division truncates any fractional part towards zero.
-    int rounding_offset = (1 << exponent - 1) * sgn(residual),
+    int offset = ((1 << exponent) - 1) * sgn(residual),
         n2 = 2 << exponent,
-        local_mantissa = (residual2 + rounding_offset) / n2;
+        local_mantissa = (residual2 + offset) / n2;
+
 
     // maybe the expression below would be as fast; I should test.
-    // The 0.999 is to ensure rounding towards zero in case of ties.
-    assert(local_mantissa == round((residual / (float)(1<<exponent)) * 0.999));
-    if (local_mantissa & 64) {
-      assert(local_mantissa == -33);
+    // The 0.999 is to ensure we round towards zero in case of ties.
+    assert(local_mantissa == round((residual / (float)(1<<exponent)) * 0.999) &&
+           local_mantissa >= -33 && local_mantissa <= 31);
+    if (local_mantissa == -33)
       local_mantissa = -32;
+
+    int32_t next_signal_value =
+        ((int32_t)predicted) + (((int32_t)local_mantissa) << exponent);
+    if (next_signal_value != (int16_t)next_signal_value) {
+      // The next signal exceeds the range of int16_t; this can in principle
+      // happen if the predicted signal was close to the edge of the range
+      // [-32768..32767] and quantization effects took us over.  We need to
+      // reduce the magnitude of the mantissa by one in this case.
+      local_mantissa -= sgn(local_mantissa);
+      next_signal_value =
+          ((int32_t)predicted) + (((int32_t)local_mantissa) << exponent);
+      assert(next_signal_value == (int16_t)next_signal_value);
     }
     *mantissa = local_mantissa;
   }
   return exponent;
-}
-
-
-void lilcom_init_computation_state(int exponent,
-                                   ComputationState *computation_state) {
-  for (int i = 0; i < LPC_ORDER; i++) {
-    computation_state->x[i] = 0.0;
-    computation_state->a[i] = 0.0;
-    computation_state->p[i] = 0.0;
-    for (int j = 0; j < LPC_ORDER; j++) {
-      if (i != j) computation_state->M_inv[i][j] = 0.0;
-      else computation_state->M_inv[i][j] = 1.0 / SMOOTH_M_AMOUNT;
-    }
-  }
-  computation_state->exponent = exponent;
-  computation_state->y = 0.0;
-
-  // the following values won't actually matter.
-  computation_state->y_pred = 0.0;
-  computation_state->y_pred_in = 0.0;
-  computation_state->mantissa = 0;
-  computation_state->y_int = 0;
-}
-
-void lilcom_update_computation_state(
-    ComputationState *prev_state,
-    ComputationState *state) {
-
-}
-
-/**
-   This function is central to the compression method.  It attempts to compute
-   the next byte of the compressed stream.  Suppose the byte we are trying
-   to compute is the one for time t.
-     `prev_state` is the ComputationState for time t-1.  All fields are expected
-         to have been initialized.
-     `state` is the ComputationState for time t, which is to be partially set
-         up.  At entry, none of its fields are defined.  Upon successful
-         completion (i.e. if this function returns with status zero), its fields:
-             mantissa  exponent  y_int  y  byte
-         will be set.
-     `y_observed` is the 16-bit integer that was observed, and which we will
-         attempt to compress.  (the `y_int` field of `state` will, at exit,
-         be close to this value).
-   Return:
-      On success, returns zero.
-
-      On failure, returns the exponent that (we estimate) prev_state would need
-       to have in order for this call to succeed.  This must be a value greater
-       than zero.  (Note: the "we estimate" part means we don't guarantee that
-       once we backtrack, give 'prev_state' the requested exponent and recompute
-       all the new prediction coefficients, the next call would succeed; it
-       may be necessary, very occasionally, to backtrack more than once.
- */
-int32_t lilcom_compute_next_byte(
-    ComputationState *prev_state,
-    ComputationState *state,
-    int16_t y_observed) {
-  int32_t min_exponent = prev_state->exponent - 1;
-  int32_t residual = (int32_t)y_observed - (int32_t)prev_state->next_y_pred_int;
-  state->exponent = least_exponent(residual, min_exponent, &(state->mantissa));
-  int exponent_code = state->exponent - min_exponent;
-  if (exponent_code < 4) {
-    // This is the "success path".  The exponent is not so large that we need
-    // to backtrack, and we can encode this directly.
-    state->byte = (int16_t)(4 * state->mantissa + exponent_code);
-    int32_t y_int =
-        prev_state->next_y_pred_int + (state->mantissa << state->exponent);
-    if (y_int < -65536) y_int = -65536;
-    else if (y_int > 65535) y_int = 65535;
-    state->y_int = (int16_t)y_int;
-    state->y = ((float)(1.0 / 32768.0)) * y_int;
-    return 0;  // Success.
-  } else {
-    // The exponent can increase by at most 2 each time.  We return a
-    // requested minimum value for the previous state's exponent.
-    // (We can't guarantee that it will work the next time, but
-    // eventually it will work if you keep backtracking and trying again).
-    return state->exponent - 2;
-  }
 }
 
 
