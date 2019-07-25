@@ -2,17 +2,6 @@
 
 
 /**
-   This library provides a simple compression/uncompression algorithm for
-   writing/reading short chunks of audio.  It (lossily) compresses 16-bit
-   audio to
-*/
-
-/**
-
- */
-int lilcom_uncompress(size_t size, int8_t *src, int16_t *dest);
-
-/**
    Lossily compresses 'num_samples' samples of int16 sequence data (e.g. audio
    data) into 'num_samples + 4' bytes.
 
@@ -36,7 +25,7 @@ int lilcom_uncompress(size_t size, int8_t *src, int16_t *dest);
                       May have any nonzero value, but this might not
                       be checked.
       @param [in] lpc_order  The order of linear prediction to use.
-                      Must be in [1..15] (see MAX_LPC_ORDER in lilcom.c).
+                      Must be in [0..15] (see MAX_LPC_ORDER in lilcom.c).
                       Larger values will give higher fidelity (especially
                       for audio data) but the compression and decompression
                       will be slower.
