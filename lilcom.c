@@ -223,7 +223,7 @@
 
 /** returns the sign of 'val', i.e. +1 if is is positive, -1 if
     it is negative, and 0 if it is zero.  */
-inline int lilcom_sgn(int val) {
+static inline int lilcom_sgn(int val) {
   return (0 < val) - (val < 0);
 }
 
@@ -315,7 +315,7 @@ static void lilcom_init_lpc(struct LpcComputation *lpc) {
                            through signal[AUTOCORR_BLOCK_SIZE-1], so 'signal'
                            cannot point to the start of an array.
 */
-inline static void lilcom_update_autocorrelation(
+static inline void lilcom_update_autocorrelation(
     struct LpcComputation *lpc, int lpc_order,
     const int16_t *signal) {
   /** 'temp_autocorr' will contain the raw autocorrelation stats without the
@@ -536,13 +536,13 @@ struct CompressionState {
 
 /*******************
    The lilcom_header functions below mostly serve to document the format
-   of the header, we could just have put the statements inline, which is
+   of the header, we could just have put the statements static inline, which is
     what we hope the compiler will do.
    **************************/
 
 /** Set the exponent for frame -1 in the header.  This also sets the
     0x7 magic number in the 1st 4 bits.  */
-inline void lilcom_header_set_exponent_m1(int8_t *header, int stride,
+static inline void lilcom_header_set_exponent_m1(int8_t *header, int stride,
                                           int exponent) {
   assert(exponent >= 0 && exponent <= 12);
   header[0 * stride] = (int8_t)(exponent << 4 | 0x7);
@@ -551,7 +551,7 @@ inline void lilcom_header_set_exponent_m1(int8_t *header, int stride,
 /** The exponent for the phantom sample at t = -1 is located in the
     4 highest bits of the first byte.  This function returns that
     value (it does not check it is in the range (0..12)).  */
-inline int lilcom_header_get_exponent_m1(const int8_t *header,
+static inline int lilcom_header_get_exponent_m1(const int8_t *header,
                                          int stride) {
   /** For some reason uint8_t doesn't seem to be defined. */
   return ((int)((unsigned char)(header[0 * stride]))) >> 4;
@@ -559,7 +559,7 @@ inline int lilcom_header_get_exponent_m1(const int8_t *header,
 
 /**  Check that this is plausibly a lilcom header.  The low-order 4 bits of the
      first byte of the header are used for this; the magic number is 7.  */
-inline int lilcom_header_plausible(const int8_t *header,
+static inline int lilcom_header_plausible(const int8_t *header,
                                    int stride) {
   return ((header[0 * stride] & 0xF) == 0x7) &&
       lilcom_header_get_exponent_m1(header, stride) <= 12;
@@ -569,20 +569,20 @@ inline int lilcom_header_plausible(const int8_t *header,
      isn't always used; when we're compressing float data it stores an
      exponent there);
      Other bytes will be set up while the stream is compressed.  */
-inline void lilcom_header_init(int8_t *header, int stride) {
+static inline void lilcom_header_init(int8_t *header, int stride) {
   header[3 * stride] = (int8_t)0;
 }
 
 /** Set the LPC order in the header.  This goes in byte 1.  Currently it only
     uses 4 bits since the max LPC order allowed is currently 15.  */
-inline void lilcom_header_set_lpc_order(int8_t *header,
+static inline void lilcom_header_set_lpc_order(int8_t *header,
                                         int stride, int lpc_order) {
   assert(lpc_order >= 0 && lpc_order <= MAX_LPC_ORDER);
   header[1 * stride] = (int8_t)lpc_order;
 }
 
 /** Return the LPC order from the header.  Does no range checking!  */
-inline int lilcom_header_get_lpc_order(const int8_t *header, int stride) {
+static inline int lilcom_header_get_lpc_order(const int8_t *header, int stride) {
   return (int)(header[1 * stride]);
 }
 
@@ -590,14 +590,14 @@ inline int lilcom_header_get_lpc_order(const int8_t *header, int stride) {
     the higher-order 6 bits (the lower-order 2 are currently unused).
     Using the higher-order bits is easier w.r.t signed integers.
 */
-inline void lilcom_header_set_mantissa_m1(int8_t *header,
+static inline void lilcom_header_set_mantissa_m1(int8_t *header,
                                           int stride, int mantissa) {
   assert(mantissa >= -32 && mantissa <= 31);
   header[2 * stride] = (int8_t) (mantissa * 4);
 }
 /** Return the -1'th sample's mantissa from the header. */
 
-inline int lilcom_header_get_mantissa_m1(const int8_t *header,
+static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
                                           int stride) {
   return ((int)header[2 * stride] & ~(int8_t)3) / 4;
 }
@@ -682,7 +682,7 @@ inline int lilcom_header_get_mantissa_m1(const int8_t *header,
    that can generate that number is 12 (65536 = 16 << 12)
    << 12.
 */
-inline static int least_exponent(int32_t residual,
+static inline int least_exponent(int32_t residual,
                                  int16_t predicted,
                                  int min_exponent,
                                  int *mantissa,
@@ -1000,7 +1000,7 @@ void lilcom_compute_lpc(int lpc_order,
                              value.
          @return             Returns the predicted value as an int16_t.
  */
-inline int16_t lilcom_compute_predicted_value(
+static inline int16_t lilcom_compute_predicted_value(
     struct CompressionState *state,
     int64_t t) {
   int32_t block_index = ((int32_t)t) >> LOG_AUTOCORR_BLOCK_SIZE;
@@ -1099,7 +1099,7 @@ inline int16_t lilcom_compute_predicted_value(
     decompressed_signal buffer to the beginning in order to provide required
     context when we roll around.  This function is expected to be called only
     when t is a nonzero multiple of SIGNAL_BUFFER_SIZE. */
-inline void lilcom_copy_to_buffer_start(
+static inline void lilcom_copy_to_buffer_start(
     struct CompressionState *state) {
   for (int i = 1; i <= state->lpc_order; i++)
     state->decompressed_signal[MAX_LPC_ORDER - i] =
@@ -1205,7 +1205,7 @@ void lilcom_update_autocorrelation_and_lpc(
    that would have required to compress this sample.  this will cause us to
    enter backtracking code to inrease the exponent used on the previous sample.
 */
-inline int lilcom_compress_for_time_internal(
+static inline int lilcom_compress_for_time_internal(
     int64_t t,
     int prev_exponent,
     int min_exponent,
@@ -1416,7 +1416,7 @@ void lilcom_compress_for_time_backtracking(
        @param [in,out] state    Struct that stores the state associated with
                          the compression, and inputs and outputs.
 */
-inline void lilcom_compress_for_time(
+static inline void lilcom_compress_for_time(
     int64_t t,
     struct CompressionState *state) {
   assert(t > 0);
@@ -1521,7 +1521,7 @@ int lilcom_compress(int64_t num_samples,
                      mean data corruption or possily a code error.
 
  */
-inline int lilcom_decompress_one_sample(
+static inline int lilcom_decompress_one_sample(
     int8_t input_code,
     int lpc_order,
     const int32_t *lpc_coeffs,
@@ -1592,7 +1592,7 @@ inline int lilcom_decompress_one_sample(
     @return  Returns 0 on success, 1 on failure (e.g. invalid
              input).
  */
-inline int lilcom_decompress_time_zero(
+static inline int lilcom_decompress_time_zero(
     const int8_t *header, int input_stride,
     int16_t *output, int *exponent) {
   int exponent_m1 = lilcom_header_get_exponent_m1(header, input_stride),
@@ -1753,7 +1753,7 @@ int lilcom_decompress(int64_t num_samples,
 /** This function does nothing; it only exists to check that
     various relationships between the #defined constants are satisfied.
 */
-inline int lilcom_check_constants() {
+static inline int lilcom_check_constants() {
   assert(MAX_LPC_ORDER >> LPC_ORDER_BITS == 0);
   assert(MAX_LPC_ORDER % 2 == 0);
   assert(LPC_EST_LEFT_SHIFT + (AUTOCORR_EXTRA_VARIANCE_EXPONENT+1)/2 <= 31);
