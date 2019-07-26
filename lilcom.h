@@ -1,4 +1,4 @@
-#include <types.h>
+#include <stdint.h>
 
 
 /**
@@ -37,7 +37,7 @@
 */
 int lilcom_compress(int64_t num_samples,
                     const int16_t *input, int input_stride,
-                    int8_t *output, intt output_stride,
+                    int8_t *output, int output_stride,
                     int lpc_order);
 
 /**

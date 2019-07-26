@@ -1,5 +1,5 @@
 #include "lilcom.h"
-#include <assert>
+#include <assert.h>
 #include <math.h>
 
 
@@ -25,13 +25,17 @@
    the user-specified LPC order may be.  May not be >= AUTOCORR_BLOCK_SIZE, or
    else we'd need to do extra work to handle edge cases near the beginning of
    the signal.
-**/
-#define MAX_LPC_ORDER 15
+
+   Must be even (relates to a loop-unrolling trick used in
+   lilcom_compute_predicted_value.  We use 30 not 32 because it has to be less
+   than AUTOCORR_BLOCK_SIZE.
+*/
+#define MAX_LPC_ORDER 30
 
 
 /** a value >= log_2 of MAX_LPC_ORDER+1.  Used in explanations,
     not currently in any code */
-#define LPC_ORDER_BITS 4
+#define LPC_ORDER_BITS 5
 
 /**
    The amount by which we shift left the LPC coefficients for the fixed-point
@@ -46,11 +50,12 @@
    stored in struct LpcComputation and while being applied during
    prediction.  This corresponds roughly to a precision.  The
    reason why we use this value is so that we can do the summation
-   in int32_t.  (Note: there may be overflow while computing
-   partial sums, but this will cancel out when we get the final
-   prediction, see comments in the prediction code.
+   in int32_t.
+
+   CAUTION: this cannot be greater than 14 = 30 - 16, due to tricks
+   used in the prediction code.
  */
-#define LPC_APPLY_LEFT_SHIFT 15
+#define LPC_APPLY_LEFT_SHIFT 14
 
 /*
    An amount that we add to the zeroth autocorrelation coefficient to avoid
@@ -86,8 +91,8 @@
    (30 + AUTOCORR_LEFT_SHIFT + log(AUTOCORR_BLOCK_SIZE) + AUTOCORR_DECAY_EXPONENT + 1)
      to not exceed 61.
    (Note: the + 1 is required because of the variable `twice_autocorr_0` in the function
-    lilcom_update_autocorrelation).
-   Currently that equals: 30 + 20 + 5 + 3 + 1 = 59  <= 61.  I'm giving
+    lilcom_update_autocorrelation; this is to avoid overflow).
+   Currently the sum above equals: 30 + 20 + 5 + 3 + 1 = 59  <= 61.  I'm giving
    it a little wiggle room there in case other parameters get changed
    while tuning.
 
@@ -274,17 +279,21 @@ struct LpcComputation {
    at the start of the file.  This corresponds to all-zero autocorrelation
    stats, max_exponent = 0, and lpc_coeffs that correspond to [1.0 0 0 0].
 */
-static void lilcom_init_lpc(LpcComputation *lpc) {
+static void lilcom_init_lpc(struct LpcComputation *lpc) {
   for (int i = 0; i <= MAX_LPC_ORDER; i++)
-    coeffs->autocorr[i] = 0;
+    lpc->autocorr[i] = 0;
+  lpc->max_exponent = 0;
   /* The LPC coefficientss are stored shifted left by LPC_APPLY_LEFT_SHIFT, so this
      means the 1st coeff is 1.0 and the rest are zero-- meaning, we start
      prediction from the previous sample.  */
-  coeffs->lpc_coeffs[0] = 1 << LPC_APPLY_LEFT_SHIFT;
-  for (int i = 1; i < MAX_LPC_ORDER; i++)
-    coeffs->lpc_coeffs[i] = 0;
-
-  coeffs->max_exponent = 0;
+  lpc->lpc_coeffs[0] = 1 << LPC_APPLY_LEFT_SHIFT;
+  for (int i = 1; i < MAX_LPC_ORDER; i++) {
+    /** It's important that we go beyond the `lpc_order`'th element while
+        zeroing here.  If `lpc_order` is odd, we may access the one-past-the-end
+        element as part of a loop unrolling used in
+        lilcom_compute_predicted_value(), so we need that to be zero. */
+    lpc->lpc_coeffs[i] = 0;
+  }
 }
 
 /**
@@ -307,7 +316,7 @@ static void lilcom_init_lpc(LpcComputation *lpc) {
                            cannot point to the start of an array.
 */
 inline static void lilcom_update_autocorrelation(
-    LpcComputation *lpc, int lpc_order,
+    struct LpcComputation *lpc, int lpc_order,
     const int16_t *signal) {
   /** 'temp_autocorr' will contain the raw autocorrelation stats without the
       shifting left by AUTOCORR_LEFT_SHIFT; we'll do the left-shifting at the
@@ -327,21 +336,20 @@ inline static void lilcom_update_autocorrelation(
     temp_autocorr[i] = 0;
   }
 
-  {
-    /** HISTORY SCALING
-       Process any terms involving the history samples that are prior to the
-       start of the block.
+  /** HISTORY SCALING
+      Process any terms involving the history samples that are prior to the
+      start of the block.
 
-       The samples (for left-context) that come from the previous block need to
-       be scaled down slightly, in order to be able to guarantee that no element
-       of lpc->autocorr is greater than the zeroth element.  We can then view
-       the autocorrelation as a simple sum on a much longer (but
-       decreasing-with-time) sequence of data, which means we don't have to
-       reason about what happens when we interpolate autocorrelation stats.
+      The samples (for left-context) that come from the previous block need to
+      be scaled down slightly, in order to be able to guarantee that no element
+      of lpc->autocorr is greater than the zeroth element.  We can then view
+      the autocorrelation as a simple sum on a much longer (but
+      decreasing-with-time) sequence of data, which means we don't have to
+      reason about what happens when we interpolate autocorrelation stats.
 
-       See the comment where AUTOCORR_DECAY_SQRT is defined for more details.
-       Notice that we write this part directly to lpc->autocorr instead of to
-       temp_autocorr.  */
+      See the comment where AUTOCORR_DECAY_SQRT is defined for more details.
+      Notice that we write this part directly to lpc->autocorr instead of to
+      temp_autocorr.  */
   for (i = 0; i < lpc_order; i++) {
     int32_t signal_i = signal[i];
     int j;
@@ -355,13 +363,15 @@ inline static void lilcom_update_autocorrelation(
       currently, i == lpc_order. */
   for (; i < AUTOCORR_BLOCK_SIZE; i++) {
     int32_t signal_i = signal[i];
-    for (int j = 0; j <= lpc_order; j++) {
+    for (int j = 0; j <= lpc_order; j++)
       temp_autocorr[j] += signal[i - j] * signal_i;
-    }
   }
-  for (int j = 0; j <= lpc_order; j++) {
+
+  /** Copy from the temporary buffer to struct lpc, shifting left
+      appropriately.  */
+  for (int j = 0; j <= lpc_order; j++)
     lpc->autocorr[j] += temp_autocorr[j] << AUTOCORR_LEFT_SHIFT;
-  }
+
 
   /* The next statement takes care of the smoothing to make sure that the
      autocorr[0] is nonzero, and adds extra noise proportional to the signal
@@ -370,16 +380,16 @@ inline static void lilcom_update_autocorrelation(
     need to worry about integer overflow.
     (Search for: "NOTE ON BOUNDS ON LPC COEFFICIENTS")  */
   lpc->autocorr[0] +=
-      ((int64_t)(AUTOCORR_BLOCK_SIZE*AUTOCORR_EXTRA_VARIANCE)<<AUTOCORR_LEFT_SHIFT) +
-      temp_autocorr[0] << (AUTOCORR_LEFT_SHIFT - AUTOCORR_EXTRA_VARIANCE_EXPONENT);
+      ((int64_t)((AUTOCORR_BLOCK_SIZE*AUTOCORR_EXTRA_VARIANCE)<<AUTOCORR_LEFT_SHIFT)) +
+      (temp_autocorr[0] << (AUTOCORR_LEFT_SHIFT - AUTOCORR_EXTRA_VARIANCE_EXPONENT));
 
   /* We will have copied the max_exponent from the previous LpcComputation
      object, and it will usually already have the correct value.  Return
      immediately if so.  */
   int exponent = lpc->max_exponent;
-  int64_t autocorr_0 = lpc->autocorr[0];
+  int64_t autocorr_0 = lpc->autocorr[0],
       twice_autocorr_0 = autocorr_0 * 2;
-      assert(autocorr_0 != 0);
+  assert(autocorr_0 != 0);
   if ((twice_autocorr_0 >> exponent) == 1) {
     /*  max_exponent has the correct value.  This is the normal code path. */
     return;
@@ -388,8 +398,8 @@ inline static void lilcom_update_autocorrelation(
     exponent--;
   while ((twice_autocorr_0 >> exponent) > 1)
     exponent++;
-  assert((twice_autocorr >> exponent) == 1 &&
-         autocorr >> exponent == 0);
+  assert((twice_autocorr_0 >> exponent) == 1 &&
+         autocorr_0 >> exponent == 0);
   lpc->max_exponent = exponent;
 }
 
@@ -466,7 +476,7 @@ struct CompressionState {
      preceding that) to update the autocorrelation coefficients and possibly
      also the LPC coefficients (see docs for LPC_COMPUTE_INTERVAL).
   */
-  LpcComputation lpc_computations[2];
+  struct LpcComputation lpc_computations[2];
 
   /**
      `exponents` is a circular buffer of the exponent values used to compress
@@ -524,7 +534,6 @@ struct CompressionState {
 
 
 
-
 /*******************
    The lilcom_header functions below mostly serve to document the format
    of the header, we could just have put the statements inline, which is
@@ -544,14 +553,15 @@ inline void lilcom_header_set_exponent_m1(int8_t *header, int stride,
     value (it does not check it is in the range (0..12)).  */
 inline int lilcom_header_get_exponent_m1(const int8_t *header,
                                          int stride) {
-  return ((int)(uint8_t)(header[0 * stride])) >> 4;
+  /** For some reason uint8_t doesn't seem to be defined. */
+  return ((int)((unsigned char)(header[0 * stride]))) >> 4;
 }
 
 /**  Check that this is plausibly a lilcom header.  The low-order 4 bits of the
      first byte of the header are used for this; the magic number is 7.  */
 inline int lilcom_header_plausible(const int8_t *header,
                                    int stride) {
-  return (header[0 * stride] & 0xF == 0x7) &&
+  return ((header[0 * stride] & 0xF) == 0x7) &&
       lilcom_header_get_exponent_m1(header, stride) <= 12;
 }
 
@@ -559,7 +569,7 @@ inline int lilcom_header_plausible(const int8_t *header,
      isn't always used; when we're compressing float data it stores an
      exponent there);
      Other bytes will be set up while the stream is compressed.  */
-inline int lilcom_header_init(int8_t *header, int stride) {
+inline void lilcom_header_init(int8_t *header, int stride) {
   header[3 * stride] = (int8_t)0;
 }
 
@@ -585,10 +595,11 @@ inline void lilcom_header_set_mantissa_m1(int8_t *header,
   assert(mantissa >= -32 && mantissa <= 31);
   header[2 * stride] = (int8_t) (mantissa * 4);
 }
-/** Return the -1'th sample's mantissa from the header.  */
-inline void lilcom_header_get_mantissa_m1(const int8_t *header,
+/** Return the -1'th sample's mantissa from the header. */
+
+inline int lilcom_header_get_mantissa_m1(const int8_t *header,
                                           int stride) {
-  return ((int)header[2 * stride]) / 4;
+  return ((int)header[2 * stride] & ~(int8_t)3) / 4;
 }
 
 
@@ -829,7 +840,7 @@ inline static int least_exponent(int32_t residual,
    we were compressing the data.
 */
 void lilcom_compute_lpc(int lpc_order,
-                        LpcComputation *lpc) {
+                        struct LpcComputation *lpc) {
   /**
      autocorr is just a copy of lpc->autocorr, but shifted to ensure that the
      absolute value of all elements is less than 1<<LPC_EST_LEFT_SHIFT (but as large
@@ -838,25 +849,26 @@ void lilcom_compute_lpc(int lpc_order,
      LPC coefficients.  */
   int32_t autocorr[MAX_LPC_ORDER];
 
-  {
-    int max_exponent = autocorr_in->max_exponent;
+  { /** This block just sets up the `autocorr` array with appropriately
+        shifted copies of lpc->autocorr.  */
+    int max_exponent = lpc->max_exponent;
     assert(max_exponent >= AUTOCORR_LEFT_SHIFT &&
-           (autocorr_in->autocorr[0]) >> (max_exponent - 1) == 1);
+           (lpc->autocorr[0]) >> (max_exponent - 1) == 1);
     if (max_exponent > LPC_EST_LEFT_SHIFT) {
       /* shift right (the normal case).  We do it by division, because
          technically the result of shifting a negative number right
          is undefined (even though it normally does what we want,
          which is to duplicate the left-most -1) */
       int right_shift = max_exponent - LPC_EST_LEFT_SHIFT;
-      for (i = 0; i <= lpc_order; i++)
-        autocorr[i] = autocorr_in->autocorr[i] / (1 << right_shift);
+      for (int i = 0; i <= lpc_order; i++)
+        autocorr[i] = lpc->autocorr[i] / (1 << right_shift);
     } else {
       int left_shift = LPC_EST_LEFT_SHIFT - max_exponent;
-      for (i = 0; i <= lpc_order; i++)
-        autocorr[i] = autocorr_in->autocorr[i] << left_shift;
+      for (int i = 0; i <= lpc_order; i++)
+        autocorr[i] = lpc->autocorr[i] << left_shift;
     }
     assert((autocorr[0] >> (LPC_EST_LEFT_SHIFT - 1)) == 1);
-    for (i = 1; i <= lpc_order; i++) {  /* TODO: remove this loop. */
+    for (int i = 1; i <= lpc_order; i++) {  /* TODO: remove this loop. */
       assert(lilcom_abs(autocorr[i]) <= autocorr[0]);
     }
   }
@@ -870,7 +882,9 @@ void lilcom_compute_lpc(int lpc_order,
    above).  The absolute values of the elements of 'temp' will thus be less than
    2^(LPC_EST_LEFT_SHIFT+8) = 2^31.  i.e. it is guaranteed to fit into an int32.
   */
-  int32_t temp[MAX_LPC_ORDER];
+  /** int32_t temp[MAX_LPC_ORDER];
+  ***TEMP*** Making it int64 while testing. */
+  int64_t temp[MAX_LPC_ORDER];
 
 
   int32_t E = autocorr[0];
@@ -897,7 +911,7 @@ void lilcom_compute_lpc(int lpc_order,
     }
     /** RE the current magnitude of ki:
         ki is a summation of terms, so add LPC_ORDER_BITS=4 to the magnitude of
-        2^54 computed above, it's now bounded by 2^58 (this would bound its value
+        2^54 computed above, it's now bounded by 2^59 (this would bound its value
         at any point in the summation above).
         original code: "ki = ki / E;".   */
     ki = ki / E;
@@ -905,7 +919,7 @@ void lilcom_compute_lpc(int lpc_order,
         reflection coefficient; and it is stored times 2 to the power LPC_EST_LEFT_SHIFT, so its
         magnitude as an integer is <= 2^LPC_EST_LEFT_SHIFT.  Check that it's less
         than 2^LPC_EST_LEFT_SHIFT plus a margin to account for rounding errors.  */
-    assert(lilcom_abs(ki) < (1<<LPC_EST_LEFT_SHIFT + 1<<(LPC_EST_LEFT_SHIFT - 8)));
+    assert(lilcom_abs(ki) < ((1<<LPC_EST_LEFT_SHIFT) + (1<<(LPC_EST_LEFT_SHIFT - 8))));
 
     /**  Original code: "float c = 1 - ki * ki;"  Note: ki*ki is nonnegative,
          so shifting right is well defined. */
@@ -958,7 +972,7 @@ void lilcom_compute_lpc(int lpc_order,
      uncorrelated, we should never be increasing the predicted error vs. having
      no LPC at all.  But I account for the possibility that in pathological
      cases, rounding errors might make this untrue.  */
-  assert(E > 0 && E <= (autocorr[0] + autocorr[0] >> 10));
+  assert(E > 0 && E <= (autocorr[0] + (autocorr[0] >> 10)));
 
 
   /**
@@ -967,7 +981,7 @@ void lilcom_compute_lpc(int lpc_order,
      than we estimate them.  We divide rather than shift because technically
      the result of right-shifting a negative number is implementation-defined.
   */
-  for (i = 0; i < lpc_order; i++) {
+  for (int i = 0; i < lpc_order; i++) {
     lpc->lpc_coeffs[i] /= (1 << (LPC_EST_LEFT_SHIFT - LPC_APPLY_LEFT_SHIFT));
   }
 }
@@ -987,25 +1001,13 @@ void lilcom_compute_lpc(int lpc_order,
          @return             Returns the predicted value as an int16_t.
  */
 inline int16_t lilcom_compute_predicted_value(
-    CompressionState *state,
+    struct CompressionState *state,
     int64_t t) {
   int32_t block_index = ((int32_t)t) >> LOG_AUTOCORR_BLOCK_SIZE;
   /** block_index & 1 is just block_index % 2 (note: block_index is nonnegative)  */
-  LpcComputation *lpc = &(state->lpc_computations[block_index & 1]);
+  struct LpcComputation *lpc = &(state->lpc_computations[block_index & 1]);
 
-  int32_t lpc_order = state->lpc_order;
-  /* Initialize the sum.  The term (1 << (LPC_APPLY_LEFT_SHIFT - 1)) is
-     basically 0.5 in our fixed-point representation; this is added so that
-     later when we shift right we are effectively rounding to the closest value
-     instead of rounding down.
-
-     The term (1 << (32 + LPC_APPLY_LEFT_SHIFT)) is to ensure that the sum remains
-     positive so that, later, when we compute (sum >> LPC_APPLY_LEFT_SHIFT), we know
-     exactly what the behavior will be (right-shift on negative signed integers
-     officially gives undefined behavior).  After shifting right by
-     LPC_APPLY_LEFT_SHIFT this becomes 1 << 32, which will overflow and be equivalent
-     to zero when cast to int32_t. */
-  int64_t sum = (1 << (LPC_APPLY_LEFT_SHIFT - 1)) + (1 << (32 + LPC_LEFT_SHIFT));
+  int lpc_order = state->lpc_order;
 
   /** Get the pointer to the t'th signal in the circular buffer
       'state->decompressed_signal'.  The buffer has an extra MAX_LPC_ORDER
@@ -1014,26 +1016,81 @@ inline int16_t lilcom_compute_predicted_value(
   int16_t *decompressed_signal_t =
       &(state->decompressed_signal[MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1))]);
 
+
+  /**
+     The initial value of the sum can be thought of a being
+     (in this fixed-point representation),
+       - 0.5 (in our fixed point representation), so that when we
+         eventually round down it has the effect of rounding-to-the-closest,
+         plus ..
+       - A big number (2^16) that is designed to keep the sum positive, so that
+         when, later, we right shift, the behavior is well defined.  Later we'll
+         remove this by having it overflow.  It's important that this
+         number be >= 16 because that's the smallest power of 2 that, when
+         cast to int16_t, disappears.  Also this number plus
+         LILCOM_APPLY_LEFT_SHIFT must be less than 31, to avoid overflowing
+         int32_t.
+  */
+  int32_t sum = (1 << (LPC_APPLY_LEFT_SHIFT - 1)) +
+      (1 << (LPC_APPLY_LEFT_SHIFT + 16)),
+      sum2 = 0;  /** Break into two sums for pipelining reasons (an
+                  * optimization)  */
+
+
+  /** The following is an optimization of a simple loop for i = 0 .. lpc_order -
+      1.  It may access a one-past-the-end element if lpc_order is odd, but
+      this is OK.  We made sure in lilcom_init_lpc() that unused
+      elements of lpc_coeffs are zeroed. */
   int i;
-  for (i = 0; i < lpc_order; i++)
-    sum += ((int64_t)lpc->lpc_coeffs[i]) * decompressed_signal_t[-1-i];
-
-  /** The lpc_coeffs were stored shifted left by LPC_LEFT_SHIFT; shift the sum
-      back to get the integer prediction.  See the initialization of `sum` for
-      info on how this rounds.  (effectively: to the closest, rounding up in
-      case of (very rare!) ties).  */
-  int32_t predicted = (int32_t)(sum >> LPC_LEFT_SHIFT);
-
-  /** We need to truncate `predicted` to fit within the range that int16_t can
-      represent. (note: in principle we could have chosen to just let it wrap
-      around and accept that the prediction will be terrible in those cases;
-      that would worsen fidelity but increase speed slightly. */
-  if (predicted != (int16_t)predicted) {
-    if (predicted > 32767)
-      predicted = 32767;
-    else if (predicted < -32768)
-      predicted = -32768;
+  const int32_t *lpc_coeffs = &(lpc->lpc_coeffs[0]);
+  for (i = 0; i < lpc_order; i += 2) {
+    sum += lpc_coeffs[i] * decompressed_signal_t[-1-i];
+    sum2 += lpc_coeffs[i+1] * decompressed_signal_t[-2-i];
   }
+
+
+  /** The lpc_coeffs were stored times 2^LPC_APPLY_LEFT_SHIFT.  Divide by this
+      to get the integer prediction.  The following corresponds to division by
+      2^LPC_APPLY_LEFT_SHIFT as long as 'sum' is positive, which will be as long
+      as the predicted value is not "wildly out of range" (defined below).
+      Importantly, the expression below gives platform-independent results
+      thanks to casting to unsigned int before doing the right shift. */
+  int32_t predicted = (int32_t)(((uint32_t)(sum + sum2)) >> LPC_APPLY_LEFT_SHIFT);
+
+  /** Caution: at this point, `predicted` contains the predicted value
+      plus 2^16 = 65536.  Recall that we initialized the sum
+      with a term of 1 << (LPC_APPLY_LEFT_SHIFT + 16). */
+
+  /** Now we deal with the case where the predicted value was outside
+      the range [-32768,32764].  Right now `predicted` has 65536 added
+      to it so we need to account for that when making the comparisons.
+      The offset 65536 naturally disappears when casting to int16_t.
+
+      Define a "wildly out of range" predicted value as one that was
+      so far outside the range [-32768,32767] that it generated overflow
+      in the int32_t expressions above.  In these cases the sign of
+      the returned value below may not be "correct", if by "correct"
+      we mean the sign it would have had without overflow.
+
+      We just define the expected behavior, in those highly pathological
+      cases, to be "whatever the following code does".
+  */
+
+  /** The following if-statement is a one-shot way of testing "is the variable
+      `predicted` outside the range [65536-32768, 65536+32767]?"  If it is
+      outside that range, that implies that the `real` predicted value (given by
+      predicted - 65536) was outside the range [-32768,32767], which would mean
+      we need to do some truncation to avoid predicting a value not
+      representable as int16_t (allowing the prediction to wrap around would
+      degrade fidelity).
+   */
+  if (((predicted - 32768) & ~(int32_t)65535) != 0) {
+    if (predicted > 32767 + 65536)
+      predicted = 65536 + 32767;
+    else if (predicted < -32768 + 65536)
+      predicted = 65536 - 32768;
+  }
+  assert(predicted >= -32768 + 65536 && predicted <= 32767 + 65536);
   return (int16_t)predicted;
 }
 
@@ -1043,7 +1100,7 @@ inline int16_t lilcom_compute_predicted_value(
     context when we roll around.  This function is expected to be called only
     when t is a nonzero multiple of SIGNAL_BUFFER_SIZE. */
 inline void lilcom_copy_to_buffer_start(
-    CompressionState *state) {
+    struct CompressionState *state) {
   for (int i = 1; i <= state->lpc_order; i++)
     state->decompressed_signal[MAX_LPC_ORDER - i] =
         state->decompressed_signal[MAX_LPC_ORDER + SIGNAL_BUFFER_SIZE - i];
@@ -1064,13 +1121,14 @@ inline void lilcom_copy_to_buffer_start(
                    We are modifying one of the `lpc_computations` elements.
  */
 void lilcom_update_autocorrelation_and_lpc(
-    int64_t t, CompressionState *state) {
+    int64_t t, struct CompressionState *state) {
   assert(t % AUTOCORR_BLOCK_SIZE == 0 && state->lpc_order > 0);
+  /** The following expression is well defined because t is nonnegative */
   int32_t block_index = ((int32_t)t) >> LOG_AUTOCORR_BLOCK_SIZE;
   /** We'll compute the LPC coeffs if t is a multiple of LPC_COMPUTE_INTERVAL or
       if t is a nonzero value less than LPC_COMPUTE_INTERVAL (for LPC freshness
       at the start).  */
-  int compute_lpc = (t & (LPC_COMPUTE_INTERVAL - 1) == 0);
+  int compute_lpc = ((t & (LPC_COMPUTE_INTERVAL - 1)) == 0);
   if (t < LPC_COMPUTE_INTERVAL) {
     if (t == 0) {
       /* For time t = 0, there is nothing to do because there
@@ -1085,13 +1143,14 @@ void lilcom_update_autocorrelation_and_lpc(
   }
   /** Interpret `block_index & 1` as `block_index % 2` (valid for nonnegative
       block_index, which it is). */
-  LpcComputation *this_lpc = &(state->lpc_computations[block_index & 1]);
-  // prev_lpc is the 'other' LPC object in the circular buffer of size 2.
-  LpcComputation *prev_lpc = &(state->lpc_computations[!(block_index & 1)]);
-  assert(prev_lpc != this_lpc);  // TODO: remove this.
+  struct LpcComputation *this_lpc = &(state->lpc_computations[block_index & 1]);
+  /**  prev_lpc is the 'other' LPC object in the circular buffer of size 2. */
+  struct LpcComputation *prev_lpc = &(state->lpc_computations[!(block_index & 1)]);
+  assert(prev_lpc != this_lpc);  /* TODO: remove this. */
 
   /** Copy the previous autocorrelation coefficients and max_exponent.  We'll
       either re-estimate or copy the LPC coefficients below. */
+  int lpc_order = state->lpc_order;
   for (int i = 0; i <= lpc_order; i++)
     this_lpc->autocorr[i] = prev_lpc->autocorr[i];
   this_lpc->max_exponent = prev_lpc->max_exponent;
@@ -1150,7 +1209,7 @@ inline int lilcom_compress_for_time_internal(
     int64_t t,
     int prev_exponent,
     int min_exponent,
-    CompressionState *state) {
+    struct CompressionState *state) {
   assert(t > 0 && prev_exponent >= 0 && prev_exponent <= 12 &&
          min_exponent >= 0 && min_exponent <= 12 &&
          min_exponent >= prev_exponent - 1 &&
@@ -1160,7 +1219,7 @@ inline int lilcom_compress_for_time_internal(
     if ((t & (SIGNAL_BUFFER_SIZE - 1)) == 0) {
       /**  If this is the start of the uncompressed_signal buffer we need to
            make sure that the required left context is copied appropriately. */
-      lilcom_copy_to_buffer_start(t, state);
+      lilcom_copy_to_buffer_start(state);
     }
     /** Update the autocorrelation coefficients and possibly the LPC
         coefficients. */
@@ -1168,7 +1227,7 @@ inline int lilcom_compress_for_time_internal(
   }
 
   int16_t predicted_value = lilcom_compute_predicted_value(state, t),
-      observed_value = input_signal[t * state->input_signal_stride];
+      observed_value = state->input_signal[t * state->input_signal_stride];
   /** cast to int32 when computing the residual because a difference of int16's may
       not fit in int16. */
   int32_t residual = ((int32_t)observed_value) - ((int32_t)predicted_value);
@@ -1177,7 +1236,7 @@ inline int lilcom_compress_for_time_internal(
       exponent = least_exponent(
           residual, predicted_value,
           min_exponent, &mantissa,
-          &(state->decompressed_signal[MAX_LPC_ORDER+(t&(SIGNAL_BUFFER_SIZE-1))]]));
+          &(state->decompressed_signal[MAX_LPC_ORDER+(t&(SIGNAL_BUFFER_SIZE-1))]));
 
   if (exponent <= prev_exponent + 2) {
     /** Success; we can represent the difference of exponents in the range
@@ -1196,7 +1255,8 @@ inline int lilcom_compress_for_time_internal(
   }
 }
 
-/*
+
+/**
   This function is a special case of compressing a single sample, for t == 0.
   Time zero is a little different because of initialization effects (the header
   contains an exponent and a mantissa for t == -1, which gives us a good
@@ -1214,10 +1274,10 @@ inline int lilcom_compress_for_time_internal(
 */
 void lilcom_compress_for_time_zero(
     int min_exponent,
-    CompressionState *state) {
+    struct CompressionState *state) {
   int16_t first_signal_value = state->input_signal[0];
   assert(min_exponent >= 0 && min_exponent <= 12);
-  // m1 refers to -1 (sample-index minus one).
+  /** m1 refers to -1 (sample-index minus one). */
   int sample_m1_min_exponent =
       (min_exponent <= 2 ? 0 : min_exponent - 2);
   int16_t signal_m1,  /* compressed signal for "phantom sample" -1. */
@@ -1270,7 +1330,7 @@ void lilcom_compress_for_time_zero(
       delta_exponent <= 2.  */
   assert(delta_exponent >= -1 && delta_exponent <= 2 &&
          exponent_0 >= min_exponent && mantissa_0 >= -32
-         && mantissa0 <= 31);
+         && mantissa_0 <= 31);
 
   state->compressed_code[0 * c_stride] =
       (int16_t)((mantissa_0 << 2) + (delta_exponent + 1));
@@ -1310,7 +1370,7 @@ void lilcom_compress_for_time_zero(
 */
 void lilcom_compress_for_time_backtracking(
     int64_t t, int min_exponent,
-    CompressionState *state) {
+    struct CompressionState *state) {
   assert(t >= 0 && min_exponent >= 0);
   if (t > 0) {
     int prev_exponent = state->exponents[(t-1)&(EXPONENT_BUFFER_SIZE-1)];
@@ -1358,7 +1418,7 @@ void lilcom_compress_for_time_backtracking(
 */
 inline void lilcom_compress_for_time(
     int64_t t,
-    CompressionState *state) {
+    struct CompressionState *state) {
   assert(t > 0);
   int prev_exponent =
       state->exponents[(t - 1) & (EXPONENT_BUFFER_SIZE - 1)],
@@ -1388,11 +1448,11 @@ static inline void lilcom_init_compression(
     int64_t num_samples,
     const int16_t *input, int input_stride,
     int8_t *output, int output_stride,
-    int lpc_order, CompressionState *state) {
+    int lpc_order, struct CompressionState *state) {
   state->lpc_order = lpc_order;
   lilcom_init_lpc(&(state->lpc_computations[0]));
   lilcom_init_lpc(&(state->lpc_computations[1]));
-  state->input_signal = input_signal;
+  state->input_signal = input;
   state->input_signal_stride = input_stride;
   state->compressed_code =
       output + (LILCOM_HEADER_BYTES * output_stride);
@@ -1403,7 +1463,7 @@ static inline void lilcom_init_compression(
 
 
   lilcom_header_init(output, output_stride);
-  lilcom_header_set_lpc_order(header, header_stride,
+  lilcom_header_set_lpc_order(output, output_stride,
                               state->lpc_order);
   assert(lilcom_header_get_lpc_order(output, output_stride) == lpc_order);  /* TEMP */
 
@@ -1413,65 +1473,22 @@ static inline void lilcom_init_compression(
   lilcom_compress_for_time_zero(min_exponent, state);
 }
 
-/** This function does nothing; it only exists to check that
-    various relationships between the #defined constants are satisfied.
-*/
-inline int lilcom_check_constants() {
-  assert(MAX_LPC_ORDER >> LPC_ORDER_BITS == 0);
-  assert(LPC_LEFT_SHIFT + (AUTOCORR_EXTRA_VARIANCE_EXPONENT+1)/2 <= 31);
-  assert((30 + AUTOCORR_LEFT_SHIFT + log(AUTOCORR_BLOCK_SIZE) + AUTOCORR_DECAY_EXPONENT)
-         <= 61);
-  assert((AUTOCORR_BLOCK_SIZE & (AUTOCORR_BLOCK_SIZE-1)) == 0);  // Power of 2.
-  assert(AUTOCORR_BLOCK_SIZE > MAX_LPC_ORDER);
-  assert(LPC_COMPUTE_INTERVAL % AUTOCORR_BLOCK_SIZE == 0);
-  assert(AUTOCORR_BLOCK_SIZE >> LOG_AUTOCORR_BLOCK_SIZE == 1);
-  {
-    int64_t n1 = int64_t(AUTOCORR_DECAY_SQRT);
-    n1 *= n1;
-    n1 >= AUTOCORR_LEFT_SHIFT;
-    int64_t n2 = 1 << AUTOCORR_LEFT_SHIFT - (1 << (AUTOCORR_LEFT_SHIFT - AUTOCORR_DECAY_EXPONENT));
-    assert(lilcom_abs(n1 - n2) <= 3);
-  }
-  /** assumed in some code where we left shift by the difference.*/
-  assert(AUTOCORR_LEFT_SHIFT >= AUTOCORR_EXTRA_VARIANCE_EXPONENT);
-
-  assert((LPC_COMPUTE_INTERVAL & (LPC_COMPUTE_INTERVAL-1)) == 0);  /* Power of 2. */
-  assert((LPC_COMPUTE_INTERVAL & (LPC_COMPUTE_INTERVAL-1)) == 0);  /* Power of 2. */
-  /* The y < x / 2 below just means "y is much less than x". */
-  assert(LPC_COMPUTE_INTERVAL < (AUTOCORR_BLOCK_SIZE << AUTOCORR_DECAY_EXPONENT) / 2);
-  assert((EXPONENT_BUFFER_SIZE-1)*2 > 12);
-  assert(EXPONENT_BUFFER_SIZE & (EXPONENT_BUFFER_SIZE-1) == 0);  /* Power of 2. */
-  assert(EXPONENT_BUFFER_SIZE > (12/2) + 1); /* should exceed maximum range of exponents,
-                                                divided by  because that's how much they can
-                                                change from time to time.  The + 1 is
-                                                in case I missed something. */
-
-  assert(EXPONENT_BUFFER_SIZE & (EXPONENT_BUFFER_SIZE-1) == 0);  /* Power of 2. */
-  assert(SIGNAL_BUFFER_SIZE % AUTOCORR_BLOCK_SIZE == 0);
-  assert(SIGNAL_BUFFER_SIZE & (SIGNAL_BUFFER_SIZE - 1) == 0);  /* Power of 2. */
-  assert(SIGNAL_BUFFER_SIZE > AUTOCORR_BLOCK_SIZE + EXPONENT_BUFFER_SIZE + MAX_LPC_ORDER);
-  return 1;
-}
-
 
 /*  See documentation in lilcom.h  */
 int lilcom_compress(int64_t num_samples,
                     const int16_t *input, int input_stride,
                     int8_t *output, int output_stride,
                     int lpc_order) {
-
-  assert(lilcom_check_constants());
-
-  if (!num_samples > 0 && input_stride != 0 && output_stride != 0 &&
-      lpc_order >= 0 && lpc_order <= MAX_LPC_ORDER) {
-    return 1;  // error
+  if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
+      lpc_order < 0 || lpc_order > MAX_LPC_ORDER) {
+    return 1;  /* error */
   }
-  CompressionState state;
+  struct CompressionState state;
   lilcom_init_compression(num_samples, input, input_stride,
                           output, output_stride, lpc_order,
                           &state);
   for (int64_t t = 1; t < num_samples; t++)
-    lilcom_compress_for_time(t, state);
+    lilcom_compress_for_time(t, &state);
 
   return 0;
 }
@@ -1500,62 +1517,295 @@ int lilcom_compress(int64_t num_samples,
                      which must be in [0..12] else this function will
                      fail (see return status).  At exit, it will be the
                      exponent used to encode the current frame.
-      @param [in]
+      @return  Returns 0 on success, 1 on failure.  Failure would normally
+                     mean data corruption or possily a code error.
 
  */
-inline int lilcom_decompress_for_time_internal(
+inline int lilcom_decompress_one_sample(
     int8_t input_code,
     int lpc_order,
     const int32_t *lpc_coeffs,
     int16_t *output_sample,
     int *exponent) {
 
+  int16_t predicted_sample;
 
-  int16_t predicted_value;
-
-
-  { // This block computes the predicted value.  For explanation please
-    // look for similar statements in the compression code, which
-    // are better documented.
-    int64_t sum = (1 << (LPC_LEFT_SHIFT - 1)) + (1 << (32 + LPC_LEFT_SHIFT));
+  { /** This block computes the predicted value.  For explanation please
+        look for similar statements in `lilcom_compute_predicted_value()`,
+        which is well documented. */
+    int32_t sum = (1 << (LPC_APPLY_LEFT_SHIFT - 1)) +
+        (1 << (LPC_APPLY_LEFT_SHIFT + 16));
     int i;
     for (i = 0; i < lpc_order; i++)
-      sum += ((int64_t)lpc_coeffs[i] pc->lpc_coeffs[i]) * decompressed_signal_t[-1-i];
+      sum += lpc_coeffs[i] * output_sample[-1-i];
+    int32_t predicted = (int32_t)(((uint32_t)sum) >> LPC_APPLY_LEFT_SHIFT);
+    if (((predicted - 32768) & ~65535) != 0) {
+      if (predicted > 32767 + 65536)
+        predicted = 65536 + 32767;
+      else if (predicted < -32768 + 65536)
+        predicted = 65536 - 32768;
+    }
+    assert(predicted >= 65536 - 32768 && predicted <= 65536 + 32767);
+    predicted_sample = (int16_t)predicted;
+  }
+
+  if (((unsigned int)*exponent) > 12) {
+    /** If `exponent` is not in the range [0,12], something is wrong.
+        We return 1 on failure.  */
+    return 1;
+  }
+
+  /**
+     Below, it would have been nice to be able to compute 'mantissa' as just
+     input_code >> 2, but we can't rely on arithmetic bit-shift being what we
+     get.  We also can't just divide by 4 because that division would round up
+     for negative input, depending on the lower-order two bits, so we need to
+     `and` it with ~((int_8)3) to get rid of those low-order two bits.
+   */
+  int delta_exponent = (input_code & 3) - 1,
+      mantissa = (input_code & ~((int8_t)3)) / 4;
+  *exponent += delta_exponent;
+
+  int32_t new_sample = (int32_t)predicted_sample  +  (mantissa << *exponent);
+
+  if (((new_sample + 32768) & ~(int32_t)65535) != 0) {
+    /** If `new_sample` is outside the range [-32768 .. 32767], it
+        is an error; we should not be generating such samples. */
+    return 1;
+  }
+  output_sample[0] = new_sample;
+  return 0;  /** Success */
+}
 
 
+
+/*
+  This function attempts to obtain the first sample (the one for t = 0).
+    @param [in] header   Pointer to the beginning of the header.
+    @paran [in] input_stride  Stride between elements of `header`
+                        (naturally, past the header there are real samples,
+                        with the same stride).
+    @param [out] output   On success, the decoded sample will be written
+                        to here.
+    @param [out] exponent  On success, the exponent used to encode
+                        time zero will be written to here.
+    @return  Returns 0 on success, 1 on failure (e.g. invalid
+             input).
+ */
+inline int lilcom_decompress_time_zero(
+    const int8_t *header, int input_stride,
+    int16_t *output, int *exponent) {
+  int exponent_m1 = lilcom_header_get_exponent_m1(header, input_stride),
+      mantissa_m1 = lilcom_header_get_mantissa_m1(header, input_stride);
+  /** Failure in the following assert would be a code error, not an error in the
+      input.  We already checked the exponent range in
+     `lilcom_header_plausible`.  */
+  assert(mantissa_m1 >= -32 && mantissa_m1 <= 31 &&
+         exponent_m1 >= 0 && exponent_m1 <= 12);
+  int32_t sample_m1 = mantissa_m1 << exponent_m1;
+  int8_t code_0 = header[input_stride * LILCOM_HEADER_BYTES];
+  int delta_exponent = code_0 & 3,
+      mantissa = (code_0 & ~(int8_t)3) / 4;
+  *exponent = exponent_m1 + delta_exponent;
+  int32_t sample_0 = sample_m1 + mantissa < *exponent;
+  if (((sample_0 + 32768) & ~(int32_t)65535) != 0) {
+    return 1;  /**  Out-of-range error */
+  }
+  *output = (int16_t)sample_0;
+  return 0;
 
 }
 
-/*  See documentation in lilcom.h  */
+
+
 int lilcom_decompress(int64_t num_samples,
                       const int8_t *input, int input_stride,
-                      int16_t *output, int output_stride) {
-  if (!lilcom_header_plausible(input))
-    return 1;  // Error status.
+                      int16_t *output, int output_stride){
+  if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
+      !lilcom_header_plausible(input, input_stride))
+    return 1;  /** Error */
 
+  int lpc_order = lilcom_header_get_lpc_order(input, input_stride);
 
-}
+  int exponent;
+  if (lilcom_decompress_time_zero(input, input_stride,
+                                  &(output[0]),
+                                  &exponent))
+    return 1;  /** Error */
 
+  /** This is called input 4 because (if stride == 1)
+      it's 4 bytes past input. */
+  const int8_t *input4  = input + (input_stride * LILCOM_HEADER_BYTES);
 
+  struct LpcComputation lpc;
+  lilcom_init_lpc(&lpc);
 
-  if (!num_samples > 0 && input_stride != 0 && output_stride != 0 &&
-      lpc_order >= 0 && lpc_order <= MAX_LPC_ORDER) {
-    return 1;  // error
+  /** The first LPC_MAX_ORDER samples are for left-context; view the array as
+      starting from the element with index LPC_MAX_ORDER.
+      In the case where output_stride is 1, we'll only be using the
+      first LPC_MAX_ORDER + AUTOCORR_BLOCK_SIZE elements of this
+      array.
+  */
+  int16_t output_buffer[MAX_LPC_ORDER + SIGNAL_BUFFER_SIZE];
+  int i;
+  for (i = 0; i  < MAX_LPC_ORDER; i++)
+    output_buffer[i] = 0;
+  output_buffer[MAX_LPC_ORDER] = output[0];
+  int t;
+  for (t = 1; t < AUTOCORR_BLOCK_SIZE && t < num_samples; t++) {
+    if (lilcom_decompress_one_sample(input4[t * input_stride],
+                                     lpc_order, lpc.lpc_coeffs,
+                                     &(output_buffer[MAX_LPC_ORDER + t]),
+                                     &exponent))
+      return 1;  /** Error */
+    output[t * output_stride] = output_buffer[MAX_LPC_ORDER + t];
   }
-  CompressionState state;
-  lilcom_init_compression(num_samples, input, input_stride,
-                          output, output_stride, lpc_order,
-                          &state);
-  for (int64_t t = 1; t < num_samples; t++)
-    lilcom_compress_for_time(t, state);
+  if (t >= num_samples)
+    return 0;  /** Success */
 
-  return 0;
+  if (output_stride == 1) {
+    /** Update the autocorrelation with stats from the 1st block (it's
+        a special case, as we need to use `output_buffer` so the
+        left-context will work right. */
+    lilcom_update_autocorrelation(&lpc, lpc_order,
+                                  output_buffer + MAX_LPC_ORDER);
+    /** Recompute the LPC.  Even though time t = AUTOCORR_BLOCK_SIZE
+        is not a multiple of LPC_COMPUTE_INTERVAL, we update it every
+        AUTOCORR_BLOCK_SIZE for t < LPC_COMPUTE_INTERVAL, for
+        freshness at the start of the signal. */
+    lilcom_compute_lpc(lpc_order, &lpc);
+
+    /** From this point forward we don't need a separate buffer; `output`
+        has stride 1, so we can use that as the buffer for autocorrelation
+        and lpc. */
+    while (t < num_samples) {
+      /** Every `AUTOCORR_BLOCK_SIZE` samples we need to accumulate
+          autocorrelation statistics and possibly recompute the LPC
+          coefficients.  If t == AUTOCORR_BLOCK_SIZE we don't do this, since in
+          that case we already did it a few lines above (using the temporary
+          buffer, which has the left-context for t < 0 appropriately set to
+          zero). */
+      assert((t & (AUTOCORR_BLOCK_SIZE - 1)) == 0);
+
+      if (t != AUTOCORR_BLOCK_SIZE) {
+        lilcom_update_autocorrelation(&lpc, lpc_order, output + t - AUTOCORR_BLOCK_SIZE);
+        if ((t & (LPC_COMPUTE_INTERVAL - 1)) == 0 || t < LPC_COMPUTE_INTERVAL)
+          lilcom_compute_lpc(lpc_order, &lpc);
+      }
+      int64_t local_max_t = (t + AUTOCORR_BLOCK_SIZE < num_samples ?
+                             t + AUTOCORR_BLOCK_SIZE : num_samples);
+      for (; t < local_max_t; t++)
+        if (lilcom_decompress_one_sample(input4[t * input_stride],
+                                         lpc_order, lpc.lpc_coeffs,
+                                         output + t,
+                                         &exponent))
+          return 1;  /** Error */
+    }
+    return 0;  /** Success */
+  } else {
+    /** output_stride != 1, so we need to continue to use `output_buffer` and
+        copy it to `output` when done. */
+
+    while (t < num_samples) {
+      /** Every `AUTOCORR_BLOCK_SIZE` samples we need to accumulate
+          autocorrelation statistics and possibly recompute the LPC
+          coefficients.  If t == AUTOCORR_BLOCK_SIZE we don't do this, since in
+          that case we already did it a few lines above (using the temporary
+          buffer, which has the left-context for t < 0 appropriately set to
+          zero). */
+      assert((t & (AUTOCORR_BLOCK_SIZE - 1)) == 0);
+
+      if ((t & (SIGNAL_BUFFER_SIZE-1)) == 0) {
+        /** A multiple of SIGNAL_BUFFER_SIZE.  We need to copy the context to
+            before the beginning of the buffer.  */
+        for (int i = 1; i <= lpc_order; i++)
+          output_buffer[MAX_LPC_ORDER - i] =
+              output_buffer[MAX_LPC_ORDER + SIGNAL_BUFFER_SIZE - i];
+      }
+
+      lilcom_update_autocorrelation(&lpc, lpc_order, output + t - AUTOCORR_BLOCK_SIZE);
+      /** If t is a multiple of LPC_COMPUTE_INTERVAL or < LPC_COMPUTE_INTERVAL.. */
+      if ((t & (LPC_COMPUTE_INTERVAL - 1)) == 0 || t < LPC_COMPUTE_INTERVAL)
+        lilcom_compute_lpc(lpc_order, &lpc);
+
+      int64_t local_max_t = (t + AUTOCORR_BLOCK_SIZE < num_samples ?
+                             t + AUTOCORR_BLOCK_SIZE : num_samples);
+      for (; t < local_max_t; t++) {
+        if (lilcom_decompress_one_sample(input4[t * input_stride],
+                                         lpc_order, lpc.lpc_coeffs,
+                                         output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1)),
+                                         &exponent))
+          return 1;  /** Error */
+        output[t * output_stride] =
+            output_buffer[MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1))];
+      }
+    }
+    return 0;  /** Success */
+  }
 }
 
-define LILCOM_TEST 1
+#define LILCOM_TEST 1
 
 #ifdef LILCOM_TEST
+
+#include <math.h>
+
+/** This function does nothing; it only exists to check that
+    various relationships between the #defined constants are satisfied.
+*/
+inline int lilcom_check_constants() {
+  assert(MAX_LPC_ORDER >> LPC_ORDER_BITS == 0);
+  assert(MAX_LPC_ORDER % 2 == 0);
+  assert(LPC_EST_LEFT_SHIFT + (AUTOCORR_EXTRA_VARIANCE_EXPONENT+1)/2 <= 31);
+  assert(LPC_APPLY_LEFT_SHIFT + 16 < 31);
+  assert((30 + AUTOCORR_LEFT_SHIFT + log(AUTOCORR_BLOCK_SIZE) + AUTOCORR_DECAY_EXPONENT)
+         <= 61);
+  assert((AUTOCORR_BLOCK_SIZE & (AUTOCORR_BLOCK_SIZE-1)) == 0);  /** Power of 2. */
+  assert(AUTOCORR_BLOCK_SIZE > MAX_LPC_ORDER);
+  assert(LPC_COMPUTE_INTERVAL % AUTOCORR_BLOCK_SIZE == 0);
+  assert(AUTOCORR_BLOCK_SIZE >> LOG_AUTOCORR_BLOCK_SIZE == 1);
+  {
+    int64_t n1 = (int64_t)AUTOCORR_DECAY_SQRT;
+    n1 *= n1;
+    n1 <<= AUTOCORR_LEFT_SHIFT;
+    int64_t n2 = (1 << AUTOCORR_LEFT_SHIFT) - (1 << (AUTOCORR_LEFT_SHIFT - AUTOCORR_DECAY_EXPONENT));
+    assert(lilcom_abs(n1 - n2) <= 3);
+  }
+  /** assumed in some code where we left shift by the difference.*/
+  assert(AUTOCORR_LEFT_SHIFT >= AUTOCORR_EXTRA_VARIANCE_EXPONENT);
+
+  assert((LPC_COMPUTE_INTERVAL & (LPC_COMPUTE_INTERVAL-1)) == 0);  /* Power of 2. */
+  assert((LPC_COMPUTE_INTERVAL & (LPC_COMPUTE_INTERVAL-1)) == 0);  /* Power of 2. */
+  /* The y < x / 2 below just means "y is much less than x". */
+  assert(LPC_COMPUTE_INTERVAL < (AUTOCORR_BLOCK_SIZE << AUTOCORR_DECAY_EXPONENT) / 2);
+  assert((EXPONENT_BUFFER_SIZE-1)*2 > 12);
+  assert((EXPONENT_BUFFER_SIZE & (EXPONENT_BUFFER_SIZE-1)) == 0);  /* Power of 2. */
+  assert(EXPONENT_BUFFER_SIZE > (12/2) + 1); /* should exceed maximum range of exponents,
+                                                divided by  because that's how much they can
+                                                change from time to time.  The + 1 is
+                                                in case I missed something. */
+
+  assert((EXPONENT_BUFFER_SIZE & (EXPONENT_BUFFER_SIZE-1)) == 0);  /* Power of 2. */
+  assert(SIGNAL_BUFFER_SIZE % AUTOCORR_BLOCK_SIZE == 0);
+  assert((SIGNAL_BUFFER_SIZE & (SIGNAL_BUFFER_SIZE - 1)) == 0);  /* Power of 2. */
+  assert(SIGNAL_BUFFER_SIZE > AUTOCORR_BLOCK_SIZE + EXPONENT_BUFFER_SIZE + MAX_LPC_ORDER);
+  return 1;
+}
+
+void lilcom_test_compress_sine() {
+  int16_t buffer[1000];
+  int lpc_order = 10;
+  for (int i = 0; i < 1000; i++)
+    buffer[i] = 700 * sin(i * 0.01);
+
+  int8_t compressed[1004];
+  lilcom_compress(1000, buffer, 1, compressed, 1,
+                  lpc_order);
+}
+
+
 int main() {
   lilcom_check_constants();
+  lilcom_test_compress_sine();
 }
 #endif
