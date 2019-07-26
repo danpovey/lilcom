@@ -6,10 +6,5 @@ default: test
 
 lilcom.o: lilcom.c
 
-test: lilcom.c lilcom.o
-	gcc -o test lilcom.o
-
-
-
-
-
+test: lilcom.c
+	gcc -g -o test -DLILCOM_TEST=1 lilcom.c -lm

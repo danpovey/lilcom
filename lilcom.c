@@ -1,7 +1,6 @@
 #include "lilcom.h"
 #include <assert.h>
-#include <math.h>
-
+#include <stdio.h>  /*TEMP*/
 
 /**
    The version number of the format.   Note: you can't change the various
@@ -269,7 +268,8 @@ struct LpcComputation {
      If we have processed at least one block of AUTOCORR_BLOCK_SIZE samples and
      have called lilcom_compute_lpc, this will contain the coefficients
      estimated from there.  Only elements 0 through lpc_order - 1 will be valid.
-     (lpc_order is passed directly into functions dealing with this object).  */
+     (lpc_order is passed directly into functions dealing with this object).
+  */
   int32_t lpc_coeffs[MAX_LPC_ORDER];
 };
 
@@ -788,7 +788,7 @@ static inline int least_exponent(int32_t residual,
     {
       /* Just a check.  I will remove this block after it's debugged.
          Checking that the error is in the expected range.  */
-      int16_t error = (int16_t)(next_signal_value - residual);
+      int16_t error = (int16_t)(next_signal_value - (predicted + residual));
       if (error < 0) error = -error;
       if (local_mantissa > -32) {
         assert(error <= (1 << exponent) >> 1);
@@ -831,13 +831,16 @@ static inline int least_exponent(int32_t residual,
 
    This code was adapted to integer arithmetic from the 'Durbin' function in
    Kaldi's feat/mel-computations.cc, which in turn was originaly derived from
-   HTK.  Anyway, Durbin's algorithm is very well known.  The reason for doing
-   this in integer arithmetic is mostly to ensure 100% reproducibility without
-   having to get into system-dependent methods of setting floating point
-   rounding modes.  Since the LPC coefficients are not transmitted, but are
-   estimated from the preceding data, in order for the decompression to work we
-   need to ensure that the coefficients are exactly the same as they were when
-   we were compressing the data.
+   HTK.  (We had a change couple of signs, though; for some reason the original
+   code was computing the negative of the LPC coefficients.)  Anyway, Durbin's
+   algorithm is very well known.  The reason for doing this in integer
+   arithmetic is mostly to ensure 100% reproducibility without having to get
+   into system-dependent methods of setting floating point rounding modes.
+   Since the LPC coefficients are not transmitted, but are estimated from the
+   preceding data, in order for the decompression to work we need to ensure that
+   the coefficients are exactly the same as they were when we were compressing
+   the data.
+
 */
 void lilcom_compute_lpc(int lpc_order,
                         struct LpcComputation *lpc) {
@@ -861,7 +864,7 @@ void lilcom_compute_lpc(int lpc_order,
          which is to duplicate the left-most -1) */
       int right_shift = max_exponent - LPC_EST_LEFT_SHIFT;
       for (int i = 0; i <= lpc_order; i++)
-        autocorr[i] = lpc->autocorr[i] / (1 << right_shift);
+        autocorr[i] = lpc->autocorr[i] / ((int64_t)1 << right_shift);
     } else {
       int left_shift = LPC_EST_LEFT_SHIFT - max_exponent;
       for (int i = 0; i <= lpc_order; i++)
@@ -888,16 +891,16 @@ void lilcom_compute_lpc(int lpc_order,
 
 
   int32_t E = autocorr[0];
-
   int j;
   for (int i = 0; i < lpc_order; i++) {
     /** ki will eventually be the next reflection coefficient, a value in [-1, 1], but
         shifted left by LPC_EST_LEFT_SHIFT to represent it in fixed point.
         But after the following line it will represent a floating point
         number times 2 to the power 2*LPC_EST_LEFT_SHIFT,
-        so currently abs(ki) < 2^(LPC_EST_LEFT_SHIFT+LPC_EST_LEFT_SHIFT) = 2^46
+        so currently abs(ki) < 2^(LPC_EST_LEFT_SHIFT+LPC_EST_LEFT_SHIFT) = 2^46.
+        We do this because we'll later divide by E.
       Original code: "float ki = autocorr[i + 1];"  */
-    int64_t ki = autocorr[i + 1] << LPC_EST_LEFT_SHIFT;
+    int64_t ki = ((int64_t)autocorr[i + 1]) << LPC_EST_LEFT_SHIFT;
 
     for (j = 0; j < i; j++) {
       /** max magnitude of the terms added below is 2^(LPC_EST_LEFT_SHIFT*2 + 8) = 2^54, i.e.
@@ -907,7 +910,7 @@ void lilcom_compute_lpc(int lpc_order,
         The original floating-point code looked the same as the next line
         (not: ki has double the left-shift of the terms on the right).
       */
-      ki += lpc->lpc_coeffs[j] * autocorr[i - j];
+      ki -= lpc->lpc_coeffs[j] * (int64_t)autocorr[i - j];
     }
     /** RE the current magnitude of ki:
         ki is a summation of terms, so add LPC_ORDER_BITS=4 to the magnitude of
@@ -934,7 +937,7 @@ void lilcom_compute_lpc(int lpc_order,
     /** The original code did: E *= c;
         Note: the product is int64_t because c is int64_t, which is important
         to avoid overflow.  Also note: it's only well-defined to right-shift
-        because E is nonnegative.
+        because the result (still an energy E) is nonnegative.
     */
     E = (int32_t)((E * c) >> LPC_EST_LEFT_SHIFT);
 
@@ -942,7 +945,7 @@ void lilcom_compute_lpc(int lpc_order,
         Original code did: pTmp[i] = -ki;
         Note: abs(temp[i]) <= 2^LPC_EST_LEFT_SHIFT, since ki is in the range [-1,1]
         when viewed as a real number. */
-    temp[i] = -((int32_t)ki);
+    temp[i] = (int32_t)ki;
     for (j = 0; j < i; j++) {
       /** The original code did:
           pTmp[j] = pLP[j] - ki * pLP[i - j - 1]
@@ -1228,6 +1231,7 @@ static inline int lilcom_compress_for_time_internal(
 
   int16_t predicted_value = lilcom_compute_predicted_value(state, t),
       observed_value = state->input_signal[t * state->input_signal_stride];
+
   /** cast to int32 when computing the residual because a difference of int16's may
       not fit in int16. */
   int32_t residual = ((int32_t)observed_value) - ((int32_t)predicted_value);
@@ -1519,6 +1523,9 @@ int lilcom_compress(int64_t num_samples,
                      exponent used to encode the current frame.
       @return  Returns 0 on success, 1 on failure.  Failure would normally
                      mean data corruption or possily a code error.
+                     This function will fail if the input exponent is not
+                     in the range [0,12] or the signal left the bounds
+                     of int16_t.
 
  */
 static inline int lilcom_decompress_one_sample(
@@ -1604,7 +1611,7 @@ static inline int lilcom_decompress_time_zero(
          exponent_m1 >= 0 && exponent_m1 <= 12);
   int32_t sample_m1 = mantissa_m1 << exponent_m1;
   int8_t code_0 = header[input_stride * LILCOM_HEADER_BYTES];
-  int delta_exponent = code_0 & 3,
+  int delta_exponent = (code_0 & 3) - 1,
       mantissa = (code_0 & ~(int8_t)3) / 4;
   *exponent = exponent_m1 + delta_exponent;
   int32_t sample_0 = sample_m1 + mantissa < *exponent;
@@ -1744,11 +1751,10 @@ int lilcom_decompress(int64_t num_samples,
   }
 }
 
-#define LILCOM_TEST 1
-
 #ifdef LILCOM_TEST
 
 #include <math.h>
+#include <stdio.h>
 
 /** This function does nothing; it only exists to check that
     various relationships between the #defined constants are satisfied.
@@ -1767,7 +1773,7 @@ static inline int lilcom_check_constants() {
   {
     int64_t n1 = (int64_t)AUTOCORR_DECAY_SQRT;
     n1 *= n1;
-    n1 <<= AUTOCORR_LEFT_SHIFT;
+    n1 >>= AUTOCORR_LEFT_SHIFT;
     int64_t n2 = (1 << AUTOCORR_LEFT_SHIFT) - (1 << (AUTOCORR_LEFT_SHIFT - AUTOCORR_DECAY_EXPONENT));
     assert(lilcom_abs(n1 - n2) <= 3);
   }
@@ -1792,6 +1798,24 @@ static inline int lilcom_check_constants() {
   return 1;
 }
 
+/**
+   Computes the SNR if a is the signal and (b-a) is the noise.
+ */
+float lilcom_compute_snr(int64_t num_samples,
+                         int16_t *signal_a, int stride_a,
+                         int16_t *signal_b, int stride_b) {
+  int64_t signal_sumsq = 0, noise_sumsq = 0;
+  for (int64_t i = 0; i < num_samples; i++) {
+    int64_t a = signal_a[stride_a * i], b = signal_b[stride_b * i];
+    signal_sumsq += a * a;
+    noise_sumsq += (b-a)*(b-a);
+    if (b != a) {
+      printf("For time %d, differ %d vs %d\n", i, a, b);
+    }
+  }
+  return (noise_sumsq * 1.0) / signal_sumsq;
+}
+
 void lilcom_test_compress_sine() {
   int16_t buffer[1000];
   int lpc_order = 10;
@@ -1801,11 +1825,33 @@ void lilcom_test_compress_sine() {
   int8_t compressed[1004];
   lilcom_compress(1000, buffer, 1, compressed, 1,
                   lpc_order);
+  int16_t decompressed[1000];
+  if (lilcom_decompress(1000, compressed, 1, decompressed, 1) != 0) {
+    printf("Decompression failed\n");
+  }
+  printf("Sine snr = %f\n", lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
+}
+
+void lilcom_test_compress_sine_overflow() {
+  int16_t buffer[1000];
+  int lpc_order = 10;
+  for (int i = 0; i < 1000; i++)
+    buffer[i] = 65535 * sin(i * 0.01);
+
+  int8_t compressed[1004];
+  lilcom_compress(1000, buffer, 1, compressed, 1,
+                  lpc_order);
+  int16_t decompressed[1000];
+  if (lilcom_decompress(1000, compressed, 1, decompressed, 1) != 0) {
+    printf("Decompression failed\n");
+  }
+  printf("Sine-overflow snr = %f\n", lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
 }
 
 
 int main() {
   lilcom_check_constants();
   lilcom_test_compress_sine();
+  lilcom_test_compress_sine_overflow();
 }
 #endif
