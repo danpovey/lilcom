@@ -864,11 +864,11 @@ void lilcom_compute_lpc(int lpc_order,
          which is to duplicate the left-most -1) */
       int right_shift = max_exponent - LPC_EST_LEFT_SHIFT;
       for (int i = 0; i <= lpc_order; i++)
-        autocorr[i] = lpc->autocorr[i] / ((int64_t)1 << right_shift);
+        autocorr[i] = (int32_t)(lpc->autocorr[i] / ((int64_t)1 << right_shift));
     } else {
       int left_shift = LPC_EST_LEFT_SHIFT - max_exponent;
       for (int i = 0; i <= lpc_order; i++)
-        autocorr[i] = lpc->autocorr[i] << left_shift;
+        autocorr[i] = (int32_t)(lpc->autocorr[i] << left_shift);
     }
     assert((autocorr[0] >> (LPC_EST_LEFT_SHIFT - 1)) == 1);
     for (int i = 1; i <= lpc_order; i++) {  /* TODO: remove this loop. */
@@ -965,7 +965,7 @@ void lilcom_compute_lpc(int lpc_order,
     }
     for (j = 0; j <= i; j++) {
       assert(lilcom_abs(temp[j]) < ((int64_t)1<<(LPC_EST_LEFT_SHIFT + 8)));
-      lpc->lpc_coeffs[j] = temp[j];
+      lpc->lpc_coeffs[j] = (int32_t)temp[j];
     }
   }
   /** E > 0 because we added fake extra variance via
