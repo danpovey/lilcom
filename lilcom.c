@@ -2,6 +2,9 @@
 #include <assert.h>
 #include <stdio.h>  /*TEMP*/
 
+
+#define LILCOM_DEBUG 1
+
 /**
    The version number of the format.   Note: you can't change the various
    constants below without changing LILCOM_VERSION, because it will mess up the
@@ -530,6 +533,10 @@ struct CompressionState {
 
   /**  The stride associated with `compressed_code`; normally 1 */
   int compressed_code_stride;
+
+#ifdef LILCOM_DEBUG
+  int64_t num_backtracks;
+#endif
 };
 
 
@@ -1375,6 +1382,10 @@ void lilcom_compress_for_time_zero(
 void lilcom_compress_for_time_backtracking(
     int64_t t, int min_exponent,
     struct CompressionState *state) {
+#ifdef LILCOM_DEBUG
+  state->num_backtracks++;
+#endif
+
   assert(t >= 0 && min_exponent >= 0);
   if (t > 0) {
     int prev_exponent = state->exponents[(t-1)&(EXPONENT_BUFFER_SIZE-1)];
@@ -1461,6 +1472,9 @@ static inline void lilcom_init_compression(
   state->compressed_code =
       output + (LILCOM_HEADER_BYTES * output_stride);
   state->compressed_code_stride = output_stride;
+#ifdef LILCOM_DEBUG
+  state->num_backtracks = 0;
+#endif
 
   for (int i = 0; i < MAX_LPC_ORDER; i++)
     state->decompressed_signal[i] = 0;
@@ -1493,6 +1507,11 @@ int lilcom_compress(int64_t num_samples,
                           &state);
   for (int64_t t = 1; t < num_samples; t++)
     lilcom_compress_for_time(t, &state);
+
+#ifdef LILCOM_DEBUG
+  printf("Backtracked %f%% of the time\n",
+         ((state.num_backtracks * 100.0) / num_samples));
+#endif
 
   return 0;
 }
