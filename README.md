@@ -14,5 +14,5 @@ and then from python, do:
 >>> import lilcom
 >>> lilcom.lilcom("a")
 ```
-and it will segfault.  Currently the interface in lilcom_pywrap.c is just a
+and it will segfault.  Currently the interface in lilcommodule.c is just a
 skeleton I copied from somewhere, it needs to be actually implemented.
