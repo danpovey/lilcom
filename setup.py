@@ -1,6 +1,5 @@
 from distutils.core import setup, Extension
 
-extension_mod = Extension("lilcom", ["lilcommodule.c", "lilcom.c"])
+extension_mod = Extension("lilcomlib", ["lilcommodule.c"])
 
-setup(name = "lilcom", ext_modules=[extension_mod])
-
+setup(name = "lilcomlib", ext_modules=[extension_mod])
