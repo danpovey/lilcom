@@ -6,13 +6,13 @@
 
 /**
    Lossily compresses a given numpy array of 16-bit integer sequence data.
-   It will first convert the numpy array data to a C `int16_t` array and then 
+   It will first convert the numpy array data to a C `int16_t` array and then
    passes the array to the core lilcom library, finally it returns the result
    in form of a numpy array.
  */
 static PyObject * compress(PyObject * self, PyObject * args)
 {
-  
+
   PyObject *signalObj; // The input signal, passed as a numpy array.
   if (!PyArg_ParseTuple(args, "O", &signalObj)) { //Parsing the input of the python code
       Py_RETURN_FALSE;
@@ -25,7 +25,7 @@ static PyObject * compress(PyObject * self, PyObject * args)
   } // One dimensional array does't have any problem in stride.
 
   // Finding the shape of array
-  int n_samples = (int)PyArray_DIM(signalObj, 0); 
+  int n_samples = (int)PyArray_DIM(signalObj, 0);
   if (n_dims != 1)
     stride = (int)PyArray_DIM(signalObj, 1);
 
@@ -33,7 +33,7 @@ static PyObject * compress(PyObject * self, PyObject * args)
 
   // Conversion to int16_t
   int16_t *input = malloc(sizeof(int16_t) * n_samples * stride); // alocating a linear array of considered type.
-  for (int i = 0 ; i < n_samples * stride; i++){ 
+  for (int i = 0 ; i < n_samples * stride; i++){
     input[i] = singal_stream[i];
   }
 
@@ -65,7 +65,7 @@ static PyObject * decompress(PyObject * self, PyObject * args)
   } // One dimensional array does't have any problem in stride.
 
   // Finding the shape of array
-  int n_samples = (int)PyArray_DIM(signalObj, 0); 
+  int n_samples = (int)PyArray_DIM(signalObj, 0);
   if (n_dims != 1)
     stride = (int)PyArray_DIM(signalObj, 1);
 
@@ -73,7 +73,7 @@ static PyObject * decompress(PyObject * self, PyObject * args)
 
   // Conversion to int16_t
   int8_t *input = malloc(sizeof(int8_t) * n_samples * stride); // Allocating a linear array of considered type.
-  for (int i = 0 ; i < n_samples * stride; i++){ 
+  for (int i = 0 ; i < n_samples * stride; i++){
     input[i] = singal_stream[i];
   }
 
@@ -97,7 +97,22 @@ static PyMethodDef LilcomMethods[] = {
 };
 
 
-PyMODINIT_FUNC initlilcomlib(){
-  Py_InitModule3("lilcomlib", LilcomMethods, "A compression decompression package");
+/*
+PyMODINIT_FUNC initlilcom(){
+  Py_InitModule3("lilcom", LilcomMethods, "A compression decompression package");
 }
+*/
 
+static struct PyModuleDef lilcom =
+{
+  PyModuleDef_HEAD_INIT,
+  "lilcom", /* name of module */
+  "usage: foo\n", /* module documentation, may be NULL */
+  -1,   /* size of per-interpreter state of the module, or -1 if the module keeps state in global variables. */
+  LilcomMethods
+};
+
+PyMODINIT_FUNC PyInit_lilcom(void)
+{
+  return PyModule_Create(&lilcom);
+}
