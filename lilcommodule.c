@@ -1,6 +1,6 @@
 #include <Python.h>
 #include "numpy/arrayobject.h"
-#include "lilcom.h"
+#include "./lilcom.h"
 
 
 
@@ -42,7 +42,8 @@ static PyObject * compress(PyObject * self, PyObject * args)
   int lpc_order = 1;
 
   // FUNCTION CALL HERE!
-  //lilcom_compress(n_samples, input, stride, output, output_stride, lpc_order);
+  printf("function call!\n");
+  lilcom_compress(n_samples, input, stride, output, output_stride, lpc_order);
 
 
   Py_RETURN_TRUE;
