@@ -1,7 +1,7 @@
 #include <Python.h>
 #include "numpy/arrayobject.h"
+#include "numpy/ndarrayobject.h"
 #include "./lilcom.h"
-
 
 
 /**
@@ -34,19 +34,49 @@ static PyObject * compress(PyObject * self, PyObject * args)
   // Conversion to int16_t
   int16_t *input = malloc(sizeof(int16_t) * n_samples * stride); // alocating a linear array of considered type.
   for (int i = 0 ; i < n_samples * stride; i++){ 
-    input[i] = singal_stream[i];
+    input[i] = (int16_t)singal_stream[i];
   }
 
-  int8_t * output;
+  
   int output_stride = 1;
   int lpc_order = 1;
+  int8_t * output = malloc(sizeof(int8_t)*output_stride*n_samples);
 
   // FUNCTION CALL HERE!
   printf("function call!\n");
   lilcom_compress(n_samples, input, stride, output, output_stride, lpc_order);
 
+  
 
-  Py_RETURN_TRUE;
+  for(int ii = 0 ; ii < n_samples ; ii++){
+    printf("On sample %d, a = %d and b = %d\n", ii , input[ii], output[ii]);
+  }
+
+  
+
+  int output_dimensions[n_dims];
+  output_dimensions[0] = n_samples;
+  
+  
+  int * output_temp = malloc(sizeof(int) * n_samples * output_stride);
+  for (int i = 0; i < n_samples*output_stride; i++){
+    output_temp[i] = (int)output[i];
+  }
+
+ 
+
+  if (n_dims > 1){
+    printf("stride change\n");
+    output_dimensions[1] = output_stride;
+  }
+
+  import_array();
+
+  PyObject * output_numpy_array = PyArray_SimpleNewFromData(n_dims, output_dimensions, NPY_INT, (void*) output_temp);
+
+  PyArrayObject * return_val = (PyArrayObject *) output_numpy_array; 
+  Py_XDECREF(output_numpy_array);
+  return PyArray_Return(return_val);
 }
 
 
@@ -74,7 +104,7 @@ static PyObject * decompress(PyObject * self, PyObject * args)
   // Conversion to int16_t
   int8_t *input = malloc(sizeof(int8_t) * n_samples * stride); // Allocating a linear array of considered type.
   for (int i = 0 ; i < n_samples * stride; i++){ 
-    input[i] = singal_stream[i];
+    input[i] = (int8_t)singal_stream[i];
   }
 
   int16_t * output;
@@ -96,8 +126,22 @@ static PyMethodDef LilcomMethods[] = {
   { NULL, NULL, 0, NULL }
 };
 
+static struct PyModuleDef lilcom =
+{
+    PyModuleDef_HEAD_INIT,
+    "lilcom", /* name of module */
+    "",          /* module documentation, may be NULL */
+    -1,          /* size of per-interpreter state of the module, or -1 if the module keeps state in global variables. */
+    LilcomMethods
+};
 
-PyMODINIT_FUNC initlilcomlib(){
-  Py_InitModule3("lilcomlib", LilcomMethods, "A compression decompression package");
+PyMODINIT_FUNC PyInit_lilcom(void)
+{
+    return PyModule_Create(&lilcom);
+    import_array();
 }
+
+// PyMODINIT_FUNC initlilcom(){
+//   Py_InitModule3("lilcom", LilcomMethods, "A compression decompression package");
+// }
 
