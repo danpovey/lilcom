@@ -113,6 +113,7 @@ static PyObject * compress(PyObject * self, PyObject * args, PyObject * keywds)
       } break;
   }
 
+  /* Calling the core function */
   lilcom_compress(n_samples, input, input_stride, output, output_stride, lpc_order);
 
   /* Debug: Comment or Uncomment when on debug */
@@ -120,11 +121,16 @@ static PyObject * compress(PyObject * self, PyObject * args, PyObject * keywds)
     printf("for index %d a = %d and b = %d\n", i , input[i], output[i]);
   }
 
+  /* Making the resulting array */
   npy_intp * output_dimensions = malloc(sizeof(npy_intp)*2);
   output_dimensions[0] = n_samples;
   output_dimensions[1] = output_stride;
   PyArrayObject * output_array = (PyArrayObject *) PyArray_SimpleNewFromData(n_dims, output_dimensions, NPY_INT8, (void*) output);
 
+  /* Overcoming memory leak problem */
+  free(input);
+
+  /* Returning numpy array */
   PyObject *returner = PyArray_Return(output_array);
   return returner;
 }
