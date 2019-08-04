@@ -1,4 +1,5 @@
 #include <Python.h>
+ 
 #include "numpy/arrayobject.h"
 #include "numpy/ndarrayobject.h"
 #include "./lilcom.h"
@@ -45,19 +46,20 @@ static PyObject * compress(PyObject * self, PyObject * args)
   // FUNCTION CALL HERE!
   printf("function call!\n");
   lilcom_compress(n_samples, input, stride, output, output_stride, lpc_order);
-
+  printf("after function call!\n");
   
 
-  for(int ii = 0 ; ii < n_samples ; ii++){
-    printf("On sample %d, a = %d and b = %d\n", ii , input[ii], output[ii]);
-  }
+  // for(int ii = 0 ; ii < n_samples ; ii++){
+  //   printf("On sample %d, a = %d and b = %d\n", ii , input[ii], output[ii]);
+  // }
 
   
-
+  printf("before dimension!\n");
   int output_dimensions[n_dims];
   output_dimensions[0] = n_samples;
-  
-  
+  printf("after dimension!\n");
+
+  printf("See the error is malloc array!\n");
   int * output_temp = malloc(sizeof(int) * n_samples * output_stride);
   for (int i = 0; i < n_samples*output_stride; i++){
     output_temp[i] = (int)output[i];
@@ -71,12 +73,13 @@ static PyObject * compress(PyObject * self, PyObject * args)
   }
 
   import_array();
+  printf("See the error is after array!\n");
+  PyArrayObject * output_numpy_array = (PyArrayObject *)PyArray_SimpleNewFromData(n_dims, output_dimensions, NPY_INT, (void*) output_temp);
+  printf("See the error is after cast!\n");
+  //PyArrayObject * return_val = (PyArrayObject *) output_numpy_array; 
+  printf("See the error is after return!\nArray size is %d\n", PyArray_DIM(output_numpy_array, 0));
 
-  PyObject * output_numpy_array = PyArray_SimpleNewFromData(n_dims, output_dimensions, NPY_INT, (void*) output_temp);
-
-  PyArrayObject * return_val = (PyArrayObject *) output_numpy_array; 
-  Py_XDECREF(output_numpy_array);
-  return PyArray_Return(return_val);
+  return PyArray_Return(output_numpy_array);
 }
 
 
