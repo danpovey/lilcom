@@ -82,43 +82,9 @@ static PyObject * compress(PyObject * self, PyObject * args, PyObject * keywds)
     input = malloc(sizeof(int16_t) * n_samples * input_stride);
     output = malloc(sizeof(int8_t) * n_samples * output_stride);
     
-    
-
-    /* Conversion to int16_t array */
-    switch (((PyArrayObject*)signal_object)->descr->type_num){
-      case NPY_INT8:
-        for (int i = 0 ; i < n_samples * input_stride ; i++){
-          input[i] = (int16_t)(((int8_t *)signal_object_data)[i]); 
-        } break;
-      case NPY_INT16:
-        for (int i = 0 ; i < n_samples * input_stride ; i++){
+    for (int i = 0 ; i < n_samples * input_stride ; i++){
           input[i] = (int16_t)(((int16_t *)signal_object_data)[i]); 
-        } break;
-      case NPY_INT32:
-        for (int i = 0 ; i < n_samples * input_stride ; i++){
-          input[i] = (int16_t)(((int32_t *)signal_object_data)[i]); 
-        } break;
-      case NPY_INT64:
-        for (int i = 0 ; i < n_samples * input_stride ; i++){
-          input[i] = (int16_t)(((int64_t *)signal_object_data)[i]); 
-        } break;
-      case NPY_UINT8:
-        for (int i = 0 ; i < n_samples * input_stride ; i++){
-          input[i] = (int16_t)(((uint8_t *)signal_object_data)[i]); 
-        } break;
-      case NPY_UINT16:
-        for (int i = 0 ; i < n_samples * input_stride ; i++){
-          input[i] = (int16_t)(((uint16_t *)signal_object_data)[i]); 
-        } break;
-      case NPY_UINT32:
-        for (int i = 0 ; i < n_samples * input_stride ; i++){
-          input[i] = (int16_t)(((uint32_t *)signal_object_data)[i]);
-        } break;
-      case NPY_UINT64:
-        for (int i = 0 ; i < n_samples * input_stride ; i++){
-          input[i] = (int16_t)(((uint64_t *)signal_object_data)[i]); 
-        } break;
-    }
+    }     
 
     /* Calling the core function */
     lilcom_compress(n_samples, input, input_stride, output, output_stride, lpc_order);
@@ -142,47 +108,48 @@ static PyObject * compress(PyObject * self, PyObject * args, PyObject * keywds)
   } 
   
   else { // Float
-    float *input; // The one dimensional vectorized input array which will be given to the core function
-    /* Allocating the space for input and output */
-    input = malloc(sizeof(float) * n_samples * input_stride);
-    output = malloc(sizeof(int8_t) * n_samples * output_stride);
+    return NULL;
+  //   float *input; // The one dimensional vectorized input array which will be given to the core function
+  //   /* Allocating the space for input and output */
+  //   input = malloc(sizeof(float) * n_samples * input_stride);
+  //   output = malloc(sizeof(int8_t) * n_samples * output_stride);
     
 
-    /* Conversion to int16_t array */
-    switch (((PyArrayObject*)signal_object)->descr->type_num){
-      case NPY_FLOAT:
-        for (int i = 0 ; i < n_samples * input_stride ; i++){
-          input[i] = (float)(((float *)signal_object_data)[i]); 
-        } break;
-      case NPY_DOUBLE:
-        for (int i = 0 ; i < n_samples * input_stride ; i++){
-          input[i] = (float)(((double *)signal_object_data)[i]); 
-        } break;
-      case NPY_LONGDOUBLE:
-        for (int i = 0 ; i < n_samples * input_stride ; i++){
-          input[i] = (float)(((long double *)signal_object_data)[i]); 
-        } break;
-    }
+  //   /* Conversion to int16_t array */
+  //   switch (((PyArrayObject*)signal_object)->descr->type_num){
+  //     case NPY_FLOAT:
+  //       for (int i = 0 ; i < n_samples * input_stride ; i++){
+  //         input[i] = (float)(((float *)signal_object_data)[i]); 
+  //       } break;
+  //     case NPY_DOUBLE:
+  //       for (int i = 0 ; i < n_samples * input_stride ; i++){
+  //         input[i] = (float)(((double *)signal_object_data)[i]); 
+  //       } break;
+  //     case NPY_LONGDOUBLE:
+  //       for (int i = 0 ; i < n_samples * input_stride ; i++){
+  //         input[i] = (float)(((long double *)signal_object_data)[i]); 
+  //       } break;
+  //   }
 
-    /* Calling the core function */
-    //lilcom_compress_float(n_samples, input, input_stride, output, output_stride);
+  //   /* Calling the core function */
+  //   //lilcom_compress_float(n_samples, input, input_stride, output, output_stride);
 
-    /* Debug: Comment or Uncomment when on debug */
-    // for (int i = 0; i < n_samples * input_stride ; i++){
-    //   printf("for index %d a = %f and b = %d\n", i , input[i], output[i]);
-    // }
+  //   /* Debug: Comment or Uncomment when on debug */
+  //   // for (int i = 0; i < n_samples * input_stride ; i++){
+  //   //   printf("for index %d a = %f and b = %d\n", i , input[i], output[i]);
+  //   // }
 
-    /* Making the resulting array */
-    npy_intp * output_dimensions = malloc(sizeof(npy_intp)*2);
-    output_dimensions[0] = n_samples;
-    output_dimensions[1] = output_stride;
-    PyArrayObject * output_array = (PyArrayObject *) PyArray_SimpleNewFromData(n_dims, output_dimensions, NPY_INT8, (void*) output);
+  //   /* Making the resulting array */
+  //   npy_intp * output_dimensions = malloc(sizeof(npy_intp)*2);
+  //   output_dimensions[0] = n_samples;
+  //   output_dimensions[1] = output_stride;
+  //   PyArrayObject * output_array = (PyArrayObject *) PyArray_SimpleNewFromData(n_dims, output_dimensions, NPY_INT8, (void*) output);
 
-    /* Overcoming memory leak problem */
-    free(input);
-    /* Returning numpy array */
-    PyObject *returner = PyArray_Return(output_array);
-    return returner;
+  //   /* Overcoming memory leak problem */
+  //   free(input);
+  //   /* Returning numpy array */
+  //   PyObject *returner = PyArray_Return(output_array);
+  //   return returner;
   }
   return NULL;
 }
@@ -230,41 +197,8 @@ static PyObject * decompress(PyObject * self, PyObject * args,  PyObject * keywd
   input = malloc(sizeof(int8_t) * n_samples * input_stride);
   output = malloc(sizeof(int16_t) * n_samples * output_stride);
   
-
-  /* Conversion to int16_t array */
-  switch (((PyArrayObject*)signal_object)->descr->type_num){
-    case NPY_INT8:
-      for (int i = 0 ; i < n_samples * input_stride ; i++){
+  for (int i = 0 ; i < n_samples * input_stride ; i++){
         input[i] = (int8_t)(((int8_t *)signal_object_data)[i]); 
-      } break;
-    case NPY_INT16:
-      for (int i = 0 ; i < n_samples * input_stride ; i++){
-        input[i] = (int8_t)(((int16_t *)signal_object_data)[i]); 
-      } break;
-    case NPY_INT32:
-      for (int i = 0 ; i < n_samples * input_stride ; i++){
-        input[i] = (int8_t)(((int32_t *)signal_object_data)[i]); 
-      } break;
-    case NPY_INT64:
-      for (int i = 0 ; i < n_samples * input_stride ; i++){
-        input[i] = (int8_t)(((int64_t *)signal_object_data)[i]); 
-      } break;
-    case NPY_UINT8:
-      for (int i = 0 ; i < n_samples * input_stride ; i++){
-        input[i] = (int8_t)(((uint8_t *)signal_object_data)[i]); 
-      } break;
-    case NPY_UINT16:
-      for (int i = 0 ; i < n_samples * input_stride ; i++){
-        input[i] = (int8_t)(((uint16_t *)signal_object_data)[i]); 
-      } break;
-    case NPY_UINT32:
-      for (int i = 0 ; i < n_samples * input_stride ; i++){
-        input[i] = (int8_t)(((uint32_t *)signal_object_data)[i]);
-      } break;
-    case NPY_UINT64:
-      for (int i = 0 ; i < n_samples * input_stride ; i++){
-        input[i] = (int8_t)(((uint64_t *)signal_object_data)[i]); 
-      } break;
   }
 
   /* Calling the core function */
