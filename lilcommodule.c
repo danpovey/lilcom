@@ -69,14 +69,19 @@ static PyObject * compress(PyObject * self, PyObject * args, PyObject * keywds)
 
 
   output_stride = input_stride; ////// CHANGE IT IF NEEDED
+  
+  /* Ensuring that the array is contiguous */
+  PyArrayObject *signal_object_contiguous = PyArray_GETCONTIGUOUS(signal_object); 
 
-  void *signal_object_data = PyArray_DATA(signal_object);
+
+  void *signal_object_data = PyArray_DATA(signal_object_contiguous);
 
   if(integral == 1) { // Integer
     int16_t *input; // The one dimensional vectorized input array which will be given to the core function
     /* Allocating the space for input and output */
     input = malloc(sizeof(int16_t) * n_samples * input_stride);
     output = malloc(sizeof(int8_t) * n_samples * output_stride);
+    
     
 
     /* Conversion to int16_t array */
@@ -214,7 +219,10 @@ static PyObject * decompress(PyObject * self, PyObject * args,  PyObject * keywd
 
   output_stride = input_stride; ////// CHANGE IT IF NEEDED
 
-  void *signal_object_data = PyArray_DATA(signal_object);
+  /* Ensuring that the array is contiguous */
+  PyArrayObject *signal_object_contiguous = PyArray_GETCONTIGUOUS(signal_object);
+
+  void *signal_object_data = PyArray_DATA(signal_object_contiguous);
 
 
   int8_t *input; // The one dimensional vectorized input array which will be given to the core function
