@@ -62,10 +62,10 @@ static PyObject * compress(PyObject * self, PyObject * args, PyObject * keywds)
 
 
   /* Debug: Comment or Uncomment when on debug */
-  printf("The array is received and the lpc_order = %d\n", lpc_order);
-  printf("Array is %d dimensional\n", n_dims);
-  printf("It has %d samples and stride is %d\n", n_samples, input_stride);
-  printf("PyArrayType == int is %d\n", integral );
+  // printf("The array is received and the lpc_order = %d\n", lpc_order);
+  // printf("Array is %d dimensional\n", n_dims);
+  // printf("It has %d samples and stride is %d\n", n_samples, input_stride);
+  // printf("PyArrayType == int is %d\n", integral );
 
 
   output_stride = input_stride; ////// CHANGE IT IF NEEDED
@@ -119,9 +119,9 @@ static PyObject * compress(PyObject * self, PyObject * args, PyObject * keywds)
     lilcom_compress(n_samples, input, input_stride, output, output_stride, lpc_order);
 
     /* Debug: Comment or Uncomment when on debug */
-    for (int i = 0; i < n_samples * input_stride ; i++){
-      printf("for index %d a = %d and b = %d\n", i , input[i], output[i]);
-    }
+    // for (int i = 0; i < n_samples * input_stride ; i++){
+    //   printf("for index %d a = %d and b = %d\n", i , input[i], output[i]);
+    // }
 
     /* Making the resulting array */
     npy_intp * output_dimensions = malloc(sizeof(npy_intp)*2);
@@ -163,9 +163,9 @@ static PyObject * compress(PyObject * self, PyObject * args, PyObject * keywds)
     //lilcom_compress_float(n_samples, input, input_stride, output, output_stride);
 
     /* Debug: Comment or Uncomment when on debug */
-    for (int i = 0; i < n_samples * input_stride ; i++){
-      printf("for index %d a = %f and b = %d\n", i , input[i], output[i]);
-    }
+    // for (int i = 0; i < n_samples * input_stride ; i++){
+    //   printf("for index %d a = %f and b = %d\n", i , input[i], output[i]);
+    // }
 
     /* Making the resulting array */
     npy_intp * output_dimensions = malloc(sizeof(npy_intp)*2);
@@ -208,8 +208,8 @@ static PyObject * decompress(PyObject * self, PyObject * args,  PyObject * keywd
 
 
   /* Debug: Comment or Uncomment when on debug */
-  printf("Array is %d dimensional\n", n_dims);
-  printf("It has %d samples and stride is %d\n", n_samples, input_stride);
+  // printf("Array is %d dimensional\n", n_dims);
+  // printf("It has %d samples and stride is %d\n", n_samples, input_stride);
 
 
   output_stride = input_stride; ////// CHANGE IT IF NEEDED
@@ -263,9 +263,9 @@ static PyObject * decompress(PyObject * self, PyObject * args,  PyObject * keywd
   lilcom_decompress(n_samples, input, input_stride, output, output_stride);
 
   /* Debug: Comment or Uncomment when on debug */
-  for (int i = 0; i < n_samples * input_stride ; i++){
-    printf("for index %d a = %d and b = %d\n", i , input[i], output[i]);
-  }
+  // for (int i = 0; i < n_samples * input_stride ; i++){
+  //   printf("for index %d a = %d and b = %d\n", i , input[i], output[i]);
+  // }
 
   /* Making the resulting array */
   npy_intp * output_dimensions = malloc(sizeof(npy_intp)*2);
