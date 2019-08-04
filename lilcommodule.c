@@ -1,130 +1,177 @@
+// Needed definitions and includes for python C interface
+#define PY_SSIZE_T_CLEAN
 #include <Python.h>
  
 #include "numpy/arrayobject.h"
-#include "numpy/ndarrayobject.h"
+
+// The core library 
 #include "./lilcom.h"
+
+int integral_check (int array_type){
+  if (array_type == NPY_INT8) return 1;
+  if (array_type == NPY_INT16) return 1;
+  if (array_type == NPY_INT32) return 1;
+  if (array_type == NPY_INT64) return 1;
+  if (array_type == NPY_SHORT) return 1;
+  if (array_type == NPY_INT) return 1;
+  if (array_type == NPY_LONG) return 1;
+  if (array_type == NPY_LONGLONG) return 1;
+
+  if (array_type == NPY_UINT8) return 1;
+  if (array_type == NPY_UINT16) return 1;
+  if (array_type == NPY_UINT32) return 1;
+  if (array_type == NPY_UINT64) return 1;
+  if (array_type == NPY_USHORT) return 1;
+  if (array_type == NPY_UINT) return 1;
+  if (array_type == NPY_ULONG) return 1;
+  if (array_type == NPY_ULONGLONG) return 1;
+  return 0;
+}
 
 
 /**
    Lossily compresses a given numpy array of 16-bit integer sequence data.
    It will first convert the numpy array data to a C `int16_t` array and then 
-   passes the array to the core lilcom library, finally it returns the result
+   passes the array to the core lilcom core library, finally it returns the result
    in form of a numpy array.
  */
-static PyObject * compress(PyObject * self, PyObject * args)
+static PyObject * compress(PyObject * self, PyObject * args, PyObject * keywds)
 {
+  /* Defining all variables */
+  PyObject *signal_object; // The input signal, passed as a numpy array.
+  int n_dims = 0; // Number of dimensions of the given numpy array
+  int input_stride; // The number of integers between to consecutive samples
+  int output_stride; // The number of integers between to consecutive samples in output
+  int n_samples = 0; // number of samples given in the numpy array
+  int16_t *input; // The one dimensional vectorized input array which will be given to the core function
+  int8_t *output; // The one dimensional vectorized output array which will be modified by the core function
+  int lpc_order = 5; // LPC Order defined in the core function (more information -> lilcom.h)
+  int integral = 1; // Checks whether the array contains integer or float
+
+  /* Reading and information - extracting for input data */
+  static char *kwlist[] = {"X" , "lpc_order", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "O|i", kwlist, &signal_object, &lpc_order)) 
+    Py_RETURN_FALSE;
   
-  PyObject *signalObj; // The input signal, passed as a numpy array.
-  if (!PyArg_ParseTuple(args, "O", &signalObj)) { //Parsing the input of the python code
-      Py_RETURN_FALSE;
+  // Initializing shape related variables
+  n_dims = PyArray_NDIM(signal_object); // Getting the number of dimensions
+  n_samples = PyArray_DIM(signal_object , 0); // Getting the first dimension
+  if (n_dims > 1) input_stride = PyArray_DIM(signal_object , 0); // Conditioning on second dimension
+  else input_stride = 1;
+  integral = integral_check(((PyArrayObject*)signal_object)->descr->type_num); // Checking whether the array has float
+
+
+  /* Debug: Comment or Uncomment when on debug */
+  printf("The array is received and the lpc_order = %d\n", lpc_order);
+  printf("Array is %d dimensional\n", n_dims);
+  printf("It has %d samples and stride is %d\n", n_samples, input_stride);
+  printf("PyArrayType == int is %d\n", integral );
+
+
+  output_stride = input_stride; ////// CHANGE IT
+
+  void *signal_object_data = PyArray_DATA(signal_object);
+
+  /* Allocating the space for input and output */
+  input = malloc(sizeof(int16_t) * n_samples * input_stride);
+  output = malloc(sizeof(int8_t) * n_samples * output_stride);
+  
+
+  /* Conversion to int16_t array */
+  switch (((PyArrayObject*)signal_object)->descr->type_num){
+    case NPY_INT8:
+      for (int i = 0 ; i < n_samples * input_stride ; i++){
+        input[i] = (int16_t)(((int8_t *)signal_object_data)[i]); 
+      } break;
+    case NPY_INT16:
+      for (int i = 0 ; i < n_samples * input_stride ; i++){
+        input[i] = (int16_t)(((int16_t *)signal_object_data)[i]); 
+      } break;
+    case NPY_INT32:
+      for (int i = 0 ; i < n_samples * input_stride ; i++){
+        input[i] = (int16_t)(((int32_t *)signal_object_data)[i]); 
+      } break;
+    case NPY_INT64:
+      for (int i = 0 ; i < n_samples * input_stride ; i++){
+        input[i] = (int16_t)(((int64_t *)signal_object_data)[i]); 
+      } break;
+    case NPY_UINT8:
+      for (int i = 0 ; i < n_samples * input_stride ; i++){
+        input[i] = (int16_t)(((uint8_t *)signal_object_data)[i]); 
+      } break;
+    case NPY_UINT16:
+      for (int i = 0 ; i < n_samples * input_stride ; i++){
+        input[i] = (int16_t)(((uint16_t *)signal_object_data)[i]); 
+      } break;
+    case NPY_UINT32:
+      for (int i = 0 ; i < n_samples * input_stride ; i++){
+        input[i] = (int16_t)(((uint32_t *)signal_object_data)[i]);
+      } break;
+    case NPY_UINT64:
+      for (int i = 0 ; i < n_samples * input_stride ; i++){
+        input[i] = (int16_t)(((uint64_t *)signal_object_data)[i]); 
+      } break;
   }
-  int n_dims = PyArray_NDIM(signalObj); // Number of dimensions in the numpy array
-  int stride; // The number of integers between to consecutive samples.
 
-  if (n_dims == 1){
-    stride = 1;
-  } // One dimensional array does't have any problem in stride.
+  lilcom_compress(n_samples, input, input_stride, output, output_stride, lpc_order);
 
-  // Finding the shape of array
-  int n_samples = (int)PyArray_DIM(signalObj, 0); 
-  if (n_dims != 1)
-    stride = (int)PyArray_DIM(signalObj, 1);
-
-  int **singal_stream = (int **)(PyArray_DATA(signalObj));
-
-  // Conversion to int16_t
-  int16_t *input = malloc(sizeof(int16_t) * n_samples * stride); // alocating a linear array of considered type.
-  for (int i = 0 ; i < n_samples * stride; i++){ 
-    input[i] = (int16_t)singal_stream[i];
+  /* Debug: Comment or Uncomment when on debug */
+  for (int i = 0; i < n_samples * input_stride ; i++){
+    printf("for index %d a = %d and b = %d\n", i , input[i], output[i]);
   }
 
-  
-  int output_stride = 1;
-  int lpc_order = 1;
-  int8_t * output = malloc(sizeof(int8_t)*output_stride*n_samples);
-
-  // FUNCTION CALL HERE!
-  printf("function call!\n");
-  lilcom_compress(n_samples, input, stride, output, output_stride, lpc_order);
-  printf("after function call!\n");
-  
-
-  // for(int ii = 0 ; ii < n_samples ; ii++){
-  //   printf("On sample %d, a = %d and b = %d\n", ii , input[ii], output[ii]);
-  // }
-
-  
-  printf("before dimension!\n");
-  int output_dimensions[n_dims];
+  npy_intp * output_dimensions = malloc(sizeof(npy_intp)*2);
   output_dimensions[0] = n_samples;
-  printf("after dimension!\n");
+  output_dimensions[1] = output_stride;
+  PyArrayObject * output_array = (PyArrayObject *) PyArray_SimpleNewFromData(n_dims, output_dimensions, NPY_INT8, (void*) output);
 
-  printf("See the error is malloc array!\n");
-  int * output_temp = malloc(sizeof(int) * n_samples * output_stride);
-  for (int i = 0; i < n_samples*output_stride; i++){
-    output_temp[i] = (int)output[i];
-  }
-
- 
-
-  if (n_dims > 1){
-    printf("stride change\n");
-    output_dimensions[1] = output_stride;
-  }
-
-  import_array();
-  printf("See the error is after array!\n");
-  PyArrayObject * output_numpy_array = (PyArrayObject *)PyArray_SimpleNewFromData(n_dims, output_dimensions, NPY_INT, (void*) output_temp);
-  printf("See the error is after cast!\n");
-  //PyArrayObject * return_val = (PyArrayObject *) output_numpy_array; 
-  printf("See the error is after return!\nArray size is %d\n", PyArray_DIM(output_numpy_array, 0));
-
-  return PyArray_Return(output_numpy_array);
+  PyObject *returner = PyArray_Return(output_array);
+  return returner;
 }
 
 
 
 static PyObject * decompress(PyObject * self, PyObject * args)
 {
-  PyObject *signalObj; // The input signal, passed as a numpy array.
-  if (!PyArg_ParseTuple(args, "O", &signalObj)) { //Parsing the input of the python code
+  PyObject *signal_object; // The input signal, passed as a numpy array.
+  if (!PyArg_ParseTuple(args, "O", &signal_object)) { //Parsing the input of the python code
       Py_RETURN_FALSE;
   }
-  int n_dims = PyArray_NDIM(signalObj); // Number of dimensions in the numpy array
-  int stride; // The number of integers between to consecutive samples.
+  int n_dims = PyArray_NDIM(signal_object); // Number of dimensions in the numpy array
+  int input_stride; // The number of integers between to consecutive samples.
 
   if (n_dims == 1){
-    stride = 1;
-  } // One dimensional array does't have any problem in stride.
+    input_stride = 1;
+  } // One dimensional array does't have any problem in input_stride.
 
   // Finding the shape of array
-  int n_samples = (int)PyArray_DIM(signalObj, 0); 
+  int n_samples = (int)PyArray_DIM(signal_object, 0); 
   if (n_dims != 1)
-    stride = (int)PyArray_DIM(signalObj, 1);
+    input_stride = (int)PyArray_DIM(signal_object, 1);
 
-  int **singal_stream = (int **)(PyArray_DATA(signalObj));
+  int **singal_stream = (int **)(PyArray_DATA(signal_object));
 
   // Conversion to int16_t
-  int8_t *input = malloc(sizeof(int8_t) * n_samples * stride); // Allocating a linear array of considered type.
-  for (int i = 0 ; i < n_samples * stride; i++){ 
+  int8_t *input = malloc(sizeof(int8_t) * n_samples * input_stride); // Allocating a linear array of considered type.
+  for (int i = 0 ; i < n_samples * input_stride; i++){ 
     input[i] = (int8_t)singal_stream[i];
   }
 
   int16_t * output;
-  int output_stride = 1;
+  int output_input_stride = 1;
   int lpc_order = 1;
 
   // FUNCTION CALL HERE!
-  //lilcom_compress(n_samples, input, stride, output, output_stride, lpc_order);
+  //lilcom_compress(n_samples, input, input_stride, output, output_input_stride, lpc_order);
 
 
   Py_RETURN_TRUE;
 }
 
 
-
+/* Defining Functions in the Madule */
 static PyMethodDef LilcomMethods[] = {
-  { "compress", compress, METH_VARARGS, "Compresses a recieved signal" },
+  { "compress", compress, METH_VARARGS | METH_KEYWORDS, "Compresses a recieved signal" },
   { "decompress", decompress, METH_VARARGS, "Decompresses a recieved compress signal"  },
   { NULL, NULL, 0, NULL }
 };
@@ -140,11 +187,8 @@ static struct PyModuleDef lilcom =
 
 PyMODINIT_FUNC PyInit_lilcom(void)
 {
-    return PyModule_Create(&lilcom);
     import_array();
+    return PyModule_Create(&lilcom); 
 }
 
-// PyMODINIT_FUNC initlilcom(){
-//   Py_InitModule3("lilcom", LilcomMethods, "A compression decompression package");
-// }
 
