@@ -47,7 +47,10 @@ static PyObject * compress(PyObject * self, PyObject * args, PyObject * keywds)
   input_stride = PyArray_STRIDE(signal_input, 0)/sizeof(int16_t);
   output_stride = PyArray_STRIDE(signal_output, 0)/sizeof(int8_t);
 
-  /* Access to the data part of the numpy array */
+
+  /* Access to the data part of the numpy array
+    PyArray_Data returns a pointer to the data stored in the memory.
+   */
   input = PyArray_DATA(signal_input);
   output = PyArray_DATA(signal_output);
   
