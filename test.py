@@ -9,17 +9,21 @@ with open("sample.txt", 'r') as my_file:
 
 
 data = [int(d) for d in data[0]]
-print(data)
 
-# Sample test array to test the function.
-numpy_array = numpy.array(data)
-numpy_array = numpy_array.astype(numpy.int16)
-# Running the function in lilcommodule.c
-val1 = lilcom.compress(numpy_array)
+print("Data Loaded from sample.txt")
 
-# numpy_array = numpy.array([[5]*10] * 100)
-val2 = lilcom.decompress(val1)
+## Making a numpy array from the given data
+inputArray = numpy.array(data, dtype=numpy.int16)
 
+## Compression
+# Making an empty numpy array for output
+compressed = numpy.zeros(inputArray.shape, dtype = numpy.int8)
+lilcom.compress(inputArray, compressed)
 
-print (val1)
-print (val2)
+## Decompression (retrieval)
+# Making an empty numpy array for retieved signal
+retrieved = numpy.zeros(inputArray.shape, dtype = numpy.int16)
+lilcom.decompress(compressed, retrieved)
+
+for i in range(len(data)):
+    print("The original index: ", inputArray[i], " compressed is: ", compressed[i], " retrieved: ", retrieved[i])
