@@ -7,27 +7,6 @@
 // The core library 
 #include "./lilcom.h"
 
-int integral_check (int array_type){
-  if (array_type == NPY_INT8) return 1;
-  if (array_type == NPY_INT16) return 1;
-  if (array_type == NPY_INT32) return 1;
-  if (array_type == NPY_INT64) return 1;
-  if (array_type == NPY_SHORT) return 1;
-  if (array_type == NPY_INT) return 1;
-  if (array_type == NPY_LONG) return 1;
-  if (array_type == NPY_LONGLONG) return 1;
-
-  if (array_type == NPY_UINT8) return 1;
-  if (array_type == NPY_UINT16) return 1;
-  if (array_type == NPY_UINT32) return 1;
-  if (array_type == NPY_UINT64) return 1;
-  if (array_type == NPY_USHORT) return 1;
-  if (array_type == NPY_UINT) return 1;
-  if (array_type == NPY_ULONG) return 1;
-  if (array_type == NPY_ULONGLONG) return 1;
-  return 0;
-}
-
 
 /**
    Lossily compresses a given numpy array of 16-bit integer sequence data.
@@ -135,7 +114,6 @@ static PyObject * decompress(PyObject * self, PyObject * args,  PyObject * keywd
   // /* Returning numpy array */
   PyObject *returner = PyArray_Return(output_array);
   return returner;
-
 }
 
 
