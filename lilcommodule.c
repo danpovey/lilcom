@@ -86,7 +86,7 @@ static PyObject * decompress(PyObject * self, PyObject * args,  PyObject * keywd
   */
   static char *kwlist[] = {"X", "Y", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist, &signal_input, &signal_output)) 
-    Py_RETURN_FALSE;
+    return Py_BuildValue("i",1);
   
   // Initializing shape related variables
   n_dims = PyArray_NDIM(signal_input); // Getting the number of dimensions
@@ -103,17 +103,9 @@ static PyObject * decompress(PyObject * self, PyObject * args,  PyObject * keywd
   output = PyArray_DATA(signal_output);
   
   /* Calling the core function */
-  lilcom_decompress(n_samples, input, input_stride, output, output_stride);
+  int function_state = lilcom_decompress(n_samples, input, input_stride, output, output_stride);
 
-  /* Making the resulting array */
-  npy_intp * output_dimensions = malloc(sizeof(npy_intp)*2);
-  output_dimensions[0] = n_samples;
-  output_dimensions[1] = output_stride;
-  PyArrayObject * output_array = (PyArrayObject *) PyArray_SimpleNewFromData(n_dims, output_dimensions, NPY_INT8, (void*) output);
-
-  // /* Returning numpy array */
-  PyObject *returner = PyBuildValue("i",1);
-  return returner;
+  return Py_BuildValue("i",function_state);
 }
 
 
