@@ -112,7 +112,7 @@ static PyObject * decompress(PyObject * self, PyObject * args,  PyObject * keywd
   PyArrayObject * output_array = (PyArrayObject *) PyArray_SimpleNewFromData(n_dims, output_dimensions, NPY_INT8, (void*) output);
 
   // /* Returning numpy array */
-  PyObject *returner = PyArray_Return(output_array);
+  PyObject *returner = PyBuildValue("i",1);
   return returner;
 }
 
