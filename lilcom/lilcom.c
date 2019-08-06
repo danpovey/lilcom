@@ -540,15 +540,31 @@ struct CompressionState {
 
 
 /*******************
-   The lilcom_header functions below mostly serve to document the format
-   of the header, we could just have put the statements static inline, which is
-    what we hope the compiler will do.
-   **************************/
+  The lilcom_header functions below mostly serve to clarify the format
+  of the header; we could just have put the statements inline, which is
+  what we hope the compiler will do.
+
+  The format of the 4-byte header is:
+
+    Byte 0:  most-significant 4 bytes contain exponent for frame -1;
+             least-significant 4 bytes contain LILCOM_VERSION (currently 1)
+    Byte 1:  contains the LPC order (this was user-specifiable)
+    Byte 2:  the mantissa of the -1'th sample.
+    Byte 3:  The conversion exponent c, as int8_t.  This is only relevant when
+             uncompressing to floating point types.  After converting to int16,
+             we will cast to float and then multiply by 2^c.  When compressing,
+             we would have multiplied by 2^{-c} and then rounded to int16, with
+             c chosen to avoid overflow.  This will normally be set (by calling
+             code) to -15 if the data was originally int16; this will mean that
+             when converting to float, we'll remain in the range [-1, 1]
+ */
+
+
 
 /** Set the exponent for frame -1 in the header.  This also sets the
     version number in the lower-order 4 bits.  */
 static inline void lilcom_header_set_exponent_m1(int8_t *header, int stride,
-                                          int exponent) {
+                                                 int exponent) {
   assert(exponent >= 0 && exponent <= 11);
   header[0 * stride] = (int8_t)(exponent << 4 | LILCOM_VERSION);
 }
@@ -571,13 +587,28 @@ static inline int lilcom_header_plausible(const int8_t *header,
       lilcom_header_get_exponent_m1(header, stride) <= 11;
 }
 
-/**  Initialize the header.  Currently it's only necessary to zero byte 3 (which
-     isn't always used; when we're compressing float data it stores an
-     exponent there);
-     Other bytes will be set up while the stream is compressed.  */
-static inline void lilcom_header_init(int8_t *header, int stride) {
-  header[3 * stride] = (int8_t)0;
+/**  Initialize the header.
+        @param [in] header  Pointer to start of the header
+        @param [in] stride  Stride of the output int8_t data, normally 1
+        @param [in] conversion_exponent   Search above for 'Byte 3:' for an
+                            explanation of what this is.  It's user-supplied,
+                            as far as this part of the code is concerned.
+                            Required to be in the range [-128, 127], and
+                            we fail with assert error if not (the code that
+                            enforces this is inside this module, so it would
+                            be our code error if this fails).
+*/
+static inline void lilcom_header_set_conversion_exponent(
+    int8_t *header, int stride, int conversion_exponent) {
+  asssert(conversion_exponent >= -128 && conversion_exponent <= 127);
+  header[3 * stride] = (int8_t)conversion_exponent;
 }
+
+static inline void lilcom_header_get_conversion_exponent(
+    int8_t *header, int stride) {
+  return header[3 * stride];
+}
+
 
 /** Set the LPC order in the header.  This goes in byte 1.  Currently it only
     uses 4 bits since the max LPC order allowed is currently 15.  */
@@ -592,19 +623,16 @@ static inline int lilcom_header_get_lpc_order(const int8_t *header, int stride) 
   return (int)(header[1 * stride]);
 }
 
-/** Set the -1'th sample's mantissa in the header.  This goes in byte 2,
-    the higher order 7 bits (the lowest-order bit is unused).
- */
+/** Set the -1'th sample's mantissa in the header.  This goes in byte 2. */
 static inline void lilcom_header_set_mantissa_m1(int8_t *header,
                                           int stride, int mantissa) {
   assert(mantissa >= -64 && mantissa <= 63);
-  header[2 * stride] = (int8_t) mantissa * 2;
+  header[2 * stride] = (int8_t) mantissa;
 }
-/** Return the -1'th sample's mantissa from the header, it's in
-    the highest-order 7 bits (we reserve the 8th bit for future use) */
+/** Return the -1'th sample's mantissa from the header, it's in byte 2. */
 static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
                                           int stride) {
-  return ((int)header[2 * stride] & ~(int8_t)1) / 2;
+  return (int)header[2 * stride]
 }
 
 
@@ -1549,7 +1577,8 @@ static inline void lilcom_init_compression(
     int64_t num_samples,
     const int16_t *input, int input_stride,
     int8_t *output, int output_stride,
-    int lpc_order, struct CompressionState *state) {
+    int lpc_order, int conversion_exponent,
+    struct CompressionState *state) {
   state->lpc_order = lpc_order;
   lilcom_init_lpc(&(state->lpc_computations[0]));
   lilcom_init_lpc(&(state->lpc_computations[1]));
@@ -1566,7 +1595,8 @@ static inline void lilcom_init_compression(
     state->decompressed_signal[i] = 0;
 
 
-  lilcom_header_init(output, output_stride);
+  lilcom_header_set_conversion_exponent(output, output_stride,
+                                        conversion_exponent);
   lilcom_header_set_lpc_order(output, output_stride,
                               state->lpc_order);
   assert(lilcom_header_get_lpc_order(output, output_stride) == lpc_order);  /* TEMP */
@@ -1582,7 +1612,7 @@ static inline void lilcom_init_compression(
 int lilcom_compress(int64_t num_samples,
                     const int16_t *input, int input_stride,
                     int8_t *output, int output_stride,
-                    int lpc_order) {
+                    int lpc_order, int conversion_exponent) {
   if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
       lpc_order < 0 || lpc_order > MAX_LPC_ORDER) {
     return 1;  /* error */
@@ -1590,7 +1620,7 @@ int lilcom_compress(int64_t num_samples,
   struct CompressionState state;
   lilcom_init_compression(num_samples, input, input_stride,
                           output, output_stride, lpc_order,
-                          &state);
+                          conversion_exponent, &state);
   for (int64_t t = 1; t < num_samples; t++)
     lilcom_compress_for_time(t, &state);
 
