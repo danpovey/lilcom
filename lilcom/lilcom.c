@@ -3,6 +3,7 @@
 #include <stdlib.h>  /* for malloc */
 #include <math.h>  /* for frexp and frexpf and pow, used in floating point compression. */
 #include <stdio.h>  /* TEMP-- for debugging. */
+#include <float.h>  /* for FLT_MAX */
 
 
 /**
@@ -2126,6 +2127,62 @@ int lilcom_compress_float(int64_t num_samples,
 }
 
 
+int lilcom_decompress_float(int64_t num_samples,
+                            const int8_t *input, int input_stride,
+                            float *output, int output_stride) {
+  /* We re-use the output as the temporary int16_t array,
+   */
+  int16_t *temp_array = (int16_t*)output;
+  int temp_array_stride;
+  if (output_stride == 1) {
+    temp_array_stride = 1;
+  } else {
+    temp_array_stride = output_stride * (sizeof(float) / sizeof(int16_t));
+  }
+  int exponent;
+  int ans = lilcom_decompress(num_samples, input, input_stride,
+                              temp_array, temp_array_stride,
+                              &exponent);
+  if (ans != 0)
+    return ans;  /* only other possible value is 1, actually. */
+  if (exponent < -125 || exponent > 120)
+    return 1;   /* if this was compressed by lilcom_compress_float it should be
+                   in the range [-125.. 120]; compute_conversion_exponent()
+                   ensured this. */
+  /* the following should not go out of representable range; single precision
+     floating point allows exponents in [-126..127]. */
+  float scale = powf(2.0, exponent);
+
+  /* It should be extremely rare that nearly_out_of_range is true; it
+     means overflowing floating point range is a possibility and we
+     need to be more careful */
+  int nearly_out_of_range = (scale * 32768) - (scale * 32768) != 0;
+
+
+  /* The following loops go backwards to avoid overwriting int16_t
+     values that will be needed later.
+   */
+  if (!nearly_out_of_range) {
+    for (int64_t k = num_samples - 1; k >= 0; k--) {
+      int16_t i = temp_array[k * temp_array_stride];
+      output[k * output_stride] = i * scale;
+    }
+  } else {
+    for (int64_t k = num_samples - 1; k >= 0; k--) {
+      int16_t i = temp_array[k * temp_array_stride];
+      float f = i * scale;
+      if (f - f != 0) {  /* f is infinite. Set it to the most negative or positive representable
+                            float value.*/
+        if (f < 0) f = -FLT_MAX;
+        else f = FLT_MAX;
+      }
+      output[k * output_stride] = f;
+    }
+  }
+  return 0;  /* Success */
+}
+
+
 
 #ifdef LILCOM_TEST
 
@@ -2192,6 +2249,22 @@ float lilcom_compute_snr(int64_t num_samples,
   return (noise_sumsq * 1.0) / signal_sumsq;
 }
 
+/**
+   Computes the SNR, as a ratio, where a is the signal and (b-a) is the noise.
+ */
+float lilcom_compute_snr_float(int64_t num_samples,
+                               float *signal_a, int stride_a,
+                               float *signal_b, int stride_b) {
+  double signal_sumsq = 0, noise_sumsq = 0;
+  for (int64_t i = 0; i < num_samples; i++) {
+    double a = signal_a[stride_a * i], b = signal_b[stride_b * i];
+    signal_sumsq += a * a;
+    noise_sumsq += (b-a)*(b-a);
+  }
+  return (noise_sumsq * 1.0) / signal_sumsq;
+}
+
+
 void lilcom_test_compress_sine() {
   int16_t buffer[1000];
   int lpc_order = 10;
@@ -2227,6 +2300,30 @@ void lilcom_test_compress_sine_overflow() {
   assert(exponent2 == exponent);
   fprintf(stderr, "Sine-overflow snr = %f%%\n", 100.0F * lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
 }
+
+void lilcom_test_compress_float() {
+  float buffer[1000];
+  int lpc_order = 10;
+  for (int i = 0; i < 1000; i++)
+    buffer[i] = 65535 * sin(i * 0.01) + 32768 * sin(i * 0.1) + 982 * sin(i * 0.25);
+
+  int8_t compressed[1004];
+  int16_t temp_space[500];
+  int ret = lilcom_compress_float(500, buffer, 2, compressed, 2,
+                                  lpc_order, temp_space);
+  if (ret) {
+    fprintf(stderr, "float compression failed\n");
+  }
+
+  float decompressed[500];
+  if (lilcom_decompress_float(500, compressed, 2, decompressed, 1) != 0) {
+    fprintf(stderr, "Decompression failed\n");
+  }
+
+  fprintf(stderr, "Floating-pint 3-sine snr = %f%%\n",
+          100.0F * lilcom_compute_snr_float(500, buffer, 2, decompressed, 1));
+}
+
 
 void lilcom_test_compute_conversion_exponent() {
   for (int i = 5; i < 100; i++) {
@@ -2333,6 +2430,7 @@ int main() {
   lilcom_check_constants();
   lilcom_test_compress_sine();
   lilcom_test_compress_sine_overflow();
+  lilcom_test_compress_float();
   lilcom_test_compute_conversion_exponent();
   lilcom_test_get_max_abs_float_value();
   lilcom_test_get_max_abs_double_value();
