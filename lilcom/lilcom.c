@@ -1,6 +1,8 @@
 #include "lilcom.h"
 #include <assert.h>
-#include <stdio.h>  /*TEMP*/
+#include <stdlib.h>  /* for malloc */
+#include <math.h>  /* for frexp and frexpf and pow, used in floating point compression. */
+#include <stdio.h>  /* TEMP-- for debugging. */
 
 
 /**
@@ -600,12 +602,12 @@ static inline int lilcom_header_plausible(const int8_t *header,
 */
 static inline void lilcom_header_set_conversion_exponent(
     int8_t *header, int stride, int conversion_exponent) {
-  asssert(conversion_exponent >= -128 && conversion_exponent <= 127);
+  assert(conversion_exponent >= -128 && conversion_exponent <= 127);
   header[3 * stride] = (int8_t)conversion_exponent;
 }
 
-static inline void lilcom_header_get_conversion_exponent(
-    int8_t *header, int stride) {
+static inline int lilcom_header_get_conversion_exponent(
+    const int8_t *header, int stride) {
   return header[3 * stride];
 }
 
@@ -632,7 +634,7 @@ static inline void lilcom_header_set_mantissa_m1(int8_t *header,
 /** Return the -1'th sample's mantissa from the header, it's in byte 2. */
 static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
                                           int stride) {
-  return (int)header[2 * stride]
+  return (int)header[2 * stride];
 }
 
 
@@ -1614,7 +1616,8 @@ int lilcom_compress(int64_t num_samples,
                     int8_t *output, int output_stride,
                     int lpc_order, int conversion_exponent) {
   if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
-      lpc_order < 0 || lpc_order > MAX_LPC_ORDER) {
+      lpc_order < 0 || lpc_order > MAX_LPC_ORDER ||
+      conversion_exponent < -128 || conversion_exponent > 127) {
     return 1;  /* error */
   }
   struct CompressionState state;
@@ -1624,8 +1627,8 @@ int lilcom_compress(int64_t num_samples,
   for (int64_t t = 1; t < num_samples; t++)
     lilcom_compress_for_time(t, &state);
 
-  assert(printf("Backtracked %f%% of the time\n",
-                ((state.num_backtracks * 100.0) / num_samples)) || 1);
+  assert(fprintf(stderr, "Backtracked %f%% of the time\n",
+                 ((state.num_backtracks * 100.0) / num_samples)) || 1);
 
   return 0;
 }
@@ -1766,12 +1769,15 @@ static inline int lilcom_decompress_time_zero(
 
 int lilcom_decompress(int64_t num_samples,
                       const int8_t *input, int input_stride,
-                      int16_t *output, int output_stride){
+                      int16_t *output, int output_stride,
+                      int *conversion_exponent){
   if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
       !lilcom_header_plausible(input, input_stride))
     return 1;  /** Error */
 
   int lpc_order = lilcom_header_get_lpc_order(input, input_stride);
+  *conversion_exponent = lilcom_header_get_conversion_exponent(
+      input, input_stride);
 
   int exponent;
   if (lilcom_decompress_time_zero(input, input_stride,
@@ -1891,6 +1897,236 @@ int lilcom_decompress(int64_t num_samples,
   }
 }
 
+
+/**
+   Returns the maximum absolute value of any element of the array 'f'.  If there
+   is any NaN in the array, return NaN if possible Note: at higher compiler
+   optimization levels we cannot always rely on this behavior so officially
+   the behavior with inputs with NaN's is undefined.
+
+      @param [in] num_samples      The number of elements in the array.
+      @param [in] sinput                The input array
+      @param [in] stride           The stride between array elements;
+                                 usually 1.
+ */
+float max_abs_float_value(int64_t num_samples, const float *input, int stride) {
+  int64_t t;
+
+  float max_abs_value = 0.0;
+  for (t = 0; t + 4 <= num_samples; t += 4) {
+    float f1 = lilcom_abs(input[t * stride]),
+        f2 = lilcom_abs(input[(t + 1) * stride]),
+        f3 = lilcom_abs(input[(t + 2) * stride]),
+        f4 = lilcom_abs(input[(t + 3) * stride]);
+    /**
+       The reason we have this big "and" statement is that computing a bitwise
+       "and" of integers doesn't incur any branches (whereas && might)...
+       there is only one branch when processing 4 values, which is good
+       good for pipelining.
+
+       Note: we'll very rarely go inside this if-statement.  The reason we use
+       <= in the comparisons is because we want any NaN's we encounter to take
+       us inside the if-statement.  But we can't fully rely on this behavior,
+       since compiler optimization may change it. */
+    if (!((f1 <= max_abs_value) &
+          (f2 <= max_abs_value) &
+          (f3 <= max_abs_value) &
+          (f4 <= max_abs_value))) {
+      if (!(f1 <= max_abs_value)) {
+        max_abs_value = f1;
+        if (max_abs_value != max_abs_value)
+          return max_abs_value;  /** NaN. */
+      }
+      if (!(f2 <= max_abs_value)) {
+        max_abs_value = f2;
+        if (max_abs_value != max_abs_value)
+          return max_abs_value;  /** NaN. */
+      }
+      if (!(f3 <= max_abs_value)) {
+        max_abs_value = f3;
+        if (max_abs_value != max_abs_value)
+          return max_abs_value;  /** NaN. */
+      }
+      if (!(f4 <= max_abs_value)) {
+        max_abs_value = f4;
+        if (max_abs_value != max_abs_value)
+          return max_abs_value;  /** NaN. */
+      }
+    }
+  }
+  for (t = 0; t < num_samples; t ++) {
+    float f = lilcom_abs(input[t * stride]);
+    if (!(f <= max_abs_value)) {
+      max_abs_value = f;
+      if (max_abs_value != max_abs_value)
+        return max_abs_value;  /** NaN. */
+    }
+  }
+  return max_abs_value;
+}
+
+/** This is like max_abs_float_value, but with doubles. */
+double max_abs_double_value(int64_t num_samples,
+                            const double *input, int stride) {
+  int64_t t;
+
+  double max_abs_value = 0.0;
+  for (t = 0; t + 4 <= num_samples; t += 4) {
+    double f1 = lilcom_abs(input[t * stride]),
+        f2 = lilcom_abs(input[(t + 1) * stride]),
+        f3 = lilcom_abs(input[(t + 2) * stride]),
+        f4 = lilcom_abs(input[(t + 3) * stride]);
+    if (!((f1 <= max_abs_value) &
+          (f2 <= max_abs_value) &
+          (f3 <= max_abs_value) &
+          (f4 <= max_abs_value))) {
+      if (!(f1 <= max_abs_value)) {
+        max_abs_value = f1;
+        if (max_abs_value != max_abs_value)
+          return max_abs_value;  /** NaN. */
+      }
+      if (!(f2 <= max_abs_value)) {
+        max_abs_value = f2;
+        if (max_abs_value != max_abs_value)
+          return max_abs_value;  /** NaN. */
+      }
+      if (!(f3 <= max_abs_value)) {
+        max_abs_value = f3;
+        if (max_abs_value != max_abs_value)
+          return max_abs_value;  /** NaN. */
+      }
+      if (!(f4 <= max_abs_value)) {
+        max_abs_value = f4;
+        if (max_abs_value != max_abs_value)
+          return max_abs_value;  /** NaN. */
+      }
+    }
+  }
+  for (t = 0; t < num_samples; t ++) {
+    double f = lilcom_abs(input[t * stride]);
+    if (!(f <= max_abs_value)) {
+      max_abs_value = f;
+      if (max_abs_value != max_abs_value)
+        return max_abs_value;  /** NaN. */
+    }
+  }
+  return max_abs_value;
+}
+
+
+/**
+   This function returns the conversion exponent we will use for a floating-point
+   input sequence with a maximum-absolute-value equal to 'max_abs_value'.
+
+   If max_abs_value is infinity or NaN, it will return -256, which means
+   "invalid".
+
+   If max_abs_value is zero, it will return zero.  (The exponent won't matter in
+   this case).
+
+   Otherwise it will return the most negative i satisfying:
+        i >= -125, and
+        max_abs_value <= 32767 * 2^i.
+
+   This i will also always be less than 120 (actually less than about 127 - 15).
+
+   The reason why we impose the [-125,120] limitation is to ensure that
+   2**exponent and 2**-exponent are both representable as floats, and to
+   ensure that `exponent` will fit in a single byte.
+ */
+int compute_conversion_exponent(float max_abs_value) {
+  if (!(max_abs_value - max_abs_value == 0))
+    return -256;  /* Inf or nan -> error. */
+  if (max_abs_value == 0)
+    return 0;
+
+  int i;
+  frexpf(max_abs_value, &i);
+  i -= 15;
+
+  /**
+     The range of base-2 exponents allowed for single-precision floating point
+     numbers is [-126..127].  If we get to close to the edges of this range, we
+     have to worry about special cases like what happens if pow(2.0, i) is not
+     representable as float or 32767 * powf(2.0, i) is not representable as
+     float.  So we do the computation in double below (implicitly, via
+     upcasting).  It's slower, but this doesn't dominate at all.
+
+     Neither of the loops below should go more than once, I don't think.  The
+     reason for having two loops, instead of one, is so that we don't have to
+     reason too carefully about this and worry about correctness.
+
+     The reason for the i < 1000 and i > -1000 is so that if something totally
+     weird happened (like the compiler optimized too aggressively and
+     max_abs_value was infinity), we don't loop forever.
+  */
+
+  while (max_abs_value > 32767 * pow(2.0, i) && i < 1000)
+    i++;
+  while (max_abs_value <= 32767 * pow(2.0, i - 1) && i > -1000)
+    i--;
+
+  if (i == 1000 || i == -1000) {
+    /** This point should never be reached. */
+    fprintf(stderr, "Warning: something went wrong while finding the exponent\n");
+    return -256;
+  }
+
+  if (i < -128)
+    i = -128;
+  /** i should never be more than about 128 - 15.. remember, the maximum
+      exponent for a floating point value is 127.  So i > 120 should be
+      impossible (this is what we guarantee to the user). */
+  assert(i <= 120);
+  return i;
+}
+
+int lilcom_compress_float(int64_t num_samples,
+                          const float *input, int input_stride,
+                          int8_t *output, int output_stride,
+                          int lpc_order, int16_t *temp_space) {
+  assert(num_samples > 0);
+  if (temp_space == NULL) {
+    /* Allocate temp array and recurse. */
+    int16_t *temp_array = malloc(sizeof(int16_t) * num_samples);
+    if (temp_array == NULL)
+      return 2;  /* Special error code for this situation. */
+    int ans = lilcom_compress_float(num_samples, input, input_stride,
+                                    output, output_stride,
+                                    lpc_order, temp_array);
+    free(temp_array);
+    return ans;
+  }
+
+  float max_abs_value = max_abs_float_value(num_samples, input, input_stride);
+  if (max_abs_value - max_abs_value != 0)
+    return 1;  /* Inf's or Nan's detected */
+  int exponent = compute_conversion_exponent(max_abs_value);
+
+  /* Note: exponent is guaranteed to be in the range [-125, 120], so pow(2.0,
+     -exponent) will be representable as float; the range of exponents in floats
+     is [-126..127], although note that the mantissa in IEEE floats satisfies
+     0.5 <= mantissa < 1.0.
+  */
+  float scale = powf(2.0, -exponent);
+
+  int64_t k;
+  for (k = 0; k < num_samples; k ++) {
+    float f = input[k * input_stride];
+    int32_t i = (int32_t)(f * scale);
+    assert(i == (int16_t)i);
+    temp_space[k] = i;
+  }
+
+  int ret = lilcom_compress(num_samples, temp_space, 1,
+                            output, output_stride,
+                            lpc_order, exponent);
+  return ret;  /* 0 for success, 1 for failure, e.g. if lpc_order out of
+                  range. */
+}
+
+
+
 #ifdef LILCOM_TEST
 
 #include <math.h>
@@ -1950,7 +2186,7 @@ float lilcom_compute_snr(int64_t num_samples,
     signal_sumsq += a * a;
     noise_sumsq += (b-a)*(b-a);
     if (b != a) {
-      printf("For time %d, differ %d vs %d\n", i, a, b);
+      fprintf(stderr, "For time %d, differ %d vs %d\n", (int)i, (int)a, (int)b);
     }
   }
   return (noise_sumsq * 1.0) / signal_sumsq;
@@ -1963,13 +2199,15 @@ void lilcom_test_compress_sine() {
     buffer[i] = 700 * sin(i * 0.01);
 
   int8_t compressed[1004];
+  int exponent = -15, exponent2;
   lilcom_compress(1000, buffer, 1, compressed, 1,
-                  lpc_order);
+                  lpc_order, exponent);
   int16_t decompressed[1000];
-  if (lilcom_decompress(1000, compressed, 1, decompressed, 1) != 0) {
-    printf("Decompression failed\n");
+  if (lilcom_decompress(1000, compressed, 1, decompressed, 1, &exponent2) != 0) {
+    fprintf(stderr, "Decompression failed\n");
   }
-  printf("Sine snr = %f%%\n", 100.0F * lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
+  assert(exponent2 == exponent);
+  fprintf(stderr, "Sine snr = %f%%\n", 100.0F * lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
 }
 
 void lilcom_test_compress_sine_overflow() {
@@ -1978,14 +2216,116 @@ void lilcom_test_compress_sine_overflow() {
   for (int i = 0; i < 1000; i++)
     buffer[i] = 65535 * sin(i * 0.01);
 
+  int exponent = -15, exponent2;
   int8_t compressed[1004];
   lilcom_compress(1000, buffer, 1, compressed, 1,
-                  lpc_order);
+                  lpc_order, exponent);
   int16_t decompressed[1000];
-  if (lilcom_decompress(1000, compressed, 1, decompressed, 1) != 0) {
-    printf("Decompression failed\n");
+  if (lilcom_decompress(1000, compressed, 1, decompressed, 1, &exponent2) != 0) {
+    fprintf(stderr, "Decompression failed\n");
   }
-  printf("Sine-overflow snr = %f%%\n", 100.0F * lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
+  assert(exponent2 == exponent);
+  fprintf(stderr, "Sine-overflow snr = %f%%\n", 100.0F * lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
+}
+
+void lilcom_test_compute_conversion_exponent() {
+  for (int i = 5; i < 100; i++) {
+    float mantissa = i / 100.0;
+    for (int j = -150; j < 131; j++) {
+      float exponent_factor = pow(2.0, j); /* May cause inf due to overflow. */
+      if (j == 130) {
+        exponent_factor = exponent_factor - exponent_factor;  /* Should cause NaN. */
+      } else if (j == 131) {
+        mantissa = 0.0;
+      }
+      float product = mantissa * exponent_factor;
+      int exponent = compute_conversion_exponent(product);
+      if (product - product != 0) {  /* inf or NaN */
+        assert(exponent == -256);
+      } else if (product == 0.0) {
+        assert(exponent == 0);
+      } else {
+        /* Note: the comparison below would be done in double since pow returns
+         * double. */
+        assert(product <= 32767 * pow(2.0, exponent));
+        if (exponent > -128) {
+          assert(product >  32767 * pow(2.0, exponent - 1));
+        }
+      }
+    }
+  }
+}
+
+void lilcom_test_get_max_abs_float_value() {
+  float array[101];  /* only use values 0..99 as part of array. */
+  for (int i = 0; i < 100; i++)
+    array[i] = 0.0;
+
+  array[50] = -100.0;
+  assert(max_abs_float_value(10, array, 10) == lilcom_abs(array[50]));
+
+  array[50] = pow(2.0, 129);  /* should generate infinity. */
+
+  assert(max_abs_float_value(100, array, 1) == lilcom_abs(array[50]));
+
+  array[50] = array[50] - array[50];  /* should generate nan. */
+
+  /** The following checks that the return value is NaN. */
+  float ans = max_abs_float_value(100, array, 1);
+  assert(ans != ans);  /* Check for NaN. */
+
+  /** Positions near the end are special, need to test separately. */
+  array[97] = array[50];
+  array[50] = 0.0;
+  ans = max_abs_float_value(99, array, 1);
+  assert(ans != ans);  /* Check for NaN. */
+  array[97] = 0.0;
+
+  array[50] = 5;
+  array[51] = -6;
+
+  assert(max_abs_float_value(100, array, 1) == lilcom_abs(array[51]));
+
+  array[99] = 500.0;
+  array[100] = 1000.0;  /* not part of the real array. */
+
+  assert(max_abs_float_value(100, array, 1) == lilcom_abs(array[99]));
+}
+
+void lilcom_test_get_max_abs_double_value() {
+  double array[101];  /* only use values 0..99 as part of array. */
+  for (int i = 0; i < 100; i++)
+    array[i] = 0.0;
+
+  array[50] = -100.0;
+  assert(max_abs_double_value(10, array, 10) == lilcom_abs(array[50]));
+
+  array[50] = pow(2.0, 20000);  /* should generate infinity. */
+
+  assert(max_abs_double_value(100, array, 1) == lilcom_abs(array[50]));
+
+  array[50] = array[50] - array[50];  /* should generate nan. */
+
+  /** The following checks that the return value is NaN. */
+  double ans = max_abs_double_value(100, array, 1);
+  assert(ans != ans);  /* Check for NaN. */
+
+  /** Positions near the end are special, need to test separately. */
+  array[97] = array[50];
+  array[50] = 0.0;
+  ans = max_abs_double_value(99, array, 1);
+  assert(ans != ans);  /* Check for NaN. */
+  array[97] = 0.0;
+
+  array[50] = 5;
+  array[51] = -6;
+
+  assert(max_abs_double_value(100, array, 1) == lilcom_abs(array[51]));
+
+  array[99] = 500.0;
+  array[100] = 1000.0;  /* not part of the real array. */
+
+  assert(max_abs_double_value(100, array, 1) == lilcom_abs(array[99]));
 }
 
 
@@ -1993,5 +2333,8 @@ int main() {
   lilcom_check_constants();
   lilcom_test_compress_sine();
   lilcom_test_compress_sine_overflow();
+  lilcom_test_compute_conversion_exponent();
+  lilcom_test_get_max_abs_float_value();
+  lilcom_test_get_max_abs_double_value();
 }
 #endif
