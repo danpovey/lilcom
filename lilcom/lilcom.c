@@ -12,6 +12,14 @@
    decompression.  That is: the decompression method requires exact
    compatibility with the compression method, w.r.t. how the LPC coefficients
    are computed.
+
+   The issue is that this algorithm is based on computing LPC coefficients from
+   the previous decompressed samples, and then encoding the residual after
+   linear prediction.  If there is any change, however slight, in the
+   computation of the LPC coefficients it could affect a sample, which would
+   further change the LPC coefficients, and it might (in principle) cause
+   unbounded error.  So this compression method is totally unsuitable for
+   situations in which data corruption or loss might happen within a sequence.
 */
 #define LILCOM_VERSION 1
 
