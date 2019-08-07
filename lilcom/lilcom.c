@@ -553,13 +553,16 @@ struct CompressionState {
              least-significant 4 bytes contain LILCOM_VERSION (currently 1)
     Byte 1:  contains the LPC order (this was user-specifiable)
     Byte 2:  the mantissa of the -1'th sample.
-    Byte 3:  The conversion exponent c, as int8_t.  This is only relevant when
-             uncompressing to floating point types.  After converting to int16,
-             we will cast to float and then multiply by 2^c.  When compressing,
-             we would have multiplied by 2^{-c} and then rounded to int16, with
-             c chosen to avoid overflow.  This will normally be set (by calling
-             code) to -15 if the data was originally int16; this will mean that
-             when converting to float, we'll remain in the range [-1, 1]
+    Byte 3:  The negative of the conversion exponent c, as int8_t.  (We store
+             as the negative because the allowed range of c is [-127..128], and
+             an int8_t can store [-128..127].  The conversion exponent is only
+             relevant when uncompressing to floating point types.  After
+             converting to int16, we will cast to float and then multiply by
+             2^(c-15).  When compressing, we would have multiplied by 2^{15-c}
+             and then rounded to int16, with c chosen to avoid overflow.  This
+             will normally be set (by calling code) to 0 if the data was
+             originally int16; this will mean that when converting to float,
+             we'll remain in the range [-1, 1]
  */
 
 
@@ -603,13 +606,13 @@ static inline int lilcom_header_plausible(const int8_t *header,
 */
 static inline void lilcom_header_set_conversion_exponent(
     int8_t *header, int stride, int conversion_exponent) {
-  assert(conversion_exponent >= -128 && conversion_exponent <= 127);
-  header[3 * stride] = (int8_t)conversion_exponent;
+  assert(conversion_exponent >= -127 && conversion_exponent <= 128);
+  header[3 * stride] = (int8_t)(-conversion_exponent);
 }
 
 static inline int lilcom_header_get_conversion_exponent(
     const int8_t *header, int stride) {
-  return header[3 * stride];
+  return -((int)(header[3 * stride]));
 }
 
 
@@ -1590,9 +1593,10 @@ static inline void lilcom_init_compression(
   state->compressed_code =
       output + (LILCOM_HEADER_BYTES * output_stride);
   state->compressed_code_stride = output_stride;
-#ifdef LILCOM_DEBUG
-  state->num_backtracks = 0;
-#endif
+
+  /** Put it in an assert so it doesn't happen in non-debug mode. */
+  assert(((state->num_backtracks = 0) == 0));
+
 
   for (int i = 0; i < MAX_LPC_ORDER; i++)
     state->decompressed_signal[i] = 0;
@@ -1602,7 +1606,6 @@ static inline void lilcom_init_compression(
                                         conversion_exponent);
   lilcom_header_set_lpc_order(output, output_stride,
                               state->lpc_order);
-  assert(lilcom_header_get_lpc_order(output, output_stride) == lpc_order);  /* TEMP */
 
   /** The remaining parts of the header will be initialized in
       lilcom_compress_for_time_zero`. */
@@ -1618,7 +1621,7 @@ int lilcom_compress(int64_t num_samples,
                     int lpc_order, int conversion_exponent) {
   if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
       lpc_order < 0 || lpc_order > MAX_LPC_ORDER ||
-      conversion_exponent < -128 || conversion_exponent > 127) {
+      conversion_exponent < -127 || conversion_exponent > 128) {
     return 1;  /* error */
   }
   struct CompressionState state;
@@ -2020,20 +2023,33 @@ double max_abs_double_value(int64_t num_samples,
    input sequence with a maximum-absolute-value equal to 'max_abs_value'.
 
    If max_abs_value is infinity or NaN, it will return -256, which means
-   "invalid".
+   "invalid".  Otherwise the result will be in the range [-127..128].
 
-   If max_abs_value is zero, it will return zero.  (The exponent won't matter in
-   this case).
+   If max_abs_value is zero, this function will return zero.  (The exponent
+   won't matter in this case).
 
-   Otherwise it will return the most negative i satisfying:
-        i >= -125, and
-        max_abs_value <= 32767 * 2^i.
+   Let the canonical answer be the most negative i satisfying:
 
-   This i will also always be less than 120 (actually less than about 127 - 15).
+        max_abs_value < 32767.5 * 2^(i-15)
 
-   The reason why we impose the [-125,120] limitation is to ensure that
-   2**exponent and 2**-exponent are both representable as floats, and to
-   ensure that `exponent` will fit in a single byte.
+    (this inequality ensures that max_abs_value will be rounded to numbers with
+    absolute value <= 32767 when quantizing, if we use this exponent, thus
+    avoiding overflowing int16_t range).
+    ... so the canonical answer is the most negative i satisfying:
+
+        max_abs_value < (65535.0/65536) * 2^i
+
+   If the canonical answer would be outside the range [-127, 128], then the
+   returned value truncated to that range.  Note: if we truncated to 128 this
+   means we need to be extra-careful with float-to-int conversion, because
+   +FLT_MAX ~ 2^128 would be multiplied by 2^(15 - 128) before conversion, so
+   we'd be converting a number just under 2^15 = +32768 to int.  That would be
+   rounded to +32768, which if we don't truncate, will be interpreted as -32768
+   in int16.  We are extra careful in the float-to-int conversion if we detect
+   that conversion_exponent is 127.
+
+   Note: the return i, if not equal to -256, will always satisfy
+          max_abs_value < 2^i
  */
 int compute_conversion_exponent(float max_abs_value) {
   if (!(max_abs_value - max_abs_value == 0))
@@ -2041,9 +2057,14 @@ int compute_conversion_exponent(float max_abs_value) {
   if (max_abs_value == 0)
     return 0;
 
+  /** The next few lines just get a reasonable initial guess at the exponent.
+      We add 1 because floating point numbers are, in most cases, greater
+      than 2^exponent (since the mantissa m satisfies 2 < m <= 1).
+  */
   int i;
   frexpf(max_abs_value, &i);
-  i -= 15;
+  i += 1;
+
 
   /**
      The range of base-2 exponents allowed for single-precision floating point
@@ -2062,9 +2083,9 @@ int compute_conversion_exponent(float max_abs_value) {
      max_abs_value was infinity), we don't loop forever.
   */
 
-  while (max_abs_value > 32767 * pow(2.0, i) && i < 1000)
+  while (max_abs_value >= (65535.0/65536) * pow(2.0, i) && i < 1000)
     i++;
-  while (max_abs_value <= 32767 * pow(2.0, i - 1) && i > -1000)
+  while (max_abs_value < (65535.0/65536) * pow(2.0, i - 1) && i > -1000)
     i--;
 
   if (i == 1000 || i == -1000) {
@@ -2073,12 +2094,10 @@ int compute_conversion_exponent(float max_abs_value) {
     return -256;
   }
 
-  if (i < -128)
-    i = -128;
-  /** i should never be more than about 128 - 15.. remember, the maximum
-      exponent for a floating point value is 127.  So i > 120 should be
-      impossible (this is what we guarantee to the user). */
-  assert(i <= 120);
+  if (i < -127)
+    i = -127;
+  if (i > 128)
+    i = 128;
   return i;
 }
 
@@ -2102,26 +2121,61 @@ int lilcom_compress_float(int64_t num_samples,
   float max_abs_value = max_abs_float_value(num_samples, input, input_stride);
   if (max_abs_value - max_abs_value != 0)
     return 1;  /* Inf's or Nan's detected */
-  int exponent = compute_conversion_exponent(max_abs_value);
+  int conversion_exponent = compute_conversion_exponent(max_abs_value);
 
-  /* Note: exponent is guaranteed to be in the range [-125, 120], so pow(2.0,
-     -exponent) will be representable as float; the range of exponents in floats
-     is [-126..127], although note that the mantissa in IEEE floats satisfies
-     0.5 <= mantissa < 1.0.
-  */
-  float scale = powf(2.0, -exponent);
+  /* -256 is the error code when compute_conversion_exponent detects infinities
+      or NaN's. */
+  if (conversion_exponent == -256)
+    return 2;  /* This is the error code meaning we detected inf or NaN. */
 
-  int64_t k;
-  for (k = 0; k < num_samples; k ++) {
-    float f = input[k * input_stride];
-    int32_t i = (int32_t)(f * scale);
-    assert(i == (int16_t)i);
-    temp_space[k] = i;
+  assert(conversion_exponent >= -127 && conversion_exponent <= 128);
+
+  int adjusted_exponent = 15 - conversion_exponent;
+
+  if (adjusted_exponent > 127) {
+    /** A special case.  If adjusted_exponent > 127, then 2**adjusted_exponent
+        won't be representable as single-precision float: we need to do the
+        multiplication in double.  [Note: just messing with the floating-point
+        mantissa manually would be easier, but it's probably harder to make
+        hardware-independent.]. */
+    double scale = pow(2.0, adjusted_exponent);
+
+    for (int64_t k = 0; k < num_samples; k ++) {
+      double f = input[k * input_stride];
+      int32_t i = (int32_t)(f * scale);
+      assert(i == (int16_t)i);
+      temp_space[k] = i;
+    }
+  } else if (conversion_exponent == 128) {
+    /** adjusted_exponent will be representable, but we have a different risk
+        here: conversion_exponent might have been truncated from 129.  We need
+        to truncate to the range of int16_t when doing the conversion, otherwise
+        there is a danger that FLT_MAX and numbers very close to it could become
+        negative after conversion to int, since they'd be rounded to 32768.
+    */
+    float scale = pow(2.0, adjusted_exponent);
+    for (int64_t k = 0; k < num_samples; k ++) {
+      float f = input[k * input_stride];
+      int32_t i = (int32_t)(f * scale);
+      assert(i >= -32768 && i <= 32768);
+      if (i >= 32768)
+        i = 32767;
+      temp_space[k] = i;
+    }
+  } else {
+    /** The normal case; we should be here in 99.9% of cases. */
+    float scale = pow(2.0, adjusted_exponent);
+    for (int64_t k = 0; k < num_samples; k ++) {
+      float f = input[k * input_stride];
+      int32_t i = (int32_t)(f * scale);
+      assert(i == (int16_t)i);
+      temp_space[k] = i;
+    }
   }
 
   int ret = lilcom_compress(num_samples, temp_space, 1,
                             output, output_stride,
-                            lpc_order, exponent);
+                            lpc_order, conversion_exponent);
   return ret;  /* 0 for success, 1 for failure, e.g. if lpc_order out of
                   range. */
 }
@@ -2139,44 +2193,40 @@ int lilcom_decompress_float(int64_t num_samples,
   } else {
     temp_array_stride = output_stride * (sizeof(float) / sizeof(int16_t));
   }
-  int exponent;
+  int conversion_exponent;
   int ans = lilcom_decompress(num_samples, input, input_stride,
                               temp_array, temp_array_stride,
-                              &exponent);
+                              &conversion_exponent);
   if (ans != 0)
-    return ans;  /* only other possible value is 1, actually. */
-  if (exponent < -125 || exponent > 120)
-    return 1;   /* if this was compressed by lilcom_compress_float it should be
-                   in the range [-125.. 120]; compute_conversion_exponent()
-                   ensured this. */
-  /* the following should not go out of representable range; single precision
-     floating point allows exponents in [-126..127]. */
-  float scale = powf(2.0, exponent);
+    return ans;  /* the only other possible value is 1, actually. */
 
-  /* It should be extremely rare that nearly_out_of_range is true; it
-     means overflowing floating point range is a possibility and we
-     need to be more careful */
-  int nearly_out_of_range = (scale * 32768) - (scale * 32768) != 0;
+  assert(conversion_exponent >= -127 && conversion_exponent <= 128);  /* TODO: Remove this. */
 
+  int adjusted_exponent = conversion_exponent - 15;
 
-  /* The following loops go backwards to avoid overwriting int16_t
-     values that will be needed later.
-   */
-  if (!nearly_out_of_range) {
+  if (adjusted_exponent < -126 || conversion_exponent >= 128) {
+    /** Either adjusted_exponent itself is outside the range representable in
+        single precision, or there is danger of overflowing single-precision
+        range after multiplying by the integer values, so we do the conversion
+        in double.  We also check for things that exceed the range representable
+        as float, although this is only necessary for the case when
+        conversion_exponent == 128. */
+    double scale = pow(2.0, adjusted_exponent);
+
+    for (int64_t k = num_samples - 1; k >= 0; k--) {
+      int16_t i = temp_array[k * temp_array_stride];
+      double d = i * scale;
+      if (lilcom_abs(d) > FLT_MAX) {
+        if (d > 0) d = FLT_MAX;
+        else d = -FLT_MAX;
+      }
+      output[k * output_stride] = (float)d;
+    }
+  } else {
+    float scale = pow(2.0, adjusted_exponent);
     for (int64_t k = num_samples - 1; k >= 0; k--) {
       int16_t i = temp_array[k * temp_array_stride];
       output[k * output_stride] = i * scale;
-    }
-  } else {
-    for (int64_t k = num_samples - 1; k >= 0; k--) {
-      int16_t i = temp_array[k * temp_array_stride];
-      float f = i * scale;
-      if (f - f != 0) {  /* f is infinite. Set it to the most negative or positive representable
-                            float value.*/
-        if (f < 0) f = -FLT_MAX;
-        else f = FLT_MAX;
-      }
-      output[k * output_stride] = f;
     }
   }
   return 0;  /* Success */
@@ -2242,11 +2292,12 @@ float lilcom_compute_snr(int64_t num_samples,
     int64_t a = signal_a[stride_a * i], b = signal_b[stride_b * i];
     signal_sumsq += a * a;
     noise_sumsq += (b-a)*(b-a);
-    if (b != a) {
-      fprintf(stderr, "For time %d, differ %d vs %d\n", (int)i, (int)a, (int)b);
-    }
   }
-  return (noise_sumsq * 1.0) / signal_sumsq;
+  /** return the answer in decibels.  */
+  if (signal_sumsq == 0.0 && noise_sumsq == 0.0)
+    return 10.0 * log10(0.0); /* log(0) = -inf. */
+  else
+    return 10.0 * log10((noise_sumsq * 1.0) / signal_sumsq);
 }
 
 /**
@@ -2261,7 +2312,11 @@ float lilcom_compute_snr_float(int64_t num_samples,
     signal_sumsq += a * a;
     noise_sumsq += (b-a)*(b-a);
   }
-  return (noise_sumsq * 1.0) / signal_sumsq;
+  /** return the answer in decibels.  */
+  if (signal_sumsq == 0.0 && noise_sumsq == 0.0)
+    return 10.0 * log10(0.0); /* log(0) = -inf. */
+  else
+    return 10.0 * log10((noise_sumsq * 1.0) / signal_sumsq);
 }
 
 
@@ -2280,7 +2335,7 @@ void lilcom_test_compress_sine() {
     fprintf(stderr, "Decompression failed\n");
   }
   assert(exponent2 == exponent);
-  fprintf(stderr, "Sine snr = %f%%\n", 100.0F * lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
+  fprintf(stderr, "Sine snr (dB) = %f%%\n", lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
 }
 
 void lilcom_test_compress_sine_overflow() {
@@ -2298,37 +2353,82 @@ void lilcom_test_compress_sine_overflow() {
     fprintf(stderr, "Decompression failed\n");
   }
   assert(exponent2 == exponent);
-  fprintf(stderr, "Sine-overflow snr = %f%%\n", 100.0F * lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
+  fprintf(stderr, "Sine-overflow snr (dB) = %f%%\n", lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
 }
+
+/**
+   Note on SNR's.  A absolute (and not-tight) limit on how negative the SNR
+   for a signal that originally came from floats can be is around -90: this
+   is what you get from the quantization to int32.  For a signal in the range
+   [-1,1] quantized by multiplying by 32768 and rounding to int, the quantization error
+   will exceed 0.5 after multiplication, which would be 2^-16 in the original floating
+   point range.
+
+   The largest energy of original signal could have is 1 per frame, and the average
+   energy quantization would be... well the largest it could be is 2^{-32}, but
+   on average it would be 2^{-34}: the extra factor of 1/4 comes from an integral
+   that I haven't done all the details of (distribution of errors.)
+
+   Converting to decibels:
+     perl -e 'print 10.0 * log(2**(-34)) / log(10);'
+   -102.35019852575
+
+   So around -102 dB.
+*/
 
 void lilcom_test_compress_float() {
   float buffer[1000];
-  int lpc_order = 10;
-  for (int i = 0; i < 1000; i++)
-    buffer[i] = 65535 * sin(i * 0.01) + 32768 * sin(i * 0.1) + 982 * sin(i * 0.25);
+  int lpc_order = 5;
 
-  int8_t compressed[1004];
-  int16_t temp_space[500];
-  int ret = lilcom_compress_float(500, buffer, 2, compressed, 2,
-                                  lpc_order, temp_space);
-  if (ret) {
-    fprintf(stderr, "float compression failed\n");
+  for (int exponent = -140; exponent <= 131; exponent++) {
+    /* Note: 130 and 131 are special cases, for NaN and FLT_MAX.. */
+    double scale = pow(2.0, exponent); /* Caution: scale may be inf. */
+    if (exponent == 130)
+      scale = scale - scale;  /* NaN. */
+
+    for (int i = 0; i < 1000; i++) {
+      buffer[i] = 0.5 * sin(i * 0.01) + 0.2 * sin(i * 0.1) + 0.1 * sin(i * 0.25);
+      buffer[i] *= scale;
+    }
+
+    if (exponent == 131) {
+      /* Replace infinities with FLT_MAX. */
+      for (int i = 0; i < 1000; i++) {
+        if (buffer[i] - buffer[i] != 0) {
+          buffer[i] = (buffer[i] > 0 ? FLT_MAX : -FLT_MAX);
+        }
+      }
+    }
+
+    int8_t compressed[1004];
+    int16_t temp_space[500];
+    int ret = lilcom_compress_float(500, buffer, 2, compressed, 2,
+                                    lpc_order, temp_space);
+    if (ret) {
+      fprintf(stderr, "float compression failed for exponent = %d (this may be expected), max abs float value = %f\n",
+              exponent,  max_abs_float_value(500, buffer, 2));
+      continue;
+    }
+
+    float decompressed[500];
+    if (lilcom_decompress_float(500, compressed, 2, decompressed, 1) != 0) {
+      fprintf(stderr, "Decompression failed.  This is not expected if compression worked.\n");
+      exit(1);
+    }
+
+    fprintf(stderr, "For data-generation exponent=%d, {input,output} max-abs-float-value={%f,%f}, floating-point 3-sine snr = %f%%\n",
+            exponent,
+            max_abs_float_value(500, buffer, 2),
+            max_abs_float_value(500, decompressed, 1),
+            lilcom_compute_snr_float(500, buffer, 2, decompressed, 1));
   }
-
-  float decompressed[500];
-  if (lilcom_decompress_float(500, compressed, 2, decompressed, 1) != 0) {
-    fprintf(stderr, "Decompression failed\n");
-  }
-
-  fprintf(stderr, "Floating-pint 3-sine snr = %f%%\n",
-          100.0F * lilcom_compute_snr_float(500, buffer, 2, decompressed, 1));
 }
 
 
 void lilcom_test_compute_conversion_exponent() {
   for (int i = 5; i < 100; i++) {
     float mantissa = i / 100.0;
-    for (int j = -150; j < 131; j++) {
+    for (int j = -150; j <= 133; j++) {
       float exponent_factor = pow(2.0, j); /* May cause inf due to overflow. */
       if (j == 130) {
         exponent_factor = exponent_factor - exponent_factor;  /* Should cause NaN. */
@@ -2336,21 +2436,35 @@ void lilcom_test_compute_conversion_exponent() {
         mantissa = 0.0;
       }
       float product = mantissa * exponent_factor;
+      if (j == 132)
+        product = FLT_MAX;
+
       int exponent = compute_conversion_exponent(product);
       if (product - product != 0) {  /* inf or NaN */
         assert(exponent == -256);
       } else if (product == 0.0) {
         assert(exponent == 0);
       } else {
+        assert(exponent >= -127 && exponent <= 128);
         /* Note: the comparison below would be done in double since pow returns
          * double. */
-        assert(product <= 32767 * pow(2.0, exponent));
-        if (exponent > -128) {
-          assert(product >  32767 * pow(2.0, exponent - 1));
+        if (exponent < 128) {
+          assert(product < (65535.0 / 65536) * pow(2.0, exponent));
+        } else {
+          assert(product < pow(2.0, exponent));
         }
+        if (exponent > -127) {
+          /* check that a exponent one smaller wouldn't have worked. */
+          assert(product >  (65535.0 / 65536) * pow(2.0, exponent - 1));
+        }  /* if -127 it might have been truncated. */
       }
     }
   }
+  assert(compute_conversion_exponent(FLT_MAX) == 128);
+  assert(compute_conversion_exponent(0) == 0);
+  /** Note: FLT_MIN is not really the smallest float, it's the smallest
+      normalized number, so multiplying by 1/8 is meaningful.  */
+  assert(compute_conversion_exponent(FLT_MIN * 0.125) == -127);
 }
 
 void lilcom_test_get_max_abs_float_value() {

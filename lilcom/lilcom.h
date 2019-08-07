@@ -30,18 +30,19 @@
                       for audio data) but the compression and decompression
                       will be slower.
       @param [in] conversion_exponent  A user-specified number which
-                      is required to be in the range [-128, 127] and which will
+                      is required to be in the range [-127, 128] and which will
                       be returned to the user by lilcom_decompress().  This
                       affects the scaling of the output if we decompress to
                       float, and is the mechanism by which the
                       lilcom_compress_float() and lilcom_decompress_float() get
                       the data to the right dynamic range.  When we convert to
-                      float, we will cast the int16_t to float and then multiply
-                      by 2^conversion_exponent.  If you plan to convert back to
-                      int16_t you can choose any value: for instance, -15 will
-                      put the data in the range [-1,1] if you ever do want to
-                      convert to float, so this might be suitable for audio
-                      data.
+                      float, we will cast the int16_t to float (or double, if
+                      necessary due to potential overflow or underflow) and then
+                      multiply by 2 to the power (conversion_exponent - 15).  If
+                      you plan to convert back to int16_t you can choose any value: for
+                      instance, a value of conversion_exponent = 0 will put the
+                      data in the range [-1,1] if you ever do want to convert to
+                      float; this value might be suitable for audio data.
 
       @return  Returns:
                  0 on success
@@ -188,7 +189,7 @@ int lilcom_compress_double(int64_t num_samples,
                       the next, in elements.  Would normally be 1.
                       May have any nonzero value.
       @param [out] conversion_exponent
-                      This will be set to the value in the range [-128,127]
+                      This will be set to the value in the range [-125,120]
                       which was passed into the original call to
                       lilcom_compress() via its 'conversion_exponent' parameter.
                       It is for use when we are actually compressing a sequence of
