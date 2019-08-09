@@ -1,17 +1,11 @@
 
-# TODO: Checking the version of python interpreter. This code only works with python2.
+# TODO: Checking the version of python interpreter. This code only works with python3.
 
-# from distutils.core import setup, Extension
-
-from setuptools import setup, Extension
+from distutils.core import setup, Extension
 import numpy
 
-extension = Extension("lilcom", ["lilcommodule.c", "lilcom.c"],include_dirs=[numpy.get_include()])
+extension_mod = Extension("lilcom", ["lilcommodule.c","lilcom.c"],include_dirs=[numpy.get_include()])
 
-setup(name = "lilcom",
-      version = "1.0",
-      ext_modules=[extension])
-
-
+setup(name = "lilcom", ext_modules=[extension_mod])
 
 
