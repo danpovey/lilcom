@@ -42,13 +42,15 @@ static PyObject * compress16i_8i(PyObject * self, PyObject * args, PyObject * ke
     passed to this madule. Following part will parse the set of variables and store them in corresponding
     objects.
   */
-  static char *kwlist[] = {"X", "Y" , "lpc_order", "conversion_exponent", NULL};
+  static char *kwlist[] = {"X", "Y" , "lpc_order", "conversion_exponent", NULL}; //definition of keywords received in the function call from python
+  // Parsing Arguments
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|ii", kwlist, &signal_input, &signal_output, &lpc_order, &conversion_exponent)) 
     Py_RETURN_FALSE;
   
   // Initializing shape related variables
   n_dims = PyArray_NDIM(signal_input); // Getting the number of dimensions
   n_samples = PyArray_DIM(signal_input , 0); // Getting the first dimension
+  
   /* In cases that numpy array is not contiguous then stride values are not equal to 1
     The stride values given in bytes and division to the size of variables gives the 
     strides as blocks.
@@ -159,7 +161,7 @@ static PyObject * decompress(PyObject * self, PyObject * args,  PyObject * keywd
   /* Calling the core function */
   int function_state = lilcom_decompress(n_samples, input, input_stride, output, output_stride, &conversion_exponent);
 
-  return Py_BuildValue("i",function_state);
+  return Py_BuildValue("i",conversion_exponent);
 }
 
 
