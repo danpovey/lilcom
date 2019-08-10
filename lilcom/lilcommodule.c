@@ -42,7 +42,7 @@ static PyObject * compress16i_8i(PyObject * self, PyObject * args, PyObject * ke
     passed to this madule. Following part will parse the set of variables and store them in corresponding
     objects.
   */
-  static char *kwlist[] = {"X", "Y" , "lpc_order", NULL};
+  static char *kwlist[] = {"X", "Y" , "lpc_order", "conversion_exponent", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|ii", kwlist, &signal_input, &signal_output, &lpc_order, &conversion_exponent)) 
     Py_RETURN_FALSE;
   
