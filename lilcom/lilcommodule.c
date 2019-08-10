@@ -97,6 +97,8 @@ static PyObject * compressf_8i(PyObject * self, PyObject * args, PyObject * keyw
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|i", kwlist, &signal_input, &signal_output, &lpc_order)) 
     Py_RETURN_FALSE;
   
+
+  printf("conversion madule = %d\n", conversion_exponent);
   // Initializing shape related variables
   n_dims = PyArray_NDIM(signal_input); // Getting the number of dimensions
   n_samples = PyArray_DIM(signal_input , 0); // Getting the first dimension
@@ -113,7 +115,7 @@ static PyObject * compressf_8i(PyObject * self, PyObject * args, PyObject * keyw
    */
   input = PyArray_DATA(signal_input);
   output = PyArray_DATA(signal_output);
-  
+
   /* Calling the core function */
   int function_state = lilcom_compress_float(n_samples, input, input_stride, output, output_stride, lpc_order, NULL) ;
 
