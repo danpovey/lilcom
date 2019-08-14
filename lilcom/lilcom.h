@@ -115,58 +115,6 @@ int lilcom_compress_float(int64_t num_samples,
                           int8_t *output, int output_stride,
                           int lpc_order, int16_t *temp_space);
 
-/** This is like lilcom_compress_float, but for double-precision input.  Note:
-    you can decompress either as float or as double (or as int16 if you like,
-    but you might want to remember the conversion_exponent.)
-
-      @param [in] num_samples  The number of samples of floating-point
-                      data.  Must be greater than zero.
-      @param [in] input   The floating-point input sequence data: a pointer
-                      to an array with at least `num_samples` elements
-                      and with stride `input_stride`.  If it contains
-                      infinities, an error return code will be generated and the
-                      data won't be compressed.  If it contains NaN's,
-                      the behavior is undefined and this code may crash.
-      @param [in] input_stride  The offset from one input sample to
-                      the next, in elements.  Would normally be 1.
-                      May have any nonzero value, but this might not
-                      be checked.
-      @param [out] output   The 8-bit compresed data:  a pointer
-                      to an array with at least `num_samples + 4`
-                      elements and stride `output_stride`.  Note:
-                      the header does not contain the length of the sequence;
-                      that is assumed to be known externally (e.g. from the file
-                      length or the dimension of the matrix).
-      @param [out] output_stride  The offset from one output element to
-                      the next, in elements.  Would normally be 1.
-                      May have any nonzero value, but this might not
-                      be checked.
-      @param [in] lpc_order  The order of linear prediction to use.
-                      Must be in [0..15] (see MAX_LPC_ORDER in lilcom.c).
-                      Larger values will give higher fidelity (especially
-                      for audio data) but the compression and decompression
-                      will be slower.
-      @param [in] temp_space  A pointer to a temporary array of int16_t that
-                      can be used inside this function.  It must have size
-                      at least `num_samples`.  If NULL is provided, this
-                      function will allocate one (you can provide one in
-                      order to avoid allocations and deallocations).
-
-      @return         Returns:
-                        0  on success
-                        1  if it failed because num_samples, input_stride,
-                           output_stride or lpc_order had an invalid value.
-                        2  if there were infinitites or NaN's in the input data,
-                           or numbers too large to be represented in
-                           single-precision floating point.
-                        3  if it failed to allocate a temporary array (only
-                           possible if you did not provide one).
- */
-int lilcom_compress_double(int64_t num_samples,
-                           const double *input, int input_stride,
-                           int8_t *output, int output_stride,
-                           int lpc_order, int16_t *temp_space);
-
 
 
 /**
@@ -216,8 +164,7 @@ int lilcom_decompress(int64_t num_samples,
                       to an array of size at least `num_samples`
       @param [in] input_stride  The offset from one input sample to
                       the next, in elements.  Would normally be 1.
-                      May have any nonzero value, but this might not
-                      be checked.
+                      May have any nonzero value.
       @param [in] input   The 8-bit compresed data:  a pointer
                       to an array of size at least `num_samples + 4`,
                       where the extra 4 bytes form a header.  Note:
@@ -227,8 +174,7 @@ int lilcom_decompress(int64_t num_samples,
                       the dimension of the matrix).
       @param [in] output_stride  The offset from one output sample to
                       the next, in elements.  Would normally be 1.
-                      May have any nonzero value, but this might not
-                      be checked.
+                      May have any nonzero value.
 
       @return    Returns
                      0 on success

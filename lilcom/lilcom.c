@@ -1977,54 +1977,6 @@ float max_abs_float_value(int64_t num_samples, const float *input, int stride) {
   return max_abs_value;
 }
 
-/** This is like max_abs_float_value, but with doubles. */
-double max_abs_double_value(int64_t num_samples,
-                            const double *input, int stride) {
-  int64_t t;
-
-  double max_abs_value = 0.0;
-  for (t = 0; t + 4 <= num_samples; t += 4) {
-    double f1 = lilcom_abs(input[t * stride]),
-        f2 = lilcom_abs(input[(t + 1) * stride]),
-        f3 = lilcom_abs(input[(t + 2) * stride]),
-        f4 = lilcom_abs(input[(t + 3) * stride]);
-    if (!((f1 <= max_abs_value) &
-          (f2 <= max_abs_value) &
-          (f3 <= max_abs_value) &
-          (f4 <= max_abs_value))) {
-      if (!(f1 <= max_abs_value)) {
-        max_abs_value = f1;
-        if (max_abs_value != max_abs_value)
-          return max_abs_value;  /** NaN. */
-      }
-      if (!(f2 <= max_abs_value)) {
-        max_abs_value = f2;
-        if (max_abs_value != max_abs_value)
-          return max_abs_value;  /** NaN. */
-      }
-      if (!(f3 <= max_abs_value)) {
-        max_abs_value = f3;
-        if (max_abs_value != max_abs_value)
-          return max_abs_value;  /** NaN. */
-      }
-      if (!(f4 <= max_abs_value)) {
-        max_abs_value = f4;
-        if (max_abs_value != max_abs_value)
-          return max_abs_value;  /** NaN. */
-      }
-    }
-  }
-  for (t = 0; t < num_samples; t ++) {
-    double f = lilcom_abs(input[t * stride]);
-    if (!(f <= max_abs_value)) {
-      max_abs_value = f;
-      if (max_abs_value != max_abs_value)
-        return max_abs_value;  /** NaN. */
-    }
-  }
-  return max_abs_value;
-}
-
 
 /**
    This function returns the conversion exponent we will use for a floating-point
@@ -2509,42 +2461,6 @@ void lilcom_test_get_max_abs_float_value() {
   array[100] = 1000.0;  /* not part of the real array. */
 
   assert(max_abs_float_value(100, array, 1) == lilcom_abs(array[99]));
-}
-
-void lilcom_test_get_max_abs_double_value() {
-  double array[101];  /* only use values 0..99 as part of array. */
-  for (int i = 0; i < 100; i++)
-    array[i] = 0.0;
-
-  array[50] = -100.0;
-  assert(max_abs_double_value(10, array, 10) == lilcom_abs(array[50]));
-
-  array[50] = pow(2.0, 20000);  /* should generate infinity. */
-
-  assert(max_abs_double_value(100, array, 1) == lilcom_abs(array[50]));
-
-  array[50] = array[50] - array[50];  /* should generate nan. */
-
-  /** The following checks that the return value is NaN. */
-  double ans = max_abs_double_value(100, array, 1);
-  assert(ans != ans);  /* Check for NaN. */
-
-  /** Positions near the end are special, need to test separately. */
-  array[97] = array[50];
-  array[50] = 0.0;
-  ans = max_abs_double_value(99, array, 1);
-  assert(ans != ans);  /* Check for NaN. */
-  array[97] = 0.0;
-
-  array[50] = 5;
-  array[51] = -6;
-
-  assert(max_abs_double_value(100, array, 1) == lilcom_abs(array[51]));
-
-  array[99] = 500.0;
-  array[100] = 1000.0;  /* not part of the real array. */
-
-  assert(max_abs_double_value(100, array, 1) == lilcom_abs(array[99]));
 }
 
 
