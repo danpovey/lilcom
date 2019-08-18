@@ -1,5 +1,11 @@
+# Checking python version
+from platform import python_version
+primer_version = python_version().split(".")
+if int(primer_version[0]) < 3:
+    print ("This madule only works with python3")
+    print ("To setup the madule simply run `python3 setup.py install`")
+    exit()
 
-# TODO: Checking the version of python interpreter. This code only works with python3.
 
 #from distutils.core import setup, Extension
 from setuptools import setup, Extension
