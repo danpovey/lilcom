@@ -1,10 +1,11 @@
-# Checking python version
+# Checking python version: If python 3 was not found then it returns 1 and does
+#   not do anything
 from platform import python_version
 primer_version = python_version().split(".")
-if int(primer_version[0]) < 3:
+if int(primer_version[0]) != 3:
     print ("This madule only works with python3")
     print ("To setup the madule simply run `python3 setup.py install`")
-    exit()
+    exit(1)
 
 
 #from distutils.core import setup, Extension
@@ -40,6 +41,6 @@ setup(
     ],
 )
 
-
+exit(0)
 
 
