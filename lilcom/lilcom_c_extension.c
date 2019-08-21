@@ -110,8 +110,8 @@ static PyObject * compress_int16(PyObject * args, PyObject * keywds)
 {
   PyObject *input; // The input signal, passed as a numpy array.
   PyObject *output; // The output signal, passed as a numpy array.
-  int lpc_order = 5; // LPC Order defined in the core function (more information -> lilcom.h)
-  int conversion_exponent = 0; // Conversion Exponent defined in the core function (more information -> lilcom.h)
+  int lpc_order; // LPC Order defined in the core function (more information -> lilcom.h)
+  int conversion_exponent; // Conversion Exponent defined in the core function (more information -> lilcom.h)
 
   /* Reading and information - extracting for input data
      From the python function there are two numpy arrays and an intger (optional) LPC_order
@@ -151,7 +151,7 @@ error_return:
 
 
 /**
-   Recursive internal implementation of lilcom_compress_int16
+   Recursive internal implementation of lilcom_decompress_int16
    @param [in] num_axes   The number of axes in the arrays (which must be the same, and
                      must be >= 1).
    @param [in] axis  The axis that this function is to process.    If equal to ndim-1, it
@@ -193,6 +193,8 @@ int decompress_int16_internal(int num_axes, int axis,
                               PyObject *input, PyObject *output) {
   assert(axis >= 0 && axis < num_axes);
 
+
+  /* ISSUE: the function is supposed to be returning a conversion exponent and an error code, to do this we must make a consideration to handel it here and in the python wrapper  */
   int conversion_exponent = 0;
 
   int dim = PyArray_DIM(input, axis),
