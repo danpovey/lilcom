@@ -11,7 +11,7 @@ import numpy
 def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
-extension_mod = Extension("lilcom.lilcom_c_extension",
+extension_mod = Extension("lilcom",
                           sources=["lilcom/lilcom_c_extension.c","lilcom/lilcom.c"],
                           include_dirs=[numpy.get_include()])
 
@@ -24,7 +24,6 @@ setup(
     license = "BSD",
     keywords = "compression numpy",
     url = "http://packages.python.org/an_example_pypi_project",
-    packages=['lilcom', 'test'],
     ext_modules=[extension_mod],
     long_description=read('README.md'),
     classifiers=[
@@ -33,7 +32,6 @@ setup(
         "License :: OSI Approved :: BSD License",
     ],
 )
-
 
 
 

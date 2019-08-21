@@ -106,7 +106,8 @@ int compress_int16_internal(int num_axes, int axis,
             directly.
      """
  */
-static PyObject * compress_int16(PyObject * args, PyObject * keywds)
+
+static PyObject * compress_int16(PyObject * self, PyObject * args, PyObject * keywds)
 {
   PyObject *input; // The input signal, passed as a numpy array.
   PyObject *output; // The output signal, passed as a numpy array.
@@ -188,7 +189,7 @@ error_return:
 int decompress_int16_internal(int num_axes, int axis,
                               const int8_t *input_data,
                               int16_t *output_data,
-                              PyObject *input, PyObject *output) {
+                              PyObject *input, PyObject *output, int conversion_exponent) {
   assert(axis >= 0 && axis < num_axes);
   int dim = PyArray_DIM(input, axis),
       input_stride = PyArray_STRIDE(input, dim) / sizeof(int16_t),
@@ -198,9 +199,8 @@ int decompress_int16_internal(int num_axes, int axis,
     if (PyArray_DIM(output, axis) != dim)
       return 2;
     for (int i = 0; i < dim; i++) {
-      int ret = compress_int16_internal(num_axes, axis + 1, input_data,
-                                        output_data, input, output,
-                                        lpc_order, conversion_exponent);
+      int ret = decompress_int16_internal(num_axes, axis + 1, input_data,
+                                        output_data, input, output, conversion_exponent);
       if (ret != 0)
         return ret;  /** Some kind of failure */
       input_data += input_stride;
@@ -210,9 +210,9 @@ int decompress_int16_internal(int num_axes, int axis,
     /** The last axis-- the time axis. */
     if (PyArray_DIM(output, axis) != dim + 4)
       return 2;
-    int ret = lilcom_compress(dim, input_data, input_stride,
+    int ret = lilcom_decompress(dim, input_data, input_stride,
                               output_data, output_stride,
-                              lpc_order, conversion_exponent);
+                              conversion_exponent);
     if (ret != 0)
       return ret;  /** Failure, e.g. invalid lpc_order, dim or exponent. */
   }
@@ -260,7 +260,7 @@ int decompress_int16_internal(int num_axes, int axis,
                      was noticed in this function.
      """
  */
-static PyObject * decompress_int16(PyObject * args, PyObject * keywds)
+static PyObject * decompress_int16(PyObject * self, PyObject * args, PyObject * keywds)
 {
   PyObject *input; // The input signal, passed as a numpy array.
   PyObject *output; // The output signal, passed as a numpy array.
@@ -272,12 +272,10 @@ static PyObject * decompress_int16(PyObject * args, PyObject * keywds)
      passed to this madule. Following part will parse the set of variables and store them in corresponding
      objects.
   */
-  static char *kwlist[] = {"input", "output",
-                           "lpc_order", "conversion_exponent", NULL}; //definition of keywords received in the function call from python
+  static char *kwlist[] = {"X", "Y", NULL};
   // Parsing Arguments
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|ii", kwlist,
-                                   &input, &output,
-                                   &lpc_order, &conversion_exponent))
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist,
+                                   &input, &output))
     goto error_return;
 
   const int16_t *input_data = (const int16_t*)PyArray_DATA(input);
@@ -291,7 +289,8 @@ static PyObject * decompress_int16(PyObject * args, PyObject * keywds)
 
   int ret = decompress_int16_internal(num_axes, 0,
                                       input_data, output_data,
-                                      input, output, lpc_order);
+                                      input, output, conversion_exponent);
+  
   return Py_BuildValue("i", ret);
 error_return:
   return Py_BuildValue("i", 3);
@@ -398,7 +397,7 @@ int compress_float_internal(int num_axes, int axis,
                in this function.
      """
  */
-static PyObject * compress_float(PyObject * args, PyObject * keywds)
+static PyObject * compress_float(PyObject * self, PyObject * args, PyObject * keywds)
 {
   PyObject *input; // The input signal, passed as a numpy array.
   PyObject *output; // The output signal, passed as a numpy array.
@@ -477,53 +476,6 @@ error_return:
   """
 
 */
-static PyObject * decompress_int16(PyObject * args,  PyObject * keywds) {
-  /* Defining all variables */
-  PyObject *input; // The input compressed signal, passed as a numpy array.
-  PyObject *output; // The output compressed signal, passed as a numpy array.
-  int num_axes = 0; // Number of dimensions of the given numpy array
-  int input_stride; // The number of integers between to consecutive samples
-  int output_stride; // The number of integers between to consecutive samples in output
-  int n_samples = 0; // number of samples given in the numpy array
-  int16_t *output_data; // The one dimensional vectorized output array which will be modified by the core function
-  int8_t *input_data; // The one dimensional vectorized input array which will be given to the core function
-  // TODO: I was changing this.  I changed input_signal -> input and input to input_data (etc.)
-  int conversion_exponent;
-  /* Reading and information - extracting for input data
-     From the python function there are two numpy arrays and an intger (optional) LPC_order
-     passed to this madule. Following part will parse the set of variables and store them in corresponding
-     objects.
-  */
-  static char *kwlist[] = {"input", "output", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist, &input, &output))
-    return Py_BuildValue("i",1);
-
-  // Initializing shape related variables
-  num_axes = PyArray_NDIM(input); // Getting the number of dimensions
-  n_samples = PyArray_DIM(input , 0); // Getting the first dimension
-  /* In cases that numpy array is not contiguous then stride values are not equal to 1
-    The stride values given in bytes and division to the size of variables gives the
-    strides as blocks.
-   */
-  input_stride = PyArray_STRIDE(input, 0)/sizeof(int8_t);
-  output_stride = PyArray_STRIDE(output, 0)/sizeof(int16_t);
-
-  /* Access to the data part of the numpy array */
-  input_data = PyArray_DATA(input);
-  output_data = PyArray_DATA(output);
-
-
-  /* Calling the core function */
-  int function_state = lilcom_decompress(n_samples, input_data, input_stride,
-                                         output_data, output_stride, &conversion_exponent);
-
-  if (function_state != 0) {
-    return Py_BuildValue("i", function_state + 1000);
-  }
-
-  return Py_BuildValue("i",conversion_exponent);
-}
-
 
 /* Defining Functions in the Madule */
 static PyMethodDef LilcomMethods[] = {
@@ -542,10 +494,9 @@ static struct PyModuleDef lilcom =
     LilcomMethods
 };
 
-PyMODINIT_FUNC PyInit_lilcom_c_extension(void)
+PyMODINIT_FUNC PyInit_lilcom(void)
 {
     import_array();
     return PyModule_Create(&lilcom);
 }
-
 

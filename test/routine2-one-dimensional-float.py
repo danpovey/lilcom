@@ -11,9 +11,9 @@ inputArray = numpy.array([random.uniform(0,1) for i in range (n_samples)]).astyp
 outputArray = numpy.zeros(inputArray.shape, numpy.int8)
 reconstruction = numpy.zeros(inputArray.shape, numpy.int16)
 
-lilcom.compressf_8i(inputArray, outputArray)
+lilcom.compress_float(inputArray, outputArray)
 
-c_exponent = lilcom.decompress(outputArray, reconstruction)
+#c_exponent = lilcom.decompress(outputArray, reconstruction)
 
 for i in range(n_samples):
         print("Sample no ", i , "original number = ", inputArray[i], \
@@ -22,5 +22,4 @@ for i in range(n_samples):
 
 
 #print ("conversion exponent = ", c_exponent)
-
 
