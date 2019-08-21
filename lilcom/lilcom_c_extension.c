@@ -282,7 +282,7 @@ static PyObject * decompress_int16(PyObject * args, PyObject * keywds)
   static char *kwlist[] = {"input", "output",
                            "lpc_order", "conversion_exponent", NULL}; //definition of keywords received in the function call from python
   // Parsing Arguments
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|ii", kwlist,
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OOii", kwlist,
                                    &input, &output,
                                    &lpc_order, &conversion_exponent))
     goto error_return;
@@ -454,82 +454,6 @@ error_return:
 }
 
 
-
-
-/**
-   NOTE: the documentation below will document this function AS IF it were
-   a Python function.
-
-   def decompress_int16(input, output):
-   """
-   This function decompresses data from int8_t to int16_t.  The data is assumed
-   to have previously been compressed by `compress_int16`.
-
-   Args:
-   input     Must be of type numpy.ndarray, with dtype=int8.  The
-   last axis is assumed to be the time axis, and the last
-   axis must have dimension > 4.
-   output    Must be of type numpy.ndarray, with dtype=int16.  Must
-   be of the same shape as `input`, except the dimension on
-   the last axis must be less than that of `input` by 4.
-   Return:
-
-    On success, returns 0.  (The `conversion_exponent` is not returned, as it
-    may differ from sequence to sequence).  If the inputs did not have the
-    correct types or shapes, If there was some problem with the dimensions or
-    types of `input` and `output`, or other issues of being wrongly called,
-    returns 1000.  On failure in lilcom decompression (e.g. the data was
-    corrupted or was not originally compressed by lilcom) returns 1000 plus the
-    internal error code (which will always be greater than one).
-  """
-
-*/
-static PyObject * decompress_int16(PyObject * args,  PyObject * keywds) {
-  /* Defining all variables */
-  PyObject *input; // The input compressed signal, passed as a numpy array.
-  PyObject *output; // The output compressed signal, passed as a numpy array.
-  int num_axes = 0; // Number of dimensions of the given numpy array
-  int input_stride; // The number of integers between to consecutive samples
-  int output_stride; // The number of integers between to consecutive samples in output
-  int n_samples = 0; // number of samples given in the numpy array
-  int16_t *output_data; // The one dimensional vectorized output array which will be modified by the core function
-  int8_t *input_data; // The one dimensional vectorized input array which will be given to the core function
-  // TODO: I was changing this.  I changed input_signal -> input and input to input_data (etc.)
-  int conversion_exponent;
-  /* Reading and information - extracting for input data
-     From the python function there are two numpy arrays and an intger (optional) LPC_order
-     passed to this madule. Following part will parse the set of variables and store them in corresponding
-     objects.
-  */
-  static char *kwlist[] = {"input", "output", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist, &input, &output))
-    return Py_BuildValue("i",1);
-
-  // Initializing shape related variables
-  num_axes = PyArray_NDIM(input); // Getting the number of dimensions
-  n_samples = PyArray_DIM(input , 0); // Getting the first dimension
-  /* In cases that numpy array is not contiguous then stride values are not equal to 1
-    The stride values given in bytes and division to the size of variables gives the
-    strides as blocks.
-   */
-  input_stride = PyArray_STRIDE(input, 0)/sizeof(int8_t);
-  output_stride = PyArray_STRIDE(output, 0)/sizeof(int16_t);
-
-  /* Access to the data part of the numpy array */
-  input_data = PyArray_DATA(input);
-  output_data = PyArray_DATA(output);
-
-
-  /* Calling the core function */
-  int function_state = lilcom_decompress(n_samples, input_data, input_stride,
-                                         output_data, output_stride, &conversion_exponent);
-
-  if (function_state != 0) {
-    return Py_BuildValue("i", function_state + 1000);
-  }
-
-  return Py_BuildValue("i",conversion_exponent);
-}
 
 
 /* Defining Functions in the Madule */
