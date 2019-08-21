@@ -120,8 +120,8 @@ static PyObject * compress_int16(PyObject * args, PyObject * keywds)
   */
   static char *kwlist[] = {"input", "output",
                            "lpc_order", "conversion_exponent", NULL}; //definition of keywords received in the function call from python
-  // Parsing Arguments
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|ii", kwlist,
+  // Parsing Arguments: All input arguments are obligatory. Default assignment left for python wrapper.
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OOii", kwlist,
                                    &input, &output,
                                    &lpc_order, &conversion_exponent))
     goto error_return;
@@ -135,6 +135,8 @@ static PyObject * compress_int16(PyObject * args, PyObject * keywds)
   if (PyArray_NDIM(output) != num_axes)
     goto error_return;
 
+
+  // Calles the internal function which recursively calles it self until it's ready for compression
   int ret = compress_int16_internal(num_axes, 0,
                                     input_data, output_data,
                                     input, output, lpc_order,
@@ -190,6 +192,9 @@ int decompress_int16_internal(int num_axes, int axis,
                               int16_t *output_data,
                               PyObject *input, PyObject *output) {
   assert(axis >= 0 && axis < num_axes);
+
+  int conversion_exponent = 0;
+
   int dim = PyArray_DIM(input, axis),
       input_stride = PyArray_STRIDE(input, dim) / sizeof(int16_t),
       output_stride = PyArray_STRIDE(output, dim) / sizeof(int8_t);
@@ -198,9 +203,9 @@ int decompress_int16_internal(int num_axes, int axis,
     if (PyArray_DIM(output, axis) != dim)
       return 2;
     for (int i = 0; i < dim; i++) {
-      int ret = compress_int16_internal(num_axes, axis + 1, input_data,
-                                        output_data, input, output,
-                                        lpc_order, conversion_exponent);
+      int ret = decompress_int16_internal(num_axes, axis + 1, input_data,
+                                        output_data, input, output
+                                        );
       if (ret != 0)
         return ret;  /** Some kind of failure */
       input_data += input_stride;
@@ -210,9 +215,9 @@ int decompress_int16_internal(int num_axes, int axis,
     /** The last axis-- the time axis. */
     if (PyArray_DIM(output, axis) != dim + 4)
       return 2;
-    int ret = lilcom_compress(dim, input_data, input_stride,
+    int ret = lilcom_decompress(dim, input_data, input_stride,
                               output_data, output_stride,
-                              lpc_order, conversion_exponent);
+                              &conversion_exponent);
     if (ret != 0)
       return ret;  /** Failure, e.g. invalid lpc_order, dim or exponent. */
   }
@@ -291,7 +296,7 @@ static PyObject * decompress_int16(PyObject * args, PyObject * keywds)
 
   int ret = decompress_int16_internal(num_axes, 0,
                                       input_data, output_data,
-                                      input, output, lpc_order);
+                                      input, output);
   return Py_BuildValue("i", ret);
 error_return:
   return Py_BuildValue("i", 3);
