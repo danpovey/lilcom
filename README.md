@@ -11,8 +11,6 @@ python setup.py install
 and then from python, do:
 
 ```
->>> import lilcom
->>> lilcom.lilcom("a")
+python test/routine1-one-dimensional-integer.py
+python test/routine2-one-dimensional-float.py
 ```
-and it will segfault.  Currently the interface in lilcommodule.c is just a
-skeleton I copied from somewhere, it needs to be actually implemented.
