@@ -46,8 +46,8 @@ int compress_int16_internal(int num_axes, int axis,
                             int conversion_exponent) {
   assert(axis >= 0 && axis < num_axes);
   int dim = PyArray_DIM(input, axis),
-      input_stride = PyArray_STRIDE(input, dim) / sizeof(int16_t),
-      output_stride = PyArray_STRIDE(output, dim) / sizeof(int8_t);
+      input_stride = PyArray_STRIDE(input, axis) / sizeof(int16_t),
+      output_stride = PyArray_STRIDE(output, axis) / sizeof(int8_t);
 
   if (axis < num_axes - 1) {  /** Not the time axis. */
     if (PyArray_DIM(output, axis) != dim)
@@ -122,7 +122,6 @@ static PyObject *compress_int16(PyObject *self, PyObject * args, PyObject * keyw
   static char *kwlist[] = {"input", "output",
                            "lpc_order", "conversion_exponent", NULL}; //definition of keywords received in the function call from python
   // Parsing Arguments
-  printf("Here1\n");
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|ii", kwlist,
                                    &input, &output,
                                    &lpc_order, &conversion_exponent))
@@ -191,8 +190,8 @@ int decompress_int16_internal(int num_axes, int axis,
                               PyObject *input, PyObject *output) {
   assert(axis >= 0 && axis < num_axes);
   int dim = PyArray_DIM(input, axis),
-      input_stride = PyArray_STRIDE(input, dim) / sizeof(int16_t),
-      output_stride = PyArray_STRIDE(output, dim) / sizeof(int8_t);
+      input_stride = PyArray_STRIDE(input, axis) / sizeof(int8_t),
+      output_stride = PyArray_STRIDE(output, axis) / sizeof(int16_t);
 
   if (axis < num_axes - 1) {  /** Not the time axis. */
     int conversion_exponent = -1;
@@ -213,10 +212,10 @@ int decompress_int16_internal(int num_axes, int axis,
     return conversion_exponent;
   } else {
     /** The last axis-- the time axis. */
-    if (PyArray_DIM(output, axis) != dim + 4)
+    if (PyArray_DIM(output, axis) != dim - 4)
       return 1002;
     int conversion_exponent;
-    int ret = lilcom_decompress(dim, input_data, input_stride,
+    int ret = lilcom_decompress(dim - 4, input_data, input_stride,
                                 output_data, output_stride,
                                 &conversion_exponent);
     if (ret != 0)
