@@ -4,13 +4,13 @@ Small compression utility
 
 Note: you can run
 ```
-python setup.py build
-python setup.py install
+python3 setup.py build
+python3 setup.py install
 ```
 
-and then from python, do:
+and then do:
 
 ```
-python test/routine1-one-dimensional-integer.py
-python test/routine2-one-dimensional-float.py
+python3 test/routine1-one-dimensional-integer.py
+python3 test/routine2-one-dimensional-float.py
 ```
