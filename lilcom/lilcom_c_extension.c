@@ -107,7 +107,7 @@ int compress_int16_internal(int num_axes, int axis,
      """
  */
 
-static PyObject *compress_int16(PyObject * args, PyObject * keywds)
+static PyObject *compress_int16(PyObject *self, PyObject * args, PyObject * keywds)
 {
   PyObject *input; // The input signal, passed as a numpy array.
   PyObject *output; // The output signal, passed as a numpy array.
@@ -122,6 +122,7 @@ static PyObject *compress_int16(PyObject * args, PyObject * keywds)
   static char *kwlist[] = {"input", "output",
                            "lpc_order", "conversion_exponent", NULL}; //definition of keywords received in the function call from python
   // Parsing Arguments
+  printf("Here1\n");
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|ii", kwlist,
                                    &input, &output,
                                    &lpc_order, &conversion_exponent))
@@ -266,7 +267,7 @@ int decompress_int16_internal(int num_axes, int axis,
                      was noticed in this function.
      """
  */
-static PyObject * decompress_int16(PyObject *args, PyObject *keywds)
+static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keywds)
 {
   PyObject *input; // The input signal, passed as a numpy array.
   PyObject *output; // The output signal, passed as a numpy array.
@@ -401,7 +402,7 @@ int compress_float_internal(int num_axes, int axis,
                in this function.
      """
  */
-static PyObject * compress_float(PyObject * args, PyObject * keywds)
+static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keywds)
 {
   PyObject *input; // The input signal, passed as a numpy array.
   PyObject *output; // The output signal, passed as a numpy array.
@@ -483,9 +484,9 @@ error_return:
 
 /* Defining Functions in the Madule */
 static PyMethodDef LilcomMethods[] = {
-  { "compress_int16", compress_int16, METH_VARARGS | METH_KEYWORDS, "Lossily compresses samples of int16 sequence data (e.g. audio data) int8_t."},
-  { "compress_float", compress_float, METH_VARARGS | METH_KEYWORDS, "Lossily compresses samples of float sequence data (e.g. audio data) int8_t."},
-  { "decompress_int16", decompress_int16, METH_VARARGS| METH_KEYWORDS, "Decompresses a compressed signal to int16"  },
+  { "compress_int16", (PyCFunction)compress_int16, METH_VARARGS | METH_KEYWORDS, "Lossily compresses samples of int16 sequence data (e.g. audio data) int8_t."},
+  { "compress_float", (PyCFunction)compress_float, METH_VARARGS | METH_KEYWORDS, "Lossily compresses samples of float sequence data (e.g. audio data) int8_t."},
+  { "decompress_int16", (PyCFunction)decompress_int16, METH_VARARGS| METH_KEYWORDS, "Decompresses a compressed signal to int16"  },
   { NULL, NULL, 0, NULL }
 };
 

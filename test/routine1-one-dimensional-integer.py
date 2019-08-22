@@ -11,7 +11,10 @@ inputArray = numpy.array([random.randrange(-(2**15), 2**15 - 1) for i in range (
 outputArray = numpy.zeros(inputArray.shape, numpy.int8)
 reconstruction = numpy.zeros(inputArray.shape, numpy.int16)
 
-lilcom.compress_int16(inputArray, outputArray,5,39)
+#lilcom.compress_int16(inputArray, outputArray,
+#                      lpc_order=5, conversion_exponent=39)
+
+lilcom.compress_int16(inputArray, outputArray)
 
 
 c_exponent = lilcom.decompress_int16(outputArray, reconstruction)
