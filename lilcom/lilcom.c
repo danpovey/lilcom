@@ -2471,6 +2471,5 @@ int main() {
   lilcom_test_compress_float();
   lilcom_test_compute_conversion_exponent();
   lilcom_test_get_max_abs_float_value();
-  lilcom_test_get_max_abs_double_value();
 }
 #endif
