@@ -1,13 +1,25 @@
 # lilcom
-Small compression utility
 
+
+Package for compression and decompression of sequence data (specially audio files). This package includes:
+* Compression from 16-bit integer stream to 8-bit integer stream
+* Compression from floating point stream to 8-bit integer stream
+* Decompression from 8-bit integer stream to 16-bit integer stream
+=======
 This package requires Python 3 and is not compatible with Python 2.
 
+## Installation
 
-Note: you can run
+### Using Github Repository
+To install lilcom first clone the repository;
 ```
-python3 setup.py build
-python3 setup.py install
+
+git clone git@github.com:danpovey/lilcom.git
+```
+
+then run setup with `install` argument.
+```
+python setup.py install
 ```
 
 and then for test, run:
@@ -16,3 +28,4 @@ and then for test, run:
 python3 test/routine1-one-dimensional-integer.py
 python3 test/routine2-one-dimensional-float.py
 ```
+

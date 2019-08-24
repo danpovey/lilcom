@@ -111,8 +111,8 @@ static PyObject *compress_int16(PyObject *self, PyObject * args, PyObject * keyw
 {
   PyObject *input; // The input signal, passed as a numpy array.
   PyObject *output; // The output signal, passed as a numpy array.
-  int lpc_order = 5; // LPC Order defined in the core function (more information -> lilcom.h)
-  int conversion_exponent = 0; // Conversion Exponent defined in the core function (more information -> lilcom.h)
+  int lpc_order; // LPC Order defined in the core function (more information -> lilcom.h)
+  int conversion_exponent; // Conversion Exponent defined in the core function (more information -> lilcom.h)
 
   /* Reading and information - extracting for input data
      From the python function there are two numpy arrays and an intger (optional) LPC_order
@@ -121,8 +121,8 @@ static PyObject *compress_int16(PyObject *self, PyObject * args, PyObject * keyw
   */
   static char *kwlist[] = {"input", "output",
                            "lpc_order", "conversion_exponent", NULL}; //definition of keywords received in the function call from python
-  // Parsing Arguments
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|ii", kwlist,
+  // Parsing Arguments: All input arguments are obligatory. Default assignment left for python wrapper.
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OOii", kwlist,
                                    &input, &output,
                                    &lpc_order, &conversion_exponent))
     goto error_return;
@@ -136,6 +136,8 @@ static PyObject *compress_int16(PyObject *self, PyObject * args, PyObject * keyw
   if (PyArray_NDIM(output) != num_axes)
     goto error_return;
 
+
+  // Calles the internal function which recursively calles it self until it's ready for compression
   int ret = compress_int16_internal(num_axes, 0,
                                     input_data, output_data,
                                     input, output, lpc_order,
@@ -146,11 +148,8 @@ error_return:
 }
 
 
-
-
-
 /**
-   Recursive internal implementation of lilcom_compress_int16
+   Recursive internal implementation of lilcom_decompress_int16
    @param [in] num_axes   The number of axes in the arrays (which must be the same, and
                      must be >= 1).
    @param [in] axis  The axis that this function is to process.    If equal to ndim-1, it
@@ -189,6 +188,11 @@ int decompress_int16_internal(int num_axes, int axis,
                               int16_t *output_data,
                               PyObject *input, PyObject *output) {
   assert(axis >= 0 && axis < num_axes);
+
+
+  /* ISSUE: the function is supposed to be returning a conversion exponent and an error code, to do this we must make a consideration to handel it here and in the python wrapper  */
+  int conversion_exponent = 0;
+
   int dim = PyArray_DIM(input, axis),
       input_stride = PyArray_STRIDE(input, axis) / sizeof(int8_t),
       output_stride = PyArray_STRIDE(output, axis) / sizeof(int16_t);
@@ -278,8 +282,11 @@ static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keyw
   */
   static char *kwlist[] = {"X", "Y", NULL};
   // Parsing Arguments
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist,
-                                   &input, &output))
+
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OOii", kwlist,
+                                   &input, &output,
+                                   &lpc_order, &conversion_exponent))
+
     goto error_return;
 
   const int8_t *input_data = (const int8_t*)PyArray_DATA(input);
@@ -294,13 +301,10 @@ static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keyw
   int ret = decompress_int16_internal(num_axes, 0,
                                       input_data, output_data,
                                       input, output);
-
   return Py_BuildValue("i", ret);
 error_return:
   return Py_BuildValue("i", 3);
 }
-
-
 
 
 /**
