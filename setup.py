@@ -4,7 +4,7 @@ from platform import python_version
 primer_version = python_version().split(".")
 if int(primer_version[0]) != 3:
     print ("This module only works with python3")
-    print ("To setup the madule simply run `python3 setup.py install`")
+    print ("To setup the module simply run `python3 setup.py install`")
     exit(1)
 
 
