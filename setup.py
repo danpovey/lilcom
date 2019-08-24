@@ -1,5 +1,8 @@
 
-# TODO: Checking the version of python interpreter. This code only works with python3.
+# Checking the version of python interpreter. This code only works with python3.
+import sys
+if sys.version_info < (3,5):
+        sys.exit('Python < 3.5 is not supported')
 
 #from distutils.core import setup, Extension
 from setuptools import setup, Extension
@@ -17,6 +20,7 @@ extension_mod = Extension("lilcom",
 
 setup(
     name = "lilcom",
+    python_requires='>=3.5',
     version = "0.0.0",
     author = "Daniel Povey, Soroush Zargar, Mahsa Yarmohammadi",
     author_email = "dpovey@gmail.com",
