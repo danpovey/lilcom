@@ -8,7 +8,7 @@
 /* The core library */
 #include "./lilcom.h"
 
-/* ZONE: Compression functions including float and int */
+
 
 /**
    Recursive internal implementation of lilcom_compress_int16
@@ -450,8 +450,6 @@ error_return:
 
 
 
-
-/* ZONE: Python compatibility region */
 
 /* Defining Functions in the Madule */
 static PyMethodDef LilcomMethods[] = {
