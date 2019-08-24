@@ -22,6 +22,3 @@ for i in range(n_samples):
 
 
 print ("conversion exponent = ", c_exponent)
-
-
-if __f
