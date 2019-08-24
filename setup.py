@@ -8,6 +8,12 @@ if int(primer_version[0]) != 3:
     exit(1)
 
 
+# Checking the version of python interpreter. This code only works with python3.
+import sys
+if sys.version_info < (3,5):
+        sys.exit('Python < 3.5 is not supported')
+
+
 #from distutils.core import setup, Extension
 from setuptools import setup, Extension
 import os
@@ -18,12 +24,13 @@ import numpy
 def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
-extension_mod = Extension("lilcom.lilcom_c_extension",
+extension_mod = Extension("lilcom",
                           sources=["lilcom/lilcom_c_extension.c","lilcom/lilcom.c"],
                           include_dirs=[numpy.get_include()])
 
 setup(
     name = "lilcom",
+    python_requires='>=3.5',
     version = "0.0.0",
     author = "Daniel Povey, Soroush Zargar, Mahsa Yarmohammadi",
     author_email = "dpovey@gmail.com",
@@ -31,7 +38,6 @@ setup(
     license = "BSD",
     keywords = "compression numpy",
     url = "http://packages.python.org/an_example_pypi_project",
-    packages=['lilcom', 'test'],
     ext_modules=[extension_mod],
     long_description=read('README.md'),
     classifiers=[
@@ -42,5 +48,4 @@ setup(
 )
 
 exit(0)
-
 
