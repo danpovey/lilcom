@@ -165,8 +165,8 @@ error_return:
                     and possibly shifted, as for input_data.
    @param [in] input  Must point to a NumPy array representing the input.  Used
                     for its dimension and stride information
-   @param [in] output  Must point to a NumPy array representing the output data.  Used
-                    for its dimension and stride information
+   @param [in] output  Must point to a NumPy array representing the output data.
+                    Used for its dimension and stride information
 
    @return     On success, returns the conversion exponent that was used for
                the compression; this will be in [-127..128] but usually 0.
