@@ -120,7 +120,7 @@ def compress(input, axis=-1, lpc_order=5, default_exponent=0, out=None):
 
 
 
-def decompress(input, axis=-1, out=None, dtype=np.int16):
+def decompress(input, axis=-1, out=None, dtype=None):
    """
     Decompresses sequence data
 
@@ -138,9 +138,10 @@ def decompress(input, axis=-1, out=None, dtype=np.int16):
                     dimension as the output of this function would have been.
                     In that case, the output will be placed here.  If an array
                     of the wrong dimension is passed, ValueError will be raised.
-       dtype        The requested data-type of the output (must only
-                    be set if out == None).  Must be in [np.int16, np.float32,
-                    np.float64].
+       dtype        The requested data-type of the output (must
+                    be set if and only if out is None).  If set, must be in
+                    [np.int16, np.float32, np.float64].
+
     Return:
       Returns the decompressed data if decompression was successful, and None if
       not.  This will be a np.ndarray of the same shape as `input`, except the
@@ -169,16 +170,18 @@ def decompress(input, axis=-1, out=None, dtype=np.int16):
                        "least 5 on axis={}.  Possibly wrong `axis` value?".format(
             input.shape, axis))
 
-   if out is not None and dtype != np.int16:
-      raise ValueError("You cannot specify `dtype` when output is specified.")
+   if out is not None and dtype is not None:
+      raise ValueError("You cannot specify `dtype` when `out` is specified.")
+   if out is None and dtype is None:
+      raise ValueError("You must specify either `dtype` or `out`")
 
-   if not dtype in [np.int16, np.float32, np.float64]:
-      raise TypeError("`dtype` must eb one of int16, float32, float64, got: {}".format(dtype))
 
    out_shape = list(input.shape)
    out_shape[axis] -= 4
    out_shape = tuple(out_shape)
-   if out == None:
+   if out is None:
+      if not dtype in [np.int16, np.float32, np.float64]:
+         raise TypeError("`dtype` must be one of int16, float32, float64, got: {}".format(dtype))
       out = np.empty(out_shape, dtype=dtype)
 
    # Check `out`
@@ -199,8 +202,6 @@ def decompress(input, axis=-1, out=None, dtype=np.int16):
       out = out.swapaxes(axis, -1)
 
    if out.dtype == np.int16:
-      print("input strides are {}, output {}".format(input.strides, out.strides))
-      print("input shape are {}, output {}".format(input.shape, out.shape))
       ret = lilcom_c_extension.decompress_int16(input, out)
       if ret >= 1000:
          if ret == 1003:
