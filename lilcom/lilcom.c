@@ -595,7 +595,7 @@ static inline int lilcom_header_get_exponent_m1(const int8_t *header,
 /**  Check that this is plausibly a lilcom header.  The low-order 4 bits of the
      first byte of the header are used for this; the magic number is 7.  */
 static inline int lilcom_header_plausible(const int8_t *header,
-                                   int stride) {
+                                          int stride) {
   /** Currently only one version number is supported. */
   return ((header[0 * stride] & 0xF) == LILCOM_VERSION) &&
       lilcom_header_get_exponent_m1(header, stride) <= 11;
@@ -1822,6 +1822,7 @@ int lilcom_decompress(int64_t num_samples,
                                      &(output_buffer[MAX_LPC_ORDER + t]),
                                      &exponent))
       return 1;  /** Error */
+
     output[t * output_stride] = output_buffer[MAX_LPC_ORDER + t];
   }
   if (t >= num_samples)
@@ -1888,7 +1889,14 @@ int lilcom_decompress(int64_t num_samples,
               output_buffer[MAX_LPC_ORDER + SIGNAL_BUFFER_SIZE - i];
       }
 
-      lilcom_update_autocorrelation(&lpc, lpc_order, output + t - AUTOCORR_BLOCK_SIZE);
+      /** buffer_start_t is the t value at which we'd want to give
+          `lilcom_update_autocorrelation` a pointer to the output.
+          We'll later have to take this modulo SIGNAL_BUFFER_SIZE
+          and then add MAX_LPC_ORDER to find the right position in
+          `output_buffer`. */
+      int64_t buffer_start_t = t - AUTOCORR_BLOCK_SIZE;
+      lilcom_update_autocorrelation(&lpc, lpc_order,
+                                    output_buffer + MAX_LPC_ORDER + buffer_start_t % SIGNAL_BUFFER_SIZE);
       /** If t is a multiple of LPC_COMPUTE_INTERVAL or < LPC_COMPUTE_INTERVAL.. */
       if ((t & (LPC_COMPUTE_INTERVAL - 1)) == 0 || t < LPC_COMPUTE_INTERVAL)
         lilcom_compute_lpc(lpc_order, &lpc);
@@ -1901,6 +1909,7 @@ int lilcom_decompress(int64_t num_samples,
                                          output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1)),
                                          &exponent))
           return 1;  /** Error */
+
         output[t * output_stride] =
             output_buffer[MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1))];
       }

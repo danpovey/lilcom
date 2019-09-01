@@ -70,16 +70,15 @@ def compress(input, axis=-1, lpc_order=5, default_exponent=0, out=None):
    if not (isinstance(default_exponent, int) and default_exponent >= 0 and default_exponent <= 15):
       raise ValueError("default_exponent={} is not valid".format(default_exponent))
 
-   if axis != -1 and axis != num_axes - 1:
-      # Make sure that the last axis of `input` is the time axis.
-      input = input.transpose(axis, -1)
-
-   out_shape = input.shape[:-1] + (input.shape[-1]+4,)
+   out_shape = list(input.shape)
+   out_shape[axis] += 4
+   out_shape = tuple(out_shape)
    if out is None:
-      # the output shape is the same as the input shape, but with a dimension
+      # the output shape is the same as the input shape, but with the
+      # dim on axis `axis` larger by 4.
       out = np.empty(out_shape, dtype=np.int8)
 
-   # Check `out` has the correct dimensions.
+   # Check `out` has the correct dimensions (before transposing)
    if not isinstance(out, np.ndarray):
       raise TypeError("Expected `out` to be of type numpy.ndarray, got {}".format(
              type(out)))
@@ -91,6 +90,13 @@ def compress(input, axis=-1, lpc_order=5, default_exponent=0, out=None):
       # Just convert to float so we don't have to deal with double separately in
       # the "C" code.
       input = input.astype(np.float32)
+
+   out_pre_swapping_axes = out
+   if axis != -1 and axis != num_axes - 1:
+      # Make sure that the last axis of `input` and `out` are the time axis;
+      # this is assumed by the c-level code for convenience.
+      input = input.swapaxes(axis, -1)
+      out = out.swapaxes(axis, -1)
 
 
    if input.dtype == np.float32:
@@ -110,7 +116,7 @@ def compress(input, axis=-1, lpc_order=5, default_exponent=0, out=None):
       if ret != 0:
          raise RuntimeError("Something went wrong in lilcom compression (code "
                             "error? return={})".format(ret))
-   return out
+   return out_pre_swapping_axes
 
 
 
@@ -174,6 +180,8 @@ def decompress(input, axis=-1, out=None, dtype=np.int16):
    out_shape = tuple(out_shape)
    if out == None:
       out = np.empty(out_shape, dtype=dtype)
+
+   # Check `out`
    if not isinstance(out, np.ndarray):
       raise ValueError("Expected `out` to be of type np.ndarray")
    if not out.dtype in [np.int16, np.float32, np.float64]:
@@ -182,8 +190,17 @@ def decompress(input, axis=-1, out=None, dtype=np.int16):
    if out.shape != out_shape:
       raise ValueError("shape of output should be {}, got {}".format(out_shape, out.shape))
 
+   # Deal with non-default values of `axis` by making sure the time axis is the
+   # last one, which is what the "C" code requires.
+   num_axes = len(input.shape)
+   out_pre_swapping_axes = out
+   if axis != -1 and axis != num_axes - 1:
+      input = input.swapaxes(axis, -1)
+      out = out.swapaxes(axis, -1)
 
    if out.dtype == np.int16:
+      print("input strides are {}, output {}".format(input.strides, out.strides))
+      print("input shape are {}, output {}".format(input.shape, out.shape))
       ret = lilcom_c_extension.decompress_int16(input, out)
       if ret >= 1000:
          if ret == 1003:
@@ -192,20 +209,20 @@ def decompress(input, axis=-1, out=None, dtype=np.int16):
          else:
             raise RuntimeError("Something went wrong in lilcom decompression, return code = {}".format(
                   ret))
-      return out
+      return out_pre_swapping_axes
    else:
       # float or double.  First decompress as float.
       if out.dtype == np.float32:
          temp_out = out
       else:
-         temp_out = np.empty(out_shape, np.float32)
+         temp_out = np.empty(out.shape, np.float32)
+
       ret = lilcom_c_extension.decompress_float(input, temp_out)
       if ret != 0:
          raise RuntimeError("Something went wrong in lilcom decompression, return code =  {}".format(
                ret))
       if out.dtype != np.float32:
          out[:] = temp_out[:]
-      return out
-
+      return out_pre_swapping_axes
 
 
