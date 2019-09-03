@@ -24,7 +24,7 @@ import numpy
 def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
-extension_mod = Extension("lilcom.lilcom_c_extension",
+extension_mod = Extension("lilcom_c_extension",
                           sources=["lilcom/lilcom_c_extension.c","lilcom/lilcom.c"],
                           include_dirs=[numpy.get_include()])
 
