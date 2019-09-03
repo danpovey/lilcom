@@ -165,8 +165,8 @@ error_return:
                     and possibly shifted, as for input_data.
    @param [in] input  Must point to a NumPy array representing the input.  Used
                     for its dimension and stride information
-   @param [in] output  Must point to a NumPy array representing the output data.  Used
-                    for its dimension and stride information
+   @param [in] output  Must point to a NumPy array representing the output data.
+                    Used for its dimension and stride information
 
    @return     On success, returns the conversion exponent that was used for
                the compression; this will be in [-127..128] but usually 0.
@@ -189,16 +189,13 @@ int decompress_int16_internal(int num_axes, int axis,
                               PyObject *input, PyObject *output) {
   assert(axis >= 0 && axis < num_axes);
 
-
-  /* ISSUE: the function is supposed to be returning a conversion exponent and an error code, to do this we must make a consideration to handel it here and in the python wrapper  */
-  int conversion_exponent = 0;
+  int conversion_exponent = -1;
 
   int dim = PyArray_DIM(input, axis),
       input_stride = PyArray_STRIDE(input, axis) / sizeof(int8_t),
       output_stride = PyArray_STRIDE(output, axis) / sizeof(int16_t);
 
   if (axis < num_axes - 1) {  /** Not the time axis. */
-    int conversion_exponent = -1;
     if (PyArray_DIM(output, axis) != dim)
       return 2;
     for (int i = 0; i < dim; i++) {
@@ -283,9 +280,8 @@ static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keyw
   static char *kwlist[] = {"input", "output", NULL};
   // Parsing Arguments
 
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OOii", kwlist,
-                                   &input, &output
-                                  ))
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist,
+                                   &input, &output))
 
     goto error_return;
 
@@ -456,7 +452,26 @@ error_return:
 
 
 /**
-  TODO: add comments
+   Internal implementation of decompress_float().
+
+     @param [in] num_axes   Number of axes in these arrays.  Must be >= 1
+     @param [in] axis       Axis we are immediately working on.  Will be
+                           called with 0, and will then recurse to num_axes - 1.
+                           Must be in range [0..num_axes-1].
+     @param [in] input_data  Data pointer for `input` object, possibly shifted
+                           by previous recursion.
+     @param [out] output_data  Data pointer for `output` object, possibly shifted
+                           by previous recursion.
+     @param [in] input   Input NumPy object containing floats-- needed only
+                           for dimension info.
+     @param [in] output   Output NumPy object containing floats-- needed only
+                           for dimension info.
+
+     @return
+           Returns 0 on success, 1 if there was a failure in the core
+           decompression routine (e.g. data was corrupted or not lilcom-compressed
+           data), and 2 if there was some kind of dimension mismatch with
+           `input` and `output`.
 */
 int decompress_float_internal(int num_axes, int axis,
                               const int8_t *input_data,
@@ -468,50 +483,62 @@ int decompress_float_internal(int num_axes, int axis,
       output_stride = PyArray_STRIDE(output, axis) / sizeof(float);
 
   if (axis < num_axes - 1) {  /** Not the time axis. */
-    int conversion_exponent = -1;
     if (PyArray_DIM(output, axis) != dim)
       return 2;
     for (int i = 0; i < dim; i++) {
       int ret = decompress_float_internal(num_axes, axis + 1, input_data,
                                           output_data, input, output);
-      if (ret >= 1000)
+      if (ret != 0)
         return ret;  /** Some kind of failure */
-
-      if (i == 0) conversion_exponent = ret;
-      else if (ret != conversion_exponent) return 1003;
-
       input_data += input_stride;
       output_data += output_stride;
     }
-    return conversion_exponent;
+    return 0;  /** Success */
   } else {
     /** The last axis-- the time axis. */
     if (PyArray_DIM(output, axis) != dim - 4)
-      return 1002;
+      return 2;
     int ret = lilcom_decompress_float(dim - 4, input_data, input_stride,
                                 output_data, output_stride);
-    if (ret != 0)
-      return 1001;  /** Failure in decompression, e.g. corrupted data */
-    else
-      return ret;
+    return ret;
   }
 }
 
 
-/**
-  TODO: add comments
+
+
+ /**
+   NOTE: the documentation below will document this function AS IF it were
+   a Python function.
+
+   def decompress_float(input, output):
+   """
+   This function decompresses data from int8_t to float.  The data is assumed
+   to have previously been compressed by `compress_float`.
+
+   Args:
+   input     Must be of type numpy.ndarray, with dtype=int8.  The
+   last axis is assumed to be the time axis, and the last
+   axis must have dimension > 4.
+   output    Must be of type numpy.ndarray, with dtype=int16.  Must
+   be of the same shape as `input`, except the dimension on
+   the last axis must be less than that of `input` by 4.
+
+   Return:
+       0 on success
+       1 on failure in the decompression routine (e.g. if the data was corrupted
+           or was not lilcom-compressed data)
+       2 if there was some dimension mismatch between the input and output
+         arrays
+       3 If the inputs did not have the correct types or had different num-axes.
+  """
 */
 static PyObject *decompress_float(PyObject *self, PyObject *args, PyObject *keywds)
 {
   PyObject *input; // The input signal, passed as a numpy array.
   PyObject *output; // The output signal, passed as a numpy array.
 
-  /* Reading and information - extracting for input data
-     From the python function there are two numpy arrays and an intger (optional) LPC_order
-     passed to this madule. Following part will parse the set of variables and store them in corresponding
-     objects.
-  */
-  static char *kwlist[] = {"X", "Y", NULL};
+  static char *kwlist[] = {"input", "output", NULL};
   // Parsing Arguments
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist,
                                    &input, &output))
@@ -537,21 +564,21 @@ error_return:
 static PyMethodDef LilcomMethods[] = {
   { "compress_int16", (PyCFunction)compress_int16, METH_VARARGS | METH_KEYWORDS, "Lossily compresses samples of int16 sequence data (e.g. audio data) int8_t."},
   { "compress_float", (PyCFunction)compress_float, METH_VARARGS | METH_KEYWORDS, "Lossily compresses samples of float sequence data (e.g. audio data) int8_t."},
-  { "decompress_int16", (PyCFunction)decompress_int16, METH_VARARGS| METH_KEYWORDS, "Decompresses a compressed signal to int16"  },
-  { "decompress_float", (PyCFunction)decompress_float, METH_VARARGS| METH_KEYWORDS, "Decompresses a compressed signal to float16"  },
+  { "decompress_int16", (PyCFunction)decompress_int16, METH_VARARGS | METH_KEYWORDS, "Decompresses a compressed signal to int16"  },
+  { "decompress_float", (PyCFunction)decompress_float, METH_VARARGS | METH_KEYWORDS, "Decompresses a compressed signal to float16"  },
   { NULL, NULL, 0, NULL }
 };
 
 static struct PyModuleDef lilcom =
 {
     PyModuleDef_HEAD_INIT,
-    "lilcom", /* name of module */
+    "lilcom_c_extension", /* name of module */
     "",          /* module documentation, may be NULL */
     -1,          /* size of per-interpreter state of the module, or -1 if the module keeps state in global variables. */
     LilcomMethods
 };
 
-PyMODINIT_FUNC PyInit_lilcom(void)
+PyMODINIT_FUNC PyInit_lilcom_c_extension(void)
 {
     import_array();
     return PyModule_Create(&lilcom);

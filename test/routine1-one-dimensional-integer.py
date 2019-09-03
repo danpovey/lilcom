@@ -1,7 +1,7 @@
 # Signals are supposed to be given as numpy arrays
 import numpy
 # The main library
-import lilcom
+import lilcom.lilcom_c_extension as l
 # To create random samples for the signal
 import random
 
@@ -15,12 +15,12 @@ reconstruction = numpy.zeros(inputArray.shape, numpy.int16)
 #                      lpc_order=5, conversion_exponent=39)
 
 print("Shapes {} {} {} ".format(inputArray.shape, outputArray.shape, reconstruction.shape))
-a = lilcom.compress_int16(inputArray, outputArray)
+a = l.compress_int16(inputArray, outputArray, lpc_order=5, conversion_exponent=0)
 print("Return value = {}".format(a))
 
 
 
-c_exponent = lilcom.decompress_int16(outputArray, reconstruction)
+c_exponent = l.decompress_int16(outputArray, reconstruction)
 
 print("Return value = {}".format(c_exponent))
 

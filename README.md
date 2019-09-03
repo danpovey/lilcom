@@ -19,13 +19,14 @@ git clone git@github.com:danpovey/lilcom.git
 
 then run setup with `install` argument.
 ```
-python setup.py install
+python3 setup.py install
 ```
 
-and then for test, run:
+and then for test, cd to `test` and run:
 
 ```
-python3 test/routine1-one-dimensional-integer.py
-python3 test/routine2-one-dimensional-float.py
+python3 routine1-one-dimensional-integer.py
+python3 routine2-one-dimensional-float.py
+python3 test_interface.py
 ```
 
