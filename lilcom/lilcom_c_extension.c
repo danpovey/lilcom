@@ -280,12 +280,12 @@ static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keyw
      passed to this madule. Following part will parse the set of variables and store them in corresponding
      objects.
   */
-  static char *kwlist[] = {"X", "Y", NULL};
+  static char *kwlist[] = {"input", "output", NULL};
   // Parsing Arguments
 
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OOii", kwlist,
-                                   &input, &output,
-                                   &lpc_order, &conversion_exponent))
+                                   &input, &output
+                                  ))
 
     goto error_return;
 
