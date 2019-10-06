@@ -1,10 +1,62 @@
+AudioFormats = ["lilcom", "mp3_320", "mp3_256", "mp3_224", "mp3_192", "mp3_160",\
+     ]
+
 import lilcom
 import numpy
 import math
 import os
 from scipy.io import wavfile
+import random
+import pydub
+import pandas
 
-def evaluate (inputArray):
+def MSE (arr, reconst):
+    result = 0
+    for x, y in numpy.nditer([arr, reconst]):
+        result += (x - y)**2
+    result /= arr.size
+    return result
+
+def PSNR (arr, reconst):
+    MAXI = 2**16 - 1
+    mse = MSE (arr, reconst)
+    if mse != 0:
+        psnr = 20 * math.log10(MAXI) - 10 * math.log10(mse)
+    else:
+        psnr = math.inf
+    
+    return psnr
+    
+
+def evaluateMP3(filename, bitrate):
+    tmpPath = "./ReconstTemp"
+
+    if tmpPath[2:] in os.listdir("./"):
+        os.system("rm -dR "+ tmpPath)
+    
+    os.system("mkdir "+ tmpPath)
+
+    wavFile = pydub.AudioSegment.from_wav(filename)
+    wavFile.export(tmpPath + "/output.mp3", format="mp3", bitrate=bitrate)
+
+    mp3File = pydub.AudioSegment.from_mp3(tmpPath + "/output.mp3")
+    mp3File.export(tmpPath + "/reconst.wav", format="wav")
+
+    # os.system("ffmpeg -i "+ filename +" -codec:a libmp3lame -qscale:a 2 " + tmpPath + "/output.mp3")
+    # os.system("ffmpeg -i "+ tmpPath + "/output.mp3 " + tmpPath + "/reconst.wav")
+    
+    sampleRate, audioArray = wavfile.read(filename)
+    sampleRateReconst, audioReconst = wavfile.read(tmpPath + "/reconst.wav")
+
+    psnr = PSNR(audioArray, audioReconst)
+
+    os.system("rm -dR "+ tmpPath)
+    return psnr
+
+
+def evaluateLilcom (filename):
+
+    sampleRate, inputArray = wavfile.read(filename)
 
     outputShape = list(inputArray.shape)
     outputShape[-1] += 4
@@ -13,40 +65,16 @@ def evaluate (inputArray):
     outputArray = numpy.ndarray(outputShape, numpy.int8)
     reconstructedArray = numpy.ndarray(inputArray.shape, numpy.int16)
 
-    
-
     lilcom.compress(inputArray,out=outputArray)
-
     lilcom.decompress(outputArray, out=reconstructedArray)
 
+    psnr = PSNR(inputArray, reconstructedArray)
+    return psnr
 
-    # for i in range(len(inputArray)):
-    #     print (inputArray[i], " - " ,outputArray[i], " - ", reconstructedArray[i])
 
-    mse = 0
-    for x, y in numpy.nditer([inputArray, reconstructedArray]):
-        # print (x, " : ", y)
-        mse += (x - y)**2
-    mse /= inputArray.size
 
-    maxi = 2**16 - 1
-
-    if mse == 0:
-        print ("MSE = 0.0")
-        mse = 0.00000001
-
-    psnr = 20 * math.log10(maxi) - 10 * math.log10(mse)
-
-    print (mse)
-    print (psnr)
-
-    result = dict.fromkeys("mse", "psnr")
-    result["mse"] = mse
-    result["psnr"] = psnr
-    
-    return result
-
-import random
+# Goes through the test folder and find test scenarios
+psnrTestResult = []
 
 dataAddresses = ["./audio-samples/" + item for item in os.listdir("audio-samples")]
 if "./audio-samples/.DS_Store" in dataAddresses:
@@ -55,18 +83,29 @@ for dirs in dataAddresses:
     files = os.listdir(dirs)
     if ".DS_Store" in files:
         files.remove(".DS_Store")
-    dirResults = []
+
+    scenarioPSNR = []
+
+    print ("Test scenraio: ", dirs)
+#     dirResults = []
     for file in files:
         filename = dirs + "/" + file
-        print (filename)
+        
+        resLilcom = evaluateLilcom(filename)
+        resMp3_320 = evaluateMP3(filename, "320k")
+        resMp3_256 = evaluateMP3(filename, "256k")
+        resMp3_224 = evaluateMP3(filename, "224k")
+        resMp3_192 = evaluateMP3(filename, "192k")
+        resMp3_160 = evaluateMP3(filename, "160k")
 
-        sampleRate, audioArray = wavfile.read(filename)
-        #print (audioArray.shape)
-        dirResults.append(evaluate(audioArray))
-        print(dirResults[-1])
-    sumResult = [sum([item["psnr"]for item in dirResults]) , sum([item["mse"] for item in dirResults])]
-    meanResult = [item / len(dirResults) for item in sumResult]
+        trackPSNR = [file, resLilcom, resMp3_320, resMp3_256,\
+            resMp3_224, resMp3_192, resMp3_160]
 
-    print (dirs)
-    print (meanResult)
+        print(trackPSNR)
+        scenarioPSNR.append(trackPSNR)
+    
+    scenarioPSNR = pandas.DataFrame(data= scenarioPSNR, columns= ["file"]+AudioFormats)
+    scenarioPSNR.to_csv(dirs[16:]+"-Scenario.csv")
+    psnrTestResult.append(scenarioPSNR)
 
+    
