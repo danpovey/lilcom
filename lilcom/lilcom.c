@@ -144,7 +144,7 @@
    all samples to some extent.  This may be important to tune, for
    performance.
  */
-#define AUTOCORR_DECAY_EXPONENT 3
+#define AUTOCORR_DECAY_EXPONENT 5
 
 
 /**
@@ -161,10 +161,10 @@
    raw samples of data.  The AUTOCORR_LEFT_SHIFT factor just relates
    to how we store the stats with a left shift.
 
-   This number was computed by typing: floor(sqrt(1 - 2^-3) * 2^20)
+   This number was computed by typing: floor(sqrt(1 - 2^-5) * 2^20)
    into wolfram alpha.
 */
-#define AUTOCORR_DECAY_SQRT 980853
+#define AUTOCORR_DECAY_SQRT 1032061
 
 
 
