@@ -144,7 +144,7 @@
    all samples to some extent.  This may be important to tune, for
    performance.
  */
-#define AUTOCORR_DECAY_EXPONENT 3
+#define AUTOCORR_DECAY_EXPONENT 4
 
 
 /**
@@ -162,9 +162,9 @@
    to how we store the stats with a left shift.
 
    This number was computed by typing: floor(sqrt(1 - 2^-3) * 2^20)
-   into wolfram alpha.
+   into wolfram alpha; note, the 3 is AUTOCORR_DECAY_EXPONENT.
 */
-#define AUTOCORR_DECAY_SQRT 980853
+#define AUTOCORR_DECAY_SQRT 1015279  /*741455   980853 */
 
 
 
@@ -249,15 +249,15 @@ static inline int lilcom_sgn(int val) {
 struct LpcComputation {
   /**
      'autocorr[i]' contains a weighted sum of (s[j] * s[j - i]) << AUTOCORR_LEFT_SHIFT; we use a
-     'forgetting factor' of AUTOCORR_DECAY_EXPONENT, i.e. each time we process a
+     'forgetting factor' of (1 - 2^{-AUTOCORR_DECAY_EXPONENT}), i.e. each time we process a
      block (of size AUTOCORR_BLOCK_SIZE) we multiply by (1 +
      2^-{AUTOCORR_DECAY_EXPONENT}).  The elements of the sum cannot exceed
      (2^15)^2 = 2^30, shifted left AUTOCORR_LEFT_SHIFT bits, so the elements of
      the sum are <= 2^53.  The sum will be no
      greater than this times around AUTOCORR_BLOCK_SIZE *
      2^AUTOCORR_DECAY_EXPONENT (the approximate number of terms added together)
-     = 2^8, so the sum would be <= 2^(50+8) = 2^58.  The most this could be
-     without overflow is around 2^61.  */
+     = 2^8, so the sum would be <= 2^(50+8) = 2^58.
+  */
   int64_t autocorr[MAX_LPC_ORDER + 1];
   /*
      max_exponent is the smallest number >= 0 such that autocorr[0] >>
@@ -331,70 +331,82 @@ static void lilcom_init_lpc(struct LpcComputation *lpc) {
 static inline void lilcom_update_autocorrelation(
     struct LpcComputation *lpc, int lpc_order,
     const int16_t *signal) {
-  /** 'temp_autocorr' will contain the raw autocorrelation stats without the
-      shifting left by AUTOCORR_LEFT_SHIFT; we'll do the left-shifting at the
-      end, to save an instruction in the inner loop).  */
-  int64_t temp_autocorr[MAX_LPC_ORDER + 1];
+
+
+  /**
+     scaled_signal conceptually contains lpc->decompressed_signal
+     times an exponentially increasing window function
+     whose values range (from 0 at -infty to 1 at the next time step
+     (i.e. signal[AUTOCORR_BLOCK_SIZE]).  It's actually stored
+     left-shifted by AUTOCORR_LEFT_SHIFT/2.  (divided by 2 because
+     we'll multiply them together and want AUTOCORR_LEFT_SHIFT).
+
+     We make a piecewise linear approximation to this exponential
+     function.  Firstly, as for the linear points:
+
+       At the right (note: the following point is one past the end
+       and is not really written):
+           signal[AUTOCORR_BLOCK_SIZE] gets multiplied by
+            (1<<(AUTOCORR_LEFT_SHIFT/2)) and written to
+            scaled_signal[MAX_LPC_ORDER + AUTOCORR_BLOCK_SIZE]).
+            Conceptually this is a scaling by 1.
+       In the middle:
+        signal[0] gets multiplied by AUTOCORR_DECAY_SQRT >> (AUTOCORR_LEFT_SHIFT/2)
+            which conceptually is sqrt(1 - 2^-{AUTOCORR_DECAY_EXPONENT})..
+       At a point past the left:
+        signal[-AUTOCORR_BLOCK_SIZE] gets multiplied by
+           (1 - 2^-{AUTOCORR_DECAY_EXPONENT}) * 2^(AUTOCORR_LEFT_SHIFT/2).
+
+       The following few variables are known at compile time.  Note:
+       middle_point is, conceptually, equal to (1<<a2) - (AUTOCORR_DECAY_SQRT>>a2),
+       but we use the value with rounding errors to keep the series closer to
+       being continuous.
+  */
+  int a2 = AUTOCORR_LEFT_SHIFT / 2;
+  int32_t
+      middle_scale = (AUTOCORR_DECAY_SQRT>>a2),
+      increment_right = ((1<<a2) - middle_scale + AUTOCORR_BLOCK_SIZE/2) / AUTOCORR_BLOCK_SIZE,
+      left_scale = ((1<<a2) - (1<<(a2-AUTOCORR_DECAY_EXPONENT))),
+      increment_left = (middle_scale - left_scale + AUTOCORR_BLOCK_SIZE/2) / AUTOCORR_BLOCK_SIZE;
+
+  int32_t scaled_signal[MAX_LPC_ORDER + AUTOCORR_BLOCK_SIZE];
   int i;
+  for (i = -lpc_order; i < 0; i++)
+    scaled_signal[i + MAX_LPC_ORDER] = signal[i] * (middle_scale + i * increment_left);
+  for (i = 0; i < AUTOCORR_BLOCK_SIZE; i++)
+    scaled_signal[i + MAX_LPC_ORDER] = signal[i] * (middle_scale + i * increment_right);
 
   /** Scale down the current data slightly.  This is to form an exponentially
       decaying sum of the autocorrelation stats (to preserve freshness), but
-      done at the block level not the sample level.  Also zero
+      done at the block level not the sample level.
       `temp_autocorr`.  */
   for (i = 0; i <= lpc_order; i++) {
     /** The division below is a 'safer' way of right-shifting by
         AUTOCORR_DECAY_EXPONENT, which would technically give undefined results
         for negative input */
     lpc->autocorr[i] -= (lpc->autocorr[i] / (1 << AUTOCORR_DECAY_EXPONENT));
-    temp_autocorr[i] = 0;
   }
+  assert(lpc->autocorr[1] <= lpc->autocorr[0]);
 
-  /** HISTORY SCALING
-      Process any terms involving the history samples that are prior to the
-      start of the block.
+  int64_t orig_autocorr_0 = lpc->autocorr[0];
 
-      The samples (for left-context) that come from the previous block need to
-      be scaled down slightly, in order to be able to guarantee that no element
-      of lpc->autocorr is greater than the zeroth element.  We can then view
-      the autocorrelation as a simple sum on a much longer (but
-      decreasing-with-time) sequence of data, which means we don't have to
-      reason about what happens when we interpolate autocorrelation stats.
-
-      See the comment where AUTOCORR_DECAY_SQRT is defined for more details.
-      Notice that we write this part directly to lpc->autocorr instead of to
-      temp_autocorr.  */
-  for (i = 0; i < lpc_order; i++) {
-    int32_t signal_i = signal[i];
-    int j;
-    for (j = 0; j <= i; j++)
-      temp_autocorr[j] += signal[i - j] * signal_i;
-    for (j = i + 1; j <= lpc_order; j++)
-      lpc->autocorr[j] += (signal[i - j] * signal_i) * AUTOCORR_DECAY_SQRT;
-  }
-
-  /** OK, now we handle the samples that aren't close to the boundary.
-      currently, i == lpc_order. */
-  for (; i < AUTOCORR_BLOCK_SIZE; i++) {
-    int32_t signal_i = signal[i];
+  for (i = 0; i < AUTOCORR_BLOCK_SIZE; i++) {
+    int64_t signal_i = scaled_signal[MAX_LPC_ORDER + i];
     for (int j = 0; j <= lpc_order; j++)
-      temp_autocorr[j] += signal[i - j] * signal_i;
+      lpc->autocorr[j] += scaled_signal[MAX_LPC_ORDER + i - j] * signal_i;
   }
 
-  /** Copy from the temporary buffer to struct lpc, shifting left
-      appropriately.  */
-  for (int j = 0; j <= lpc_order; j++)
-    lpc->autocorr[j] += temp_autocorr[j] << AUTOCORR_LEFT_SHIFT;
-
-
+  assert(lpc->autocorr[1] <= lpc->autocorr[0]);
   /* The next statement takes care of the smoothing to make sure that the
      autocorr[0] is nonzero, and adds extra noise proportional to the signal
     energy, which is determined by AUTOCORR_EXTRA_VARIANCE_EXPONENT.  This will
     allow us to put a bound on the value of the LPC coefficients so we don't
     need to worry about integer overflow.
     (Search for: "NOTE ON BOUNDS ON LPC COEFFICIENTS")  */
+
   lpc->autocorr[0] +=
       ((int64_t)((AUTOCORR_BLOCK_SIZE*AUTOCORR_EXTRA_VARIANCE)<<AUTOCORR_LEFT_SHIFT)) +
-      (temp_autocorr[0] << (AUTOCORR_LEFT_SHIFT - AUTOCORR_EXTRA_VARIANCE_EXPONENT));
+      ((lpc->autocorr[0] - orig_autocorr_0) >> AUTOCORR_EXTRA_VARIANCE_EXPONENT);
 
   /* We will have copied the max_exponent from the previous LpcComputation
      object, and it will usually already have the correct value.  Return
@@ -937,6 +949,40 @@ static inline int least_exponent(int32_t residual,
 }
 
 
+float kaldi_durbin(int n, const int32_t *pAC, float *pLP, float *pTmp) {
+  float ki;                // reflection coefficient
+  int i;
+  int j;
+
+  float E = pAC[0];
+
+  for (i = 0; i < n; i++) {
+    // next reflection coefficient
+    ki = pAC[i + 1];
+    for (j = 0; j < i; j++)
+      ki += pLP[j] * pAC[i - j];
+    ki = ki / E;
+
+    // new error
+    float c = 1 - ki * ki;
+    if (c < 1.0e-5) // remove NaNs for constan signal
+      c = 1.0e-5;
+    E *= c;
+
+    // new LP coefficients
+    pTmp[i] = -ki;
+    for (j = 0; j < i; j++)
+      pTmp[j] = pLP[j] - ki * pLP[i - j - 1];
+
+    for (j = 0; j <= i; j++)
+      pLP[j] = pTmp[j];
+  }
+
+  return E;
+}
+
+
+
 /**
    Computes the LPC coefficients via an integerized version of the Durbin
    computation (The Durbin computation computes linear prediction coefficients
@@ -965,10 +1011,11 @@ void lilcom_compute_lpc(int lpc_order,
                         struct LpcComputation *lpc) {
   /**
      autocorr is just a copy of lpc->autocorr, but shifted to ensure that the
-     absolute value of all elements is less than 1<<LPC_EST_LEFT_SHIFT (but as large
-     as possible given that constraint).  We don't need to know how much it was
-     shifted right, because a scale on the autocorrelation doesn't affect the
-     LPC coefficients.  */
+     absolute value of all elements is less than 1<<LPC_EST_LEFT_SHIFT (but as
+     large as possible given that constraint).  We don't need to know how much
+     it was shifted right, because a scale on the autocorrelation doesn't affect
+     the LPC coefficients.  However, we *imagine* during the computation that it
+     is stored shifted left by LPC_EST_LEFT_SHIFT.  */
   int32_t autocorr[MAX_LPC_ORDER];
 
   { /** This block just sets up the `autocorr` array with appropriately
@@ -990,9 +1037,9 @@ void lilcom_compute_lpc(int lpc_order,
         autocorr[i] = (int32_t)(lpc->autocorr[i] << left_shift);
     }
     assert((autocorr[0] >> (LPC_EST_LEFT_SHIFT - 1)) == 1);
-    for (int i = 1; i <= lpc_order; i++) {  /* TODO: remove this loop. */
+    /*for (int i = 1; i <= lpc_order; i++) {  /* TODO: remove this loop. * /
       assert(lilcom_abs(autocorr[i]) <= autocorr[0]);
-    }
+    }*/
   }
 
   /**
@@ -1004,9 +1051,7 @@ void lilcom_compute_lpc(int lpc_order,
    above).  The absolute values of the elements of 'temp' will thus be less than
    2^(LPC_EST_LEFT_SHIFT+8) = 2^31.  i.e. it is guaranteed to fit into an int32.
   */
-  /** int32_t temp[MAX_LPC_ORDER];
-  ***TEMP*** Making it int64 while testing. */
-  int64_t temp[MAX_LPC_ORDER];
+  int32_t temp[MAX_LPC_ORDER];
 
 
   int32_t E = autocorr[0];
@@ -1027,6 +1072,8 @@ void lilcom_compute_lpc(int lpc_order,
           ki still represents a floating-point number times 2 to the
           power 2*LPC_EST_LEFT_SHIFT.
         The original floating-point code looked the same as the next line
+        but with opposite sign due to the original code having negated
+        lpc coeffs.
         (not: ki has double the left-shift of the terms on the right).
       */
       ki -= lpc->lpc_coeffs[j] * (int64_t)autocorr[i - j];
@@ -1047,18 +1094,16 @@ void lilcom_compute_lpc(int lpc_order,
          so shifting right is well defined. */
     int64_t c = (((int64_t)1) << LPC_EST_LEFT_SHIFT) - ((ki*ki) >> LPC_EST_LEFT_SHIFT);
 
-    /** c is the factor by which the residual has been reduced; mathematically
-        it is always >= 0, but here it must be > 0 because of our smoothing of
-        the variance via AUTOCORR_EXTRA_VARIANCE_EXPONENT and
-        AUTOCORR_EXTRA_VARIANCE which means the residual can never get to
-        zero.*/
-    assert(c > 0);
+    assert(c >= 0);
+
     /** The original code did: E *= c;
         Note: the product is int64_t because c is int64_t, which is important
         to avoid overflow.  Also note: it's only well-defined to right-shift
         because the result (still an energy E) is nonnegative.
     */
     E = (int32_t)((E * c) >> LPC_EST_LEFT_SHIFT);
+
+    assert(E >= 0);
 
     /** compute the new LP coefficients
         Original code did: pTmp[i] = -ki;
@@ -1083,8 +1128,7 @@ void lilcom_compute_lpc(int lpc_order,
           (int32_t)((ki * lpc->lpc_coeffs[i - j - 1]) / (1 << LPC_EST_LEFT_SHIFT));
     }
     for (j = 0; j <= i; j++) {
-      assert(lilcom_abs(temp[j]) < ((int64_t)1<<(LPC_EST_LEFT_SHIFT + 8)));
-      lpc->lpc_coeffs[j] = (int32_t)temp[j];
+      lpc->lpc_coeffs[j] = temp[j];
     }
   }
   /** E > 0 because we added fake extra variance via
@@ -1105,6 +1149,28 @@ void lilcom_compute_lpc(int lpc_order,
   */
   for (int i = 0; i < lpc_order; i++) {
     lpc->lpc_coeffs[i] /= (1 << (LPC_EST_LEFT_SHIFT - LPC_APPLY_LEFT_SHIFT));
+  }
+
+  printf("(");
+  float tot = 0.0;
+  for (int i = 0; i < lpc_order; i++) {
+    float coeff = lpc->lpc_coeffs[i] * 1.0 / (1 << LPC_APPLY_LEFT_SHIFT);
+    tot += coeff;
+    printf("%f,", coeff);
+  }
+  printf("tot=%f)\n", tot);
+
+  { // compare with kaldi.
+    float lp[MAX_LPC_ORDER], tmp[MAX_LPC_ORDER];
+    kaldi_durbin(lpc_order, autocorr, lp, tmp);
+    float tot = 0.0;
+    printf("[");
+    for (int i = 0; i < lpc_order; i++) {
+      float coeff = -lp[i];
+      tot += coeff;
+      printf("%f,", coeff);
+    }
+    printf("tot=%f]\n", tot);
   }
 }
 
@@ -1148,8 +1214,8 @@ static inline int16_t lilcom_compute_predicted_value(
        - A big number (2^16) that is designed to keep the sum positive, so that
          when, later, we right shift, the behavior is well defined.  Later we'll
          remove this by having it overflow.  It's important that this
-         number be >= 16 because that's the smallest power of 2 that, when
-         cast to int16_t, disappears.  Also this number plus
+         exponent be >= 16 because 2^16 the smallest power of 2 that, when
+         cast to int16_t, is zero.  Also this exponent plus
          LILCOM_APPLY_LEFT_SHIFT must be less than 31, to avoid overflowing
          int32_t.
   */
@@ -1165,6 +1231,7 @@ static inline int16_t lilcom_compute_predicted_value(
       elements of lpc_coeffs are zeroed. */
   int i;
   const int32_t *lpc_coeffs = &(lpc->lpc_coeffs[0]);
+
   for (i = 0; i < lpc_order; i += 2) {
     sum += lpc_coeffs[i] * decompressed_signal_t[-1-i];
     sum2 += lpc_coeffs[i+1] * decompressed_signal_t[-2-i];
@@ -1252,6 +1319,14 @@ void lilcom_update_autocorrelation_and_lpc(
       at the start).  */
   int compute_lpc = ((t & (LPC_COMPUTE_INTERVAL - 1)) == 0);
   if (t < LPC_COMPUTE_INTERVAL) {
+    if (t == AUTOCORR_BLOCK_SIZE) {
+      /**  For the first block, we pad to the left with copies of the
+           first decompressed sample.  This will tend to give more
+           sensible predictions than padding on the left with zeros.  */
+      /*      int16_t s0 = state->decompressed_signal[MAX_LPC_ORDER];
+      for (int i = 0; i < MAX_LPC_ORDER; i++)
+      state->decompressed_signal[i] = s0;  */
+    }
     if (t == 0) {
       /* For time t = 0, there is nothing to do because there
          is no previous block to get stats from.  We rely on
@@ -1268,7 +1343,6 @@ void lilcom_update_autocorrelation_and_lpc(
   struct LpcComputation *this_lpc = &(state->lpc_computations[block_index & 1]);
   /**  prev_lpc is the 'other' LPC object in the circular buffer of size 2. */
   struct LpcComputation *prev_lpc = &(state->lpc_computations[!(block_index & 1)]);
-  assert(prev_lpc != this_lpc);  /* TODO: remove this. */
 
   /** Copy the previous autocorrelation coefficients and max_exponent.  We'll
       either re-estimate or copy the LPC coefficients below. */
@@ -1365,6 +1439,7 @@ static inline int lilcom_compress_for_time_internal(
   /** cast to int32 when computing the residual because a difference of int16's may
       not fit in int16. */
   int32_t residual = ((int32_t)observed_value) - ((int32_t)predicted_value);
+  printf("%d/%d/%d ", (int)observed_value, (int)predicted_value, (int)residual);
 
   int mantissa,
       exponent = least_exponent(
@@ -1804,10 +1879,10 @@ int lilcom_decompress(int64_t num_samples,
   struct LpcComputation lpc;
   lilcom_init_lpc(&lpc);
 
-  /** The first LPC_MAX_ORDER samples are for left-context; view the array as
-      starting from the element with index LPC_MAX_ORDER.
+  /** The first MAX_LPC_ORDER samples are for left-context; view the array as
+      starting from the element with index MAX_LPC_ORDER.
       In the case where output_stride is 1, we'll only be using the
-      first LPC_MAX_ORDER + AUTOCORR_BLOCK_SIZE elements of this
+      first MAX_LPC_ORDER + AUTOCORR_BLOCK_SIZE elements of this
       array.
   */
   int16_t output_buffer[MAX_LPC_ORDER + SIGNAL_BUFFER_SIZE];
@@ -2222,7 +2297,9 @@ static inline int lilcom_check_constants() {
   assert(AUTOCORR_BLOCK_SIZE > MAX_LPC_ORDER);
   assert(LPC_COMPUTE_INTERVAL % AUTOCORR_BLOCK_SIZE == 0);
   assert(AUTOCORR_BLOCK_SIZE >> LOG_AUTOCORR_BLOCK_SIZE == 1);
-  {
+  { // this block makes sure that AUTOCORR_DECAY_SQRT has been computed
+    // appropriately; it must be recomputed if you change certain other
+    // constants.
     int64_t n1 = (int64_t)AUTOCORR_DECAY_SQRT;
     n1 *= n1;
     n1 >>= AUTOCORR_LEFT_SHIFT;
@@ -2232,10 +2309,13 @@ static inline int lilcom_check_constants() {
   /** assumed in some code where we left shift by the difference.*/
   assert(AUTOCORR_LEFT_SHIFT >= AUTOCORR_EXTRA_VARIANCE_EXPONENT);
 
+  /** the following is because we left-shift by AUTOCORR_LEFT_SHIFT/2 at one point. */
+  assert(AUTOCORR_LEFT_SHIFT % 2 == 0);
+
   assert((LPC_COMPUTE_INTERVAL & (LPC_COMPUTE_INTERVAL-1)) == 0);  /* Power of 2. */
   assert((LPC_COMPUTE_INTERVAL & (LPC_COMPUTE_INTERVAL-1)) == 0);  /* Power of 2. */
   /* The y < x / 2 below just means "y is much less than x". */
-  assert(LPC_COMPUTE_INTERVAL < (AUTOCORR_BLOCK_SIZE << AUTOCORR_DECAY_EXPONENT) / 2);
+  //assert(LPC_COMPUTE_INTERVAL < (AUTOCORR_BLOCK_SIZE << AUTOCORR_DECAY_EXPONENT) / 2);
   assert((EXPONENT_BUFFER_SIZE-1)*2 > 12);
   assert((EXPONENT_BUFFER_SIZE & (EXPONENT_BUFFER_SIZE-1)) == 0);  /* Power of 2. */
   assert(EXPONENT_BUFFER_SIZE > (12/2) + 1); /* should exceed maximum range of exponents,
@@ -2482,3 +2562,4 @@ int main() {
   lilcom_test_get_max_abs_float_value();
 }
 #endif
+
