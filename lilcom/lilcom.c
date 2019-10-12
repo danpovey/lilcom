@@ -193,15 +193,15 @@
    This rolling-buffer size determines how far back in time we keep the
    exponents we used to compress the signal.  It determines how far it's
    possible for us to backtrack when we encounter out-of-range values and need
-   to increase the exponent.  8 is more than enough, since the most we'd ever
-   need to add to the exponent is +12 (the exponent can never exceed 12); the
-   exponent can increase by at most 2 for each sample; and (8-1) * 2 > 12 (if we
-   have 8 in the buffer, the furthest we can go back in time is t-7, which is
-   why we have (8-1) above).
+   to increase the exponent.  The most we'd ever need to add to the exponent
+   is +12, and we can only increase the exponent every other frame, so
+   this needs to be at least 24 (or maybe one or two more than that, I forget
+   the exact logic.)
 
-   It must be a power of 2 due to a trick used to compute a modulus.
+   It must be a power of 2 due to a trick used to compute a modulus, which
+   dictates 32.
  */
-#define EXPONENT_BUFFER_SIZE 8
+#define EXPONENT_BUFFER_SIZE 32
 
 /**
    SIGNAL_BUFFER_SIZE determines the size of a rolling buffer containing
@@ -585,7 +585,7 @@ struct CompressionState {
 
   /** The compressed code that we are generating, one byte per sample.  This
       pointer does *not* point to the start of the header (it has been shifted
-      forward by 4).  It points to the byte for t == 0.
+      forward by 4 times the stride).  It points to the byte for t == 0.
       ; the code for the t'th signal value is located at
       compressed_code[t].  */
   int8_t *compressed_code;
@@ -867,7 +867,6 @@ static inline int least_exponent(int32_t residual,
     maximum *= 2;
     exponent++;
   }
-  assert(exponent <= 11);
   {
     /**
        This code block computes 'mantissa', the integer mantissa which we call
@@ -1423,8 +1422,11 @@ static inline int lilcom_compress_for_time_internal(
           min_allowed_exponent, &mantissa,
           &(state->decompressed_signal[MAX_LPC_ORDER+(t&(SIGNAL_BUFFER_SIZE-1))]));
 
+  assert(exponent <= 11);
+
   int exponent_delta = exponent - min_codable_exponent;
   assert(exponent_delta >= 0);
+
   if (exponent_delta <= 1) {
     /** Success; we can represent this.  This is (hopefully) the normal code
         path. */
@@ -1448,7 +1450,7 @@ static inline int lilcom_compress_for_time_internal(
   contains an exponent and a mantissa for t == -1, which gives us a good
   starting point).
 
-    @param [in] min_exponent  A number in the range [0, 12]; the caller
+    @param [in] min_exponent  A number in the range [0, 11]; the caller
                   requires the exponent for time t = 0 to be >= min_exponent.
                   (Normally 0, but may get called with values >0 if
                   called from backtracking code.)
@@ -1688,6 +1690,7 @@ int lilcom_compress(int64_t num_samples,
   lilcom_init_compression(num_samples, input, input_stride,
                           output, output_stride, lpc_order,
                           conversion_exponent, &state);
+
   for (int64_t t = 1; t < num_samples; t++)
     lilcom_compress_for_time(t, &state);
 
@@ -1760,7 +1763,7 @@ static inline int lilcom_decompress_one_sample(
   }
 
   if (((unsigned int)*exponent) > 11) {
-    /** If `exponent` is not in the range [0,12], something is wrong.
+    /** If `exponent` is not in the range [0,11], something is wrong.
         We return 1 on failure.  */
     printf("Bad exponent!\n");  // TEMP
     return 1;
@@ -1779,6 +1782,8 @@ static inline int lilcom_decompress_one_sample(
       min_codable_exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, *exponent),
       mantissa = (input_code & ~((int8_t)1)) / 2;
   *exponent = min_codable_exponent + exponent_bit;
+
+  assert(*exponent >= 0);
 
   int32_t new_sample = (int32_t)predicted_sample  +  (mantissa << *exponent);
 
