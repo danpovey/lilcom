@@ -38,15 +38,15 @@
    the signal.
 
    Must be even (relates to a loop-unrolling trick used in
-   lilcom_compute_predicted_value.  We use 30 not 32 because it has to be less
+   lilcom_compute_predicted_value.  We use 14 not 16 because it has to be less
    than AUTOCORR_BLOCK_SIZE.
 */
-#define MAX_LPC_ORDER 30
+#define MAX_LPC_ORDER 14
 
 
 /** a value >= log_2 of MAX_LPC_ORDER+1.  Used in explanations,
     not currently in any code */
-#define LPC_ORDER_BITS 5
+#define LPC_ORDER_BITS 4
 
 /**
    The amount by which we shift left the LPC coefficients for the fixed-point
@@ -125,12 +125,12 @@
         with it.
       - Must divide LPC_COMPUTE_INTERVAL exactly.
  */
-#define AUTOCORR_BLOCK_SIZE 32
+#define AUTOCORR_BLOCK_SIZE 16
 /**
    LOG_AUTOCORR_BLOCK_SIZE must be the log-base-2 of AUTOCORR_BLOCK_SIZE.
    Used in bitwise tricks for division.
  */
-#define LOG_AUTOCORR_BLOCK_SIZE 5
+#define LOG_AUTOCORR_BLOCK_SIZE 4
 
 /**
    AUTOCORR_DECAY_EXPONENT, together with AUTOCORR_BLOCK_SIZE, defines
@@ -144,7 +144,7 @@
    all samples to some extent.  This may be important to tune, for
    performance.
  */
-#define AUTOCORR_DECAY_EXPONENT 5
+#define AUTOCORR_DECAY_EXPONENT 6
 
 
 /**
@@ -164,7 +164,7 @@
    This number was computed by typing: floor(sqrt(1 - 2^-5) * 2^20)
    into wolfram alpha.
 */
-#define AUTOCORR_DECAY_SQRT 1032061
+#define AUTOCORR_DECAY_SQRT 1040351
 
 
 
@@ -259,6 +259,16 @@ struct LpcComputation {
      = 2^8, so the sum would be <= 2^(50+8) = 2^58.  The most this could be
      without overflow is around 2^61.  */
   int64_t autocorr[MAX_LPC_ORDER + 1];
+
+
+  /**
+     autocorr_to_remove contains some terms which are *in* autocorr but which
+     need to be removed every time we update the autocorrelation coefficients.
+     Let the 'baseline' autocorrelation be that of a signal that is scaled
+     down exponentially as you go further back in time.
+   */
+  int64_t autocorr_to_remove[MAX_LPC_ORDER + 1];
+
   /*
      max_exponent is the smallest number >= 0 such that autocorr[0] >>
      max_exponent == 0.  (Note: autocorr[0] is nonnegative).
@@ -293,8 +303,10 @@ struct LpcComputation {
    stats, max_exponent = 0, and lpc_coeffs that correspond to [1.0 0 0 0].
 */
 static void lilcom_init_lpc(struct LpcComputation *lpc) {
-  for (int i = 0; i <= MAX_LPC_ORDER; i++)
+  for (int i = 0; i <= MAX_LPC_ORDER; i++) {
     lpc->autocorr[i] = 0;
+    lpc->autocorr_to_remove[i] = 0;
+  }
   lpc->max_exponent = 0;
   /* The LPC coefficientss are stored shifted left by LPC_APPLY_LEFT_SHIFT, so this
      means the 1st coeff is 1.0 and the rest are zero-- meaning, we start
@@ -337,11 +349,14 @@ static inline void lilcom_update_autocorrelation(
   int64_t temp_autocorr[MAX_LPC_ORDER + 1];
   int i;
 
-  /** Scale down the current data slightly.  This is to form an exponentially
-      decaying sum of the autocorrelation stats (to preserve freshness), but
-      done at the block level not the sample level.  Also zero
-      `temp_autocorr`.  */
+  /** Remove the temporary term in autocorr_to_remove (that arises from
+      reflecting the signal).  Then scale down the current data slightly.  This
+      is to form an exponentially decaying sum of the autocorrelation stats (to
+      preserve freshness), but done at the block level not the sample level.
+      Also zero `temp_autocorr`.  */
   for (i = 0; i <= lpc_order; i++) {
+    lpc->autocorr[i] -= lpc->autocorr_to_remove[i];
+    lpc->autocorr_to_remove[i] = 0;
     /** The division below is a 'safer' way of right-shifting by
         AUTOCORR_DECAY_EXPONENT, which would technically give undefined results
         for negative input */
@@ -364,7 +379,7 @@ static inline void lilcom_update_autocorrelation(
       Notice that we write this part directly to lpc->autocorr instead of to
       temp_autocorr.  */
   for (i = 0; i < lpc_order; i++) {
-    int32_t signal_i = signal[i];
+    int64_t signal_i = signal[i];
     int j;
     for (j = 0; j <= i; j++)
       temp_autocorr[j] += signal[i - j] * signal_i;
@@ -375,7 +390,10 @@ static inline void lilcom_update_autocorrelation(
   /** OK, now we handle the samples that aren't close to the boundary.
       currently, i == lpc_order. */
   for (; i < AUTOCORR_BLOCK_SIZE; i++) {
-    int32_t signal_i = signal[i];
+    /* signal_i only needs to be int64_t to handle the case where signal[i - j] and signal_i are
+       both -32768, so their product can't be represented as int32_t.  We rely on the
+       product below being automatically cast to int64_t. */
+    int64_t signal_i = signal[i];
     for (int j = 0; j <= lpc_order; j++)
       temp_autocorr[j] += signal[i - j] * signal_i;
   }
@@ -384,6 +402,37 @@ static inline void lilcom_update_autocorrelation(
       appropriately.  */
   for (int j = 0; j <= lpc_order; j++)
     lpc->autocorr[j] += temp_autocorr[j] << AUTOCORR_LEFT_SHIFT;
+
+
+  /** The next block adds some 'temporary' terms which arise from (conceptually):
+      (a) reflecting the signal at the most-recent-time + 1/2, so all
+          terms appear twice, but we have a few extra terms due to edge effects
+      (b) dividing by 2.
+     So what we get that's extra is the extra terms from edge effects,
+     divided by two.
+   */
+  {
+    /* Note: signal_edge must only be indexed with negative coeffs.  Imagine a
+       symmetric virtual signal (suppose a pointer v, indexed as v[t]) where for
+       t < 0, v[t] := signal_edge[t], and for t >= 0, v[t] := signal_edge[-1-t].
+       [It's symmetric around t=0.5.]
+
+       We are accumulating the LPC coeffs that 'cross the boundary', i.e.
+       involve both t >= 0 and t < 0.  The "i" is the index with t >= 0.
+    */
+    const int16_t *signal_edge = signal + AUTOCORR_BLOCK_SIZE;
+
+    for (i = 0; i < lpc_order; i++) {
+      /* the -1 in the exponent below is the factor of 0.5 mentioned as (b)
+         above. */
+      int64_t signal_i = ((int64_t)signal_edge[-1-i]) << (AUTOCORR_LEFT_SHIFT-1);
+      for (int j = i + 1; j <= lpc_order; j++) {  /* j is the lag */
+        lpc->autocorr_to_remove[j] += signal_i * signal_edge[i-j];
+      }
+    }
+    for (i = 0; i <= lpc_order; i++)
+      lpc->autocorr[i] += lpc->autocorr_to_remove[i];
+  }
 
 
   /* The next statement takes care of the smoothing to make sure that the
@@ -1273,8 +1322,10 @@ void lilcom_update_autocorrelation_and_lpc(
   /** Copy the previous autocorrelation coefficients and max_exponent.  We'll
       either re-estimate or copy the LPC coefficients below. */
   int lpc_order = state->lpc_order;
-  for (int i = 0; i <= lpc_order; i++)
+  for (int i = 0; i <= lpc_order; i++) {
     this_lpc->autocorr[i] = prev_lpc->autocorr[i];
+    this_lpc->autocorr_to_remove[i] = prev_lpc->autocorr_to_remove[i];
+  }
   this_lpc->max_exponent = prev_lpc->max_exponent;
 
   int64_t prev_block_start_t = t - AUTOCORR_BLOCK_SIZE;
@@ -1536,12 +1587,13 @@ void lilcom_compress_for_time_backtracking(
     } else {
       /* Now make `exponent` positive. It was negated as a signal that there was
          a failure: specifically, that exponent required to encode this sample
-         was greater than prev_exponent + 2.  [This path is super unlikely, as
-         we've already backtracked, but it theoretically could happen, as if
-         previous samples are coded differently the LPC prediction would
-         change.].  We can deal with this case via recursion.  */
+         was greater than min_codable_exponent + 1.  [This path is super
+         unlikely, as we've already backtracked, but it theoretically could
+         happen, as if previous samples are coded differently the LPC prediction
+         would change.].  We can deal with this case via recursion.  */
       exponent = -exponent;
-      assert(exponent > prev_exponent + 2 && exponent > min_exponent);
+      fprintf(stderr, "Hit unusual code path\n");
+      assert(exponent > min_codable_exponent + 1 && exponent > min_exponent);
       lilcom_compress_for_time_backtracking(t, exponent, state);
     }
   } else {
@@ -1710,6 +1762,7 @@ static inline int lilcom_decompress_one_sample(
   if (((unsigned int)*exponent) > 11) {
     /** If `exponent` is not in the range [0,12], something is wrong.
         We return 1 on failure.  */
+    printf("Bad exponent!\n");  // TEMP
     return 1;
   }
 
