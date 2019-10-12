@@ -317,8 +317,9 @@ struct LpcComputation {
    at the start of the file.  This corresponds to all-zero autocorrelation
    stats, max_exponent = 0, and lpc_coeffs that correspond to [1.0 0 0 0].
 */
-static void lilcom_init_lpc(struct LpcComputation *lpc) {
-  for (int i = 0; i <= MAX_LPC_ORDER; i++) {
+static void lilcom_init_lpc(struct LpcComputation *lpc,
+                            int lpc_order) {
+  for (int i = 0; i <= lpc_order; i++) {
     lpc->autocorr[i] = 0;
     lpc->autocorr_to_remove[i] = 0;
   }
@@ -327,13 +328,15 @@ static void lilcom_init_lpc(struct LpcComputation *lpc) {
      means the 1st coeff is 1.0 and the rest are zero-- meaning, we start
      prediction from the previous sample.  */
   lpc->lpc_coeffs[0] = 1 << LPC_APPLY_LEFT_SHIFT;
-  for (int i = 1; i < MAX_LPC_ORDER; i++) {
-    /** It's important that we go beyond the `lpc_order`'th element while
-        zeroing here.  If `lpc_order` is odd, we may access the one-past-the-end
-        element as part of a loop unrolling used in
-        lilcom_compute_predicted_value(), so we need that to be zero. */
+  for (int i = 1; i < lpc_order; i++) {
     lpc->lpc_coeffs[i] = 0;
   }
+  /** Note: some code which is called  after calling this, will set
+      lpc->lpc_coeffs[lpc_order] to 0 also, if lpc_order is odd.
+      It's needed because of some loop unrolling we do (search for
+      "sum2").
+  */
+
 }
 
 /**
@@ -1668,8 +1671,14 @@ static inline void lilcom_init_compression(
     int lpc_order, int conversion_exponent,
     struct CompressionState *state) {
   state->lpc_order = lpc_order;
-  for (int i = 0; i < LPC_ROLLING_BUFFER_SIZE; i++)
-    lilcom_init_lpc(&(state->lpc_computations[i]));
+
+  lilcom_init_lpc(&(state->lpc_computations[0]), lpc_order);
+  if (lpc_order % 2 == 1) {
+    /** The following is necessary because of some loop unrolling we do while
+        applying lpc; search for "sum2". */
+    for (int i = 0; i < LPC_ROLLING_BUFFER_SIZE; i++)
+      state->lpc_computations[i].lpc_coeffs[lpc_order] = 0;
+  }
 
   state->input_signal = input;
   state->input_signal_stride = input_stride;
@@ -1881,7 +1890,10 @@ int lilcom_decompress(int64_t num_samples,
   const int8_t *input4  = input + (input_stride * LILCOM_HEADER_BYTES);
 
   struct LpcComputation lpc;
-  lilcom_init_lpc(&lpc);
+  lilcom_init_lpc(&lpc, lpc_order);
+  /** The following is necessary because of some loop unrolling we do while
+      applying lpc; search for "sum2". */
+  lpc.lpc_coeffs[lpc_order] = 0;
 
   /** The first LPC_MAX_ORDER samples are for left-context; view the array as
       starting from the element with index LPC_MAX_ORDER.
