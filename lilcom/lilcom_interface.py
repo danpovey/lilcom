@@ -3,7 +3,7 @@ from . import lilcom_c_extension
 
 
 # Remove the underscore once you start using this interface.
-def compress(input, axis=-1, lpc_order=5, default_exponent=0, out=None):
+def compress(input, axis=-1, lpc_order=4, default_exponent=0, out=None):
    """ This function compresses sequence data (for example, audio data) to 1 byte per
         sample.
 
@@ -16,7 +16,7 @@ def compress(input, axis=-1, lpc_order=5, default_exponent=0, out=None):
                           dimension.  (Does not have to really correspond to time, but this
                           is the dimension we do linear prediction in.) . -1 means the last
                           axis.  Must be in the range [-input.ndim .. input.ndim-1]
-       lpc_order (int):   A number in [0..15] that determines the order of linear
+       lpc_order (int):   A number in [0..14] that determines the order of linear
                           prediction.  Compression/decompression time will rise
                           roughly linearly with lpc_order, and the compression will
                           get more lossy for small lpc_order.
@@ -64,7 +64,7 @@ def compress(input, axis=-1, lpc_order=5, default_exponent=0, out=None):
 
 
    # lpc_order
-   if not (isinstance(lpc_order, int) and lpc_order >= 0 and lpc_order <= 15):
+   if not (isinstance(lpc_order, int) and lpc_order >= 0 and lpc_order <= 14):
       raise ValueError("lpc_order={} is not valid".format(lpc_order))
     # default_exponent
    if not (isinstance(default_exponent, int) and default_exponent >= 0 and default_exponent <= 15):

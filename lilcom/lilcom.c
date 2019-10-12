@@ -203,6 +203,21 @@
  */
 #define EXPONENT_BUFFER_SIZE 32
 
+
+/**
+   Size of rolling buffer of struct LpcComputation.  Must satisfy
+   (LPC_ROLLING_BUFFER_SIZE - 1) * AUTOCORR_BLOCK_SIZE > 24
+   (or maybe 22... but greater than 24 should be enough.)
+   This is to ensure we can never backtrack past all of the buffers,
+   to prevent us overwriting some autocorrelation coefficients we
+   will need in future.
+
+   (Note: 24 is a number greater than twice the range of possible exponents,
+   which is 0..11; the "twice" is because the fastest the exponent
+   can increase is every other frame.)
+ */
+#define LPC_ROLLING_BUFFER_SIZE 4
+
 /**
    SIGNAL_BUFFER_SIZE determines the size of a rolling buffer containing
    the history of the compressed version of the signal, to be used while
@@ -538,7 +553,7 @@ struct CompressionState {
      preceding that) to update the autocorrelation coefficients and possibly
      also the LPC coefficients (see docs for LPC_COMPUTE_INTERVAL).
   */
-  struct LpcComputation lpc_computations[2];
+  struct LpcComputation lpc_computations[LPC_ROLLING_BUFFER_SIZE];
 
   /**
      `exponents` is a circular buffer of the exponent values used to compress
@@ -1173,9 +1188,9 @@ void lilcom_compute_lpc(int lpc_order,
 static inline int16_t lilcom_compute_predicted_value(
     struct CompressionState *state,
     int64_t t) {
-  int32_t block_index = ((int32_t)t) >> LOG_AUTOCORR_BLOCK_SIZE;
-  /** block_index & 1 is just block_index % 2 (note: block_index is nonnegative)  */
-  struct LpcComputation *lpc = &(state->lpc_computations[block_index & 1]);
+  uint32_t lpc_index =
+      ((uint32_t)(t >> LOG_AUTOCORR_BLOCK_SIZE)) % LPC_ROLLING_BUFFER_SIZE;
+  struct LpcComputation *lpc = &(state->lpc_computations[lpc_index]);
 
   int lpc_order = state->lpc_order;
 
@@ -1281,7 +1296,7 @@ static inline void lilcom_copy_to_buffer_start(
    This function updates the autocorrelation statistics and, if relevant, the
    LPC coefficients.
       @param [in] t    Sample index of the sample that we are about to compress.
-                   Required to be a multiple of AUTOCORR_BLOCK_SIZE.  The data we're
+                   Required to be a multiple of AUTOCORR_BLOCK_SIZE and >= 0.  The data we're
                    going to use to update the autocorrelation statistics
                    are those from the *previous* block, from at t -
                    AUTOCORR_BLOCK_SIZE to t-1.  (If t == 0 we will do nothing and rely
@@ -1292,9 +1307,7 @@ static inline void lilcom_copy_to_buffer_start(
  */
 void lilcom_update_autocorrelation_and_lpc(
     int64_t t, struct CompressionState *state) {
-  assert(t % AUTOCORR_BLOCK_SIZE == 0 && state->lpc_order > 0);
-  /** The following expression is well defined because t is nonnegative */
-  int32_t block_index = ((int32_t)t) >> LOG_AUTOCORR_BLOCK_SIZE;
+  assert(t % AUTOCORR_BLOCK_SIZE == 0 && state->lpc_order > 0 && t >= 0);
   /** We'll compute the LPC coeffs if t is a multiple of LPC_COMPUTE_INTERVAL or
       if t is a nonzero value less than LPC_COMPUTE_INTERVAL (for LPC freshness
       at the start).  */
@@ -1311,12 +1324,19 @@ void lilcom_update_autocorrelation_and_lpc(
        for the first few samples. */
     compute_lpc = 1;
   }
+  /** The expression for lpc_index is well defined because t is nonnegative.
+      Note: it is essential, if we want the expression for prev_lpc_index to
+      work for lpc_index == 0, that these be unsigned ints, or % would
+      not behave right. */
+  uint32_t lpc_index = ((uint32_t)(t >> LOG_AUTOCORR_BLOCK_SIZE)) % LPC_ROLLING_BUFFER_SIZE,
+      prev_lpc_index = (lpc_index + LPC_ROLLING_BUFFER_SIZE - 1) % LPC_ROLLING_BUFFER_SIZE;
+
+
   /** Interpret `block_index & 1` as `block_index % 2` (valid for nonnegative
       block_index, which it is). */
-  struct LpcComputation *this_lpc = &(state->lpc_computations[block_index & 1]);
+  struct LpcComputation *this_lpc = &(state->lpc_computations[lpc_index]);
   /**  prev_lpc is the 'other' LPC object in the circular buffer of size 2. */
-  struct LpcComputation *prev_lpc = &(state->lpc_computations[!(block_index & 1)]);
-  assert(prev_lpc != this_lpc);  /* TODO: remove this. */
+  struct LpcComputation *prev_lpc = &(state->lpc_computations[prev_lpc_index]);
 
   /** Copy the previous autocorrelation coefficients and max_exponent.  We'll
       either re-estimate or copy the LPC coefficients below. */
@@ -1594,7 +1614,7 @@ void lilcom_compress_for_time_backtracking(
          happen, as if previous samples are coded differently the LPC prediction
          would change.].  We can deal with this case via recursion.  */
       exponent = -exponent;
-      fprintf(stderr, "Hit unusual code path\n");
+      /* fprintf(stderr, "Hit unusual code path\n"); */
       assert(exponent > min_codable_exponent + 1 && exponent > min_exponent);
       lilcom_compress_for_time_backtracking(t, exponent, state);
     }
@@ -1648,8 +1668,9 @@ static inline void lilcom_init_compression(
     int lpc_order, int conversion_exponent,
     struct CompressionState *state) {
   state->lpc_order = lpc_order;
-  lilcom_init_lpc(&(state->lpc_computations[0]));
-  lilcom_init_lpc(&(state->lpc_computations[1]));
+  for (int i = 0; i < LPC_ROLLING_BUFFER_SIZE; i++)
+    lilcom_init_lpc(&(state->lpc_computations[i]));
+
   state->input_signal = input;
   state->input_signal_stride = input_stride;
   state->compressed_code =
@@ -2270,6 +2291,8 @@ int lilcom_decompress_float(int64_t num_samples,
     various relationships between the #defined constants are satisfied.
 */
 static inline int lilcom_check_constants() {
+  assert(EXPONENT_BUFFER_SIZE > 24);
+  assert((LPC_ROLLING_BUFFER_SIZE - 1) * AUTOCORR_BLOCK_SIZE > 24);
   assert(MAX_LPC_ORDER >> LPC_ORDER_BITS == 0);
   assert(MAX_LPC_ORDER % 2 == 0);
   assert(LPC_EST_LEFT_SHIFT + (AUTOCORR_EXTRA_VARIANCE_EXPONENT+1)/2 <= 31);

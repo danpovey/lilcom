@@ -1,5 +1,4 @@
-AudioFormats = ["lilcom", "mp3_320", "mp3_256", "mp3_224", "mp3_192", "mp3_160",\
-     ]
+AudioFormats = ["lilcom", "mp3_320", "mp3_256", "mp3_224", "mp3_192", "mp3_160"]
 
 import lilcom
 import numpy
@@ -24,16 +23,16 @@ def PSNR (arr, reconst):
         psnr = 20 * math.log10(MAXI) - 10 * math.log10(mse)
     else:
         psnr = math.inf
-    
+
     return psnr
-    
+
 
 def evaluateMP3(filename, bitrate):
     tmpPath = "./ReconstTemp"
 
     if tmpPath[2:] in os.listdir("./"):
         os.system("rm -dR "+ tmpPath)
-    
+
     os.system("mkdir "+ tmpPath)
 
     wavFile = pydub.AudioSegment.from_wav(filename)
@@ -44,7 +43,7 @@ def evaluateMP3(filename, bitrate):
 
     # os.system("ffmpeg -i "+ filename +" -codec:a libmp3lame -qscale:a 2 " + tmpPath + "/output.mp3")
     # os.system("ffmpeg -i "+ tmpPath + "/output.mp3 " + tmpPath + "/reconst.wav")
-    
+
     sampleRate, audioArray = wavfile.read(filename)
     sampleRateReconst, audioReconst = wavfile.read(tmpPath + "/reconst.wav")
 
@@ -54,19 +53,20 @@ def evaluateMP3(filename, bitrate):
     return psnr
 
 
-def evaluateLilcom (filename, lpc = 5):
+def evaluateLilcom(filename, lpc = 4):
 
     sampleRate, inputArray = wavfile.read(filename)
 
     outputShape = list(inputArray.shape)
-    outputShape[-1] += 4
+
+    outputShape[0] += 4
     outputShape = tuple(outputShape)
 
     outputArray = numpy.ndarray(outputShape, numpy.int8)
     reconstructedArray = numpy.ndarray(inputArray.shape, numpy.int16)
 
-    lilcom.compress(inputArray,out=outputArray, lpc_order = lpc)
-    lilcom.decompress(outputArray, out=reconstructedArray)
+    lilcom.compress(inputArray, out=outputArray, lpc_order = lpc, axis = 0)
+    lilcom.decompress(outputArray, out=reconstructedArray, axis = 0)
 
     psnr = PSNR(inputArray, reconstructedArray)
     return psnr
@@ -87,13 +87,13 @@ for dirs in dataAddresses:
 
     scenarioPSNR = []
     scenarioLPC = []
-    
+
     print ("Test scenraio: ", dirs)
 #     dirResults = []
     for file in files:
         filename = dirs + "/" + file
-        
-        trackLCPPSNR = [file]
+
+        trackLPCPSNR = [file]
 
         resLilcom = evaluateLilcom(filename)
         resMp3_320 = evaluateMP3(filename, "320k")
@@ -108,10 +108,10 @@ for dirs in dataAddresses:
         print(trackPSNR)
         scenarioPSNR.append(trackPSNR)
 
-        for lpc in range (0 , 16):
-            trackLCPPSNR.append(evaluateLilcom(filename, lpc))
-        print (trackLCPPSNR)
-        scenarioLPC.append(trackLCPPSNR)
+        for lpc in range (0 , 14):
+            trackLPCPSNR.append(evaluateLilcom(filename, lpc))
+        print (trackLPCPSNR)
+        scenarioLPC.append(trackLPCPSNR)
 
 
     scenarioPSNR = pandas.DataFrame(data= scenarioPSNR, columns= ["file"]+AudioFormats)
@@ -121,4 +121,4 @@ for dirs in dataAddresses:
 
     psnrTestResult.append(scenarioPSNR)
 
-    
+
