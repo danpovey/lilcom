@@ -161,7 +161,7 @@
    raw samples of data.  The AUTOCORR_LEFT_SHIFT factor just relates
    to how we store the stats with a left shift.
 
-   This number was computed by typing: floor(sqrt(1 - 2^-5) * 2^20)
+   This number was computed by typing: floor(sqrt(1 - 2^-6) * 2^20)
    into wolfram alpha.
 */
 #define AUTOCORR_DECAY_SQRT 1040351
