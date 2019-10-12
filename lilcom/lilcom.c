@@ -363,8 +363,12 @@ static inline void lilcom_update_autocorrelation(
     const int16_t *signal) {
   /** 'temp_autocorr' will contain the raw autocorrelation stats without the
       shifting left by AUTOCORR_LEFT_SHIFT; we'll do the left-shifting at the
-      end, to save an instruction in the inner loop).  */
-  int64_t temp_autocorr[MAX_LPC_ORDER + 1];
+      end, to save an instruction in the inner loop).
+      The dimension is MAX_LPC_ORDER + 2 instead of just plus one, because
+      of a loop unrolling trick we do below (another, unused element may
+      be written.)
+  */
+  int64_t temp_autocorr[MAX_LPC_ORDER + 2];
   int i;
 
   /** Remove the temporary term in autocorr_to_remove (that arises from
@@ -412,8 +416,14 @@ static inline void lilcom_update_autocorrelation(
        both -32768, so their product can't be represented as int32_t.  We rely on the
        product below being automatically cast to int64_t. */
     int64_t signal_i = signal[i];
-    for (int j = 0; j <= lpc_order; j++)
+
+    /* The unrolled loop below will write an extra, useless element to
+       temp_autocorr[lpc_order+1] if lpc_order is even.  The unrolling
+       should make pipelined execution faster. */
+    for (int j = 0; j <= lpc_order; j += 2) {
       temp_autocorr[j] += signal[i - j] * signal_i;
+      temp_autocorr[j+1] += signal[i - j - 1] * signal_i;
+    }
   }
 
   /** Copy from the temporary buffer to struct lpc, shifting left
