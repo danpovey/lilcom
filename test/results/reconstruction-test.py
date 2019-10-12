@@ -54,7 +54,7 @@ def evaluateMP3(filename, bitrate):
     return psnr
 
 
-def evaluateLilcom (filename):
+def evaluateLilcom (filename, lpc = 5):
 
     sampleRate, inputArray = wavfile.read(filename)
 
@@ -65,7 +65,7 @@ def evaluateLilcom (filename):
     outputArray = numpy.ndarray(outputShape, numpy.int8)
     reconstructedArray = numpy.ndarray(inputArray.shape, numpy.int16)
 
-    lilcom.compress(inputArray,out=outputArray)
+    lilcom.compress(inputArray,out=outputArray, lpc_order = lpc)
     lilcom.decompress(outputArray, out=reconstructedArray)
 
     psnr = PSNR(inputArray, reconstructedArray)
@@ -75,6 +75,7 @@ def evaluateLilcom (filename):
 
 # Goes through the test folder and find test scenarios
 psnrTestResult = []
+lpcTestResult = []
 
 dataAddresses = ["./audio-samples/" + item for item in os.listdir("audio-samples")]
 if "./audio-samples/.DS_Store" in dataAddresses:
@@ -85,12 +86,15 @@ for dirs in dataAddresses:
         files.remove(".DS_Store")
 
     scenarioPSNR = []
-
+    scenarioLPC = []
+    
     print ("Test scenraio: ", dirs)
 #     dirResults = []
     for file in files:
         filename = dirs + "/" + file
         
+        trackLCPPSNR = [file]
+
         resLilcom = evaluateLilcom(filename)
         resMp3_320 = evaluateMP3(filename, "320k")
         resMp3_256 = evaluateMP3(filename, "256k")
@@ -103,9 +107,18 @@ for dirs in dataAddresses:
 
         print(trackPSNR)
         scenarioPSNR.append(trackPSNR)
-    
+
+        for lpc in range (0 , 16):
+            trackLCPPSNR.append(evaluateLilcom(filename, lpc))
+        print (trackLCPPSNR)
+        scenarioLPC.append(trackLCPPSNR)
+
+
     scenarioPSNR = pandas.DataFrame(data= scenarioPSNR, columns= ["file"]+AudioFormats)
     scenarioPSNR.to_csv(dirs[16:]+"-Scenario.csv")
+    scenarioLPC = pandas.DataFrame(data= scenarioLPC, columns= ["file"]+list(range(0 , 16)))
+    scenarioLPC.to_csv(dirs[16:]+"-LPC.csv")
+
     psnrTestResult.append(scenarioPSNR)
 
     
