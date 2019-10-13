@@ -1054,7 +1054,7 @@ void lilcom_compute_lpc(int lpc_order,
      as possible given that constraint).  We don't need to know how much it was
      shifted right, because a scale on the autocorrelation doesn't affect the
      LPC coefficients.  */
-  int32_t autocorr[MAX_LPC_ORDER];
+  int32_t autocorr[MAX_LPC_ORDER + 1];
 
   { /** This block just sets up the `autocorr` array with appropriately
         shifted copies of lpc->autocorr.  */
@@ -1089,8 +1089,6 @@ void lilcom_compute_lpc(int lpc_order,
    above).  The absolute values of the elements of 'temp' will thus be less than
    2^(LPC_EST_LEFT_SHIFT+8) = 2^31.  i.e. it is guaranteed to fit into an int32.
   */
-  /** int32_t temp[MAX_LPC_ORDER];
-  ***TEMP*** Making it int64 while testing. */
   int64_t temp[MAX_LPC_ORDER];
 
 
@@ -2421,28 +2419,33 @@ void lilcom_test_compress_sine() {
 void lilcom_test_compress_maximal() {
   /** this is mostly to check for overflow when computing autocorrelation. */
 
-  for (int i = 0; i < 2; i++) {
-    int16_t buffer[4096];
-    int lpc_order = 10;
-    if (i == 0) {
-      for (int i = 0; i < 1000; i++)
-        buffer[i] = -32768;
-    } else {
-      for (int i = 0; i < 1000; i++)
-        buffer[i] = 32767;
-    }
+  for (int lpc_order = 0; lpc_order <= MAX_LPC_ORDER; lpc_order++) {
+    for (int i = 0; i < 2; i++) {
+      int16_t buffer[4096];
+      if (i == 0) {
+        for (int i = 0; i < 1000; i++)
+          buffer[i] = -32768;
+        buffer[900] = 32767;  /** Mix it up a bit */
+      } else {
+        for (int i = 0; i < 1000; i++)
+          buffer[i] = 32767;
+        buffer[900] = -32768;  /** Mix it up a bit */
+      }
 
-    int8_t compressed[4100];
-    int exponent = -15, exponent2;
-    lilcom_compress(4096, buffer, 1, compressed, 1,
-                    lpc_order, exponent);
-    int16_t decompressed[4096];
-    if (lilcom_decompress(4096, compressed, 1, decompressed, 1, &exponent2) != 0) {
-      fprintf(stderr, "Decompression failed\n");
+
+
+      int8_t compressed[4100];
+      int exponent = -15, exponent2;
+      lilcom_compress(4096, buffer, 1, compressed, 1,
+                      lpc_order, exponent);
+      int16_t decompressed[4096];
+      if (lilcom_decompress(4096, compressed, 1, decompressed, 1, &exponent2) != 0) {
+        fprintf(stderr, "Decompression failed\n");
+      }
+      assert(exponent2 == exponent);
+      fprintf(stderr, "Minimal snr (dB) = %f%%\n",
+              lilcom_compute_snr(4096, buffer, 1, decompressed, 1));
     }
-    assert(exponent2 == exponent);
-    fprintf(stderr, "Minimal snr (dB) = %f%%\n",
-            lilcom_compute_snr(4096, buffer, 1, decompressed, 1));
   }
 }
 
