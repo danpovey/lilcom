@@ -26,6 +26,8 @@ def read(fname):
 
 extension_mod = Extension("lilcom.lilcom_c_extension",
                           sources=["lilcom/lilcom_c_extension.c","lilcom/lilcom.c"],
+                          extra_compile_args=["-DNDEBUG"],
+                          #extra_compile_args=["-g"],
                           include_dirs=[numpy.get_include()])
 
 setup(
@@ -49,4 +51,3 @@ setup(
 )
 
 exit(0)
-

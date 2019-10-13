@@ -49,6 +49,22 @@ def test_int16():
                 print("Relative error in int16 compression (decompressing as {}, axis={}, use_out={}) is {}".format(
                         d, axis, use_out, rel_error))
 
+
+def test_int16_lpc_order():
+    a = ((np.random.rand(100, 200) * 65535) - 32768).astype(np.int16)
+
+    for lpc in range(0, 15):
+        b = lilcom.compress(a, lpc_order=lpc)
+
+        c = lilcom.decompress(b, dtype=np.int16)
+
+        a2 = a.astype(np.float32)
+        c2 = c.astype(np.float32)
+
+        rel_error = (np.fabs(a2 - c2)).sum() / (np.fabs(a2)).sum()
+        print("Relative error in int16 with lpc order={} is {}".format(
+                lpc, rel_error))
+
 def test_double():
     a = np.random.randn(100, 200).astype(np.float64)
 
@@ -67,6 +83,7 @@ def test_double():
 def main():
     test_int16()
     test_float()
+    test_int16_lpc_order()
     test_double()
 
 
