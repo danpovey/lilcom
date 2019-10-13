@@ -335,6 +335,11 @@ static void lilcom_init_lpc(struct LpcComputation *lpc,
      @param [in,out]  autocorr   The statistics to be updated (i.e. scaled down
                            and then added to).
      @param [in] lpc_order   The LPC order, must be in [0..MAX_LPC_ORDER]
+     @param [in] compute_lpc   compute_lpc will be nonzero if the LPC
+                           coefficients will be recomputed after this block.
+                           It's needed only because we can avoid some work
+                           if we know that we won't be computing LPC
+                           after this block.
      @param [in] signal    Pointer to the signal at the start of the block
                            from which we are accumulating statistics.
                            Note: the LPC coefficients used for the
@@ -347,7 +352,7 @@ static void lilcom_init_lpc(struct LpcComputation *lpc,
                            cannot point to the start of an array.
 */
 static inline void lilcom_update_autocorrelation(
-    struct LpcComputation *lpc, int lpc_order,
+    struct LpcComputation *lpc, int lpc_order, int compute_lpc,
     const int16_t *signal) {
   /** 'temp_autocorr' will contain the raw autocorrelation stats without the
       shifting left by AUTOCORR_LEFT_SHIFT; we'll do the left-shifting at the
@@ -399,9 +404,9 @@ static inline void lilcom_update_autocorrelation(
       decreasing-with-time) sequence of data, which means we don't have to
       reason about what happens when we interpolate autocorrelation stats.
 
-      See the comment where AUTOCORR_DECAY_SQRT is defined for more details.
-      Notice that we write this part directly to lpc->autocorr instead of to
-      temp_autocorr.  */
+      See the comment where AUTOCORR_DECAY_EXPONENT is defined for more details.
+      Notice that we write some terms directly to lpc->autocorr instead of to
+      temp_autocorr, to make the scaling-down possible.  */
   for (i = 0; i < lpc_order; i++) {
     int64_t signal_i = signal[i];
     int j;
@@ -442,8 +447,14 @@ static inline void lilcom_update_autocorrelation(
       (b) dividing by 2.
      So what we get that's extra is the extra terms from edge effects,
      divided by two.
+
+     We only do this if `compute_lpc` is true (i.e., if we
+     ll be re-estimating the LPC coefficients after this block),
+     because if we won't be, what's inside this block is a
+     "don't-care".. we'll just be subtracting it on the next
+     bock.
    */
-  {
+  if (compute_lpc) {
     /* Note: signal_edge must only be indexed with negative coeffs.  Imagine a
        symmetric virtual signal (suppose a pointer v, indexed as v[t]) where for
        t < 0, v[t] := signal_edge[t], and for t >= 0, v[t] := signal_edge[-1-t].
@@ -1122,9 +1133,7 @@ void lilcom_compute_lpc(int lpc_order,
     ki = ki / E;
     /** At this point, ki is mathematically in the range [-1,1], since it's a
         reflection coefficient; and it is stored times 2 to the power LPC_EST_LEFT_SHIFT, so its
-        magnitude as an integer is <= 2^LPC_EST_LEFT_SHIFT.  Check that it's less
-        than 2^LPC_EST_LEFT_SHIFT plus a margin to account for rounding errors.  */
-    assert(lilcom_abs(ki) < ((1<<LPC_EST_LEFT_SHIFT) + (1<<(LPC_EST_LEFT_SHIFT - 8))));
+        magnitude as an integer is <= 2^LPC_EST_LEFT_SHIFT.  */
 
     /**  Original code: "float c = 1 - ki * ki;"  Note: ki*ki is nonnegative,
          so shifting right is well defined. */
@@ -1134,14 +1143,26 @@ void lilcom_compute_lpc(int lpc_order,
         it is always >= 0, but here it must be > 0 because of our smoothing of
         the variance via AUTOCORR_EXTRA_VARIANCE_EXPONENT and
         AUTOCORR_EXTRA_VARIANCE which means the residual can never get to
-        zero.*/
-    assert(c > 0);
+        zero.
+    */
+
     /** The original code did: E *= c;
         Note: the product is int64_t because c is int64_t, which is important
         to avoid overflow.  Also note: it's only well-defined to right-shift
-        because the result (still an energy E) is nonnegative.
+        because the result (still an energy E) is nonnegative; in fact,
+        E is guaranteed to be positive here because we smoothed the
+        0th autocorrelation coefficient (search for variable names containing
+        EXTRA_VARIANCE)
     */
     E = (int32_t)((E * c) >> LPC_EST_LEFT_SHIFT);
+    /**
+        If E < = 0, it means that something has gone wrong.  We've never
+        actually encountered this case, but we want to make sure the algorithm
+        is robust and doesn't crash, even if we have made a mistake in our logic
+        somewhere.
+    */
+    if (E <= 0)
+      goto panic;
 
     /** compute the new LP coefficients
         Original code did: pTmp[i] = -ki;
@@ -1189,6 +1210,13 @@ void lilcom_compute_lpc(int lpc_order,
   for (int i = 0; i < lpc_order; i++) {
     lpc->lpc_coeffs[i] /= (1 << (LPC_EST_LEFT_SHIFT - LPC_APPLY_LEFT_SHIFT));
   }
+  return;
+
+panic:
+  lpc->lpc_coeffs[0] = (1 << LPC_APPLY_LEFT_SHIFT);
+  for (int i = 0; i < lpc_order; i++)
+    lpc->lpc_coeffs[0] = 0;
+  assert(0);  /** when compiled with -NDEBUG this won't actually crash. */
 }
 
 /**
@@ -1344,18 +1372,13 @@ void lilcom_update_autocorrelation_and_lpc(
        for the first few samples. */
     compute_lpc = 1;
   }
-  /** The expression for lpc_index is well defined because t is nonnegative.
-      Note: it is essential, if we want the expression for prev_lpc_index to
-      work for lpc_index == 0, that these be unsigned ints, or % would
-      not behave right. */
+  /** The expressions below are defined because the args to '%' are unsigned;
+      modulus for negative args is implementation-defined according to the C
+      standard.  */
   uint32_t lpc_index = ((uint32_t)(t >> LOG_AUTOCORR_BLOCK_SIZE)) % LPC_ROLLING_BUFFER_SIZE,
       prev_lpc_index = (lpc_index + LPC_ROLLING_BUFFER_SIZE - 1) % LPC_ROLLING_BUFFER_SIZE;
 
-
-  /** Interpret `block_index & 1` as `block_index % 2` (valid for nonnegative
-      block_index, which it is). */
   struct LpcComputation *this_lpc = &(state->lpc_computations[lpc_index]);
-  /**  prev_lpc is the 'other' LPC object in the circular buffer of size 2. */
   struct LpcComputation *prev_lpc = &(state->lpc_computations[prev_lpc_index]);
 
   /** Copy the previous autocorrelation coefficients and max_exponent.  We'll
@@ -1379,7 +1402,7 @@ void lilcom_update_autocorrelation_and_lpc(
   /** Update the autocorrelation stats (decay the old ones, add
       new terms */
   lilcom_update_autocorrelation(this_lpc, lpc_order,
-                                signal_pointer);
+                                compute_lpc, signal_pointer);
   if (compute_lpc) {
     /** Recompute the LPC based on the new autocorrelation
         statistics  */
@@ -1941,7 +1964,7 @@ int lilcom_decompress(int64_t num_samples,
     /** Update the autocorrelation with stats from the 1st block (it's
         a special case, as we need to use `output_buffer` so the
         left-context will work right. */
-    lilcom_update_autocorrelation(&lpc, lpc_order,
+    lilcom_update_autocorrelation(&lpc, lpc_order, 1,
                                   output_buffer + MAX_LPC_ORDER);
     /** Recompute the LPC.  Even though time t = AUTOCORR_BLOCK_SIZE
         is not a multiple of LPC_COMPUTE_INTERVAL, we update it every
@@ -1962,8 +1985,12 @@ int lilcom_decompress(int64_t num_samples,
       assert((t & (AUTOCORR_BLOCK_SIZE - 1)) == 0);
 
       if (t != AUTOCORR_BLOCK_SIZE) {
-        lilcom_update_autocorrelation(&lpc, lpc_order, output + t - AUTOCORR_BLOCK_SIZE);
-        if ((t & (LPC_COMPUTE_INTERVAL - 1)) == 0 || t < LPC_COMPUTE_INTERVAL)
+        int compute_lpc = (t & (LPC_COMPUTE_INTERVAL - 1)) == 0 ||
+            (t < LPC_COMPUTE_INTERVAL);
+
+        lilcom_update_autocorrelation(&lpc, lpc_order,
+                                      compute_lpc, output + t - AUTOCORR_BLOCK_SIZE);
+        if (compute_lpc)
           lilcom_compute_lpc(lpc_order, &lpc);
       }
       int64_t local_max_t = (t + AUTOCORR_BLOCK_SIZE < num_samples ?
@@ -2004,10 +2031,12 @@ int lilcom_decompress(int64_t num_samples,
           and then add MAX_LPC_ORDER to find the right position in
           `output_buffer`. */
       int64_t buffer_start_t = t - AUTOCORR_BLOCK_SIZE;
-      lilcom_update_autocorrelation(&lpc, lpc_order,
+      int compute_lpc = (t & (LPC_COMPUTE_INTERVAL - 1)) == 0 ||
+          (t < LPC_COMPUTE_INTERVAL);
+      lilcom_update_autocorrelation(&lpc, lpc_order, compute_lpc,
                                     output_buffer + MAX_LPC_ORDER + buffer_start_t % SIGNAL_BUFFER_SIZE);
       /** If t is a multiple of LPC_COMPUTE_INTERVAL or < LPC_COMPUTE_INTERVAL.. */
-      if ((t & (LPC_COMPUTE_INTERVAL - 1)) == 0 || t < LPC_COMPUTE_INTERVAL)
+      if (compute_lpc)
         lilcom_compute_lpc(lpc_order, &lpc);
 
       int64_t local_max_t = (t + AUTOCORR_BLOCK_SIZE < num_samples ?
