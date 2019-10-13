@@ -2420,16 +2420,22 @@ void lilcom_test_compress_maximal() {
   /** this is mostly to check for overflow when computing autocorrelation. */
 
   for (int lpc_order = 0; lpc_order <= MAX_LPC_ORDER; lpc_order++) {
-    for (int i = 0; i < 2; i++) {
+    for (int n = 0; n < 2; n++) {
       int16_t buffer[4096];
-      if (i == 0) {
-        for (int i = 0; i < 1000; i++)
-          buffer[i] = -32768;
-        buffer[900] = 32767;  /** Mix it up a bit */
+      if (n == 0) {
+        for (int i = 0; i < 4096; i++) {
+          if (i < 3000 || i % 100 < 50)
+            buffer[i] = -32768;
+          else
+            buffer[i] = 32767;
+        }
       } else {
-        for (int i = 0; i < 1000; i++)
-          buffer[i] = 32767;
-        buffer[900] = -32768;  /** Mix it up a bit */
+        for (int i = 0; i < 4096; i++) {
+          if (i < 3000 || i % 100 < 50)
+            buffer[i] = 32767;
+          else
+            buffer[i] = -32768;
+        }
       }
 
 
