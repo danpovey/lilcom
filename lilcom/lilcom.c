@@ -96,19 +96,16 @@
 /**
    The amount by which we shift left the autocorrelation stats during
    accumulation, to avoid roundoff error due to the decay.  Larger -> more
-   accurate, but, as explained in the comment for LpcComputation::autocorr, we
-   require
+   accurate, but, as explained in the comment for LpcComputation::autocorr,
+   in order to prevent overflow we require:
 
-   (30 + AUTOCORR_LEFT_SHIFT + log(AUTOCORR_BLOCK_SIZE) + AUTOCORR_DECAY_EXPONENT + 1)
-     to not exceed 61.
-   (Note: the + 1 is required because of the variable `twice_autocorr_0` in the function
-    lilcom_update_autocorrelation; this is to avoid overflow).
-   Currently the sum above equals: 30 + 20 + 5 + 3 + 1 = 59  <= 61.  I'm giving
-   it a little wiggle room there in case other parameters get changed
-   while tuning.
+   (30 + AUTOCORR_LEFT_SHIFT + log(AUTOCORR_BLOCK_SIZE) + (AUTOCORR_DECAY_EXPONENT-1))
+     to be less than 61.
+   The -1 added to AUTOCORR_DECAY_EXPONENT is because the decay of the actual stats
+   is around x=(1 - 0.5^(AUTOCORR_DECAY_EXPONENT-1)) since it's the square of the
+   decay of the window; the sum of the series 1,x,x^2.. is 2^(AUTOCORR_DECAY_EXPONENT-1).
 
-   Caution: you will need to recompute AUTOCORR_DECAY_SQRT if you change this
-   value.
+   Currently the sum above equals: 30 + 20 + 4 + 6  = 60  < 61.
  */
 #define AUTOCORR_LEFT_SHIFT 20
 
@@ -133,38 +130,25 @@
 #define LOG_AUTOCORR_BLOCK_SIZE 4
 
 /**
-   AUTOCORR_DECAY_EXPONENT, together with AUTOCORR_BLOCK_SIZE, defines
-   how fast we decay the autocorrelation stats; small values mean the
-   autocorrelation coefficients move faster, large values mean
-   they move slower.
+   AUTOCORR_DECAY_EXPONENT, together with AUTOCORR_BLOCK_SIZE, defines how fast
+   we decay the autocorrelation stats; small values mean the autocorrelation
+   coefficients move faster, large values mean they move slower.  Conceptually
+   we are computing the autocorrelation on a copy of the signal multiplied by a
+   window that decreases by (1 - 0.5^AUTOCORR_DECAY_EXPONENT) each time we go
+   AUTOCORR_BLOCK_SIZE samples into th efast.  [Note: for implementation
+   reasons, this window falls in steps, not continuously.]  In addition, we
+   imagine that this windowed signal was reflected around the current time
+   This avoids the windowing function having a sharp discontinuity which
+   would make the LPC prediction worse, while also ensuring that the data
+   used to estimate the LPC prediction is fairly fresh.
 
    The approximate number of samples that we `remember` in the autocorrelation`
    computation is approximately AUTOCORR_BLOCK_SIZE << AUTOCORR_DECAY_EXPONENT,
-   which is currently 256.  Of course it's a decaying average, so we remember
+   which is currently 2048.  Of course it's a decaying average, so we remember
    all samples to some extent.  This may be important to tune, for
    performance.
  */
-#define AUTOCORR_DECAY_EXPONENT 6
-
-
-/**
-   CAUTION: if you change AUTOCORR_DECAY_EXPONENT or AUTOCORR_LEFT_SHIFT
-   you need to recompute this.
-
-   It represents the sqrt of
-      (1 - 2^-AUTOCORR_DECAY_EXPONENT) * 2^AUTOCORR_LEFT_SHIFT
-   which is needed to scale history stats when computing autocorrelation
-   terms that cross block boundaries.
-   (The factor of (1 - 2^-AUTOCORR_DECAY_EXPONENT) that we apply
-   to the autocorrelation stats when we cross a block boundary may
-   be viewed as the square root of that factor, applied to the
-   raw samples of data.  The AUTOCORR_LEFT_SHIFT factor just relates
-   to how we store the stats with a left shift.
-
-   This number was computed by typing: floor(sqrt(1 - 2^-6) * 2^20)
-   into wolfram alpha.
-*/
-#define AUTOCORR_DECAY_SQRT 1040351
+#define AUTOCORR_DECAY_EXPONENT 7
 
 
 
@@ -264,13 +248,17 @@ static inline int lilcom_sgn(int val) {
 struct LpcComputation {
   /**
      'autocorr[i]' contains a weighted sum of (s[j] * s[j - i]) << AUTOCORR_LEFT_SHIFT; we use a
-     'forgetting factor' of AUTOCORR_DECAY_EXPONENT, i.e. each time we process a
+     'forgetting factor' that depends on AUTOCORR_DECAY_EXPONENT, i.e. each time we process a
      block (of size AUTOCORR_BLOCK_SIZE) we multiply by (1 +
-     2^-{AUTOCORR_DECAY_EXPONENT}).  The elements of the sum cannot exceed
+     2^-{AUTOCORR_DECAY_EXPONENT})^2.  (It's squared because the factor inside
+     the parentheses affects the signal, and the autocorrelation is a product of
+     two signals.)
+
+     The elements of the sum cannot exceed
      (2^15)^2 = 2^30, shifted left AUTOCORR_LEFT_SHIFT bits, so the elements of
      the sum are <= 2^53.  The sum will be no
      greater than this times around AUTOCORR_BLOCK_SIZE *
-     2^AUTOCORR_DECAY_EXPONENT (the approximate number of terms added together)
+     2^(AUTOCORR_DECAY_EXPONENT+1) (the approximate number of terms added together)
      = 2^8, so the sum would be <= 2^(50+8) = 2^58.  The most this could be
      without overflow is around 2^61.  */
   int64_t autocorr[MAX_LPC_ORDER + 1];
@@ -285,7 +273,7 @@ struct LpcComputation {
   int64_t autocorr_to_remove[MAX_LPC_ORDER + 1];
 
   /*
-     max_exponent is the smallest number >= 0 such that autocorr[0] >>
+     max_exponent is the smallest number >= 1 such that autocorr[0] >>
      max_exponent == 0.  (Note: autocorr[0] is nonnegative).
      This implies that autocorr[0] < 2^{max_exponent}.
      It is used in the fixed-point arithmetic used in lilcom_compute_lpc(), to
@@ -323,7 +311,7 @@ static void lilcom_init_lpc(struct LpcComputation *lpc,
     lpc->autocorr[i] = 0;
     lpc->autocorr_to_remove[i] = 0;
   }
-  lpc->max_exponent = 0;
+  lpc->max_exponent = 1;
   /* The LPC coefficientss are stored shifted left by LPC_APPLY_LEFT_SHIFT, so this
      means the 1st coeff is 1.0 and the rest are zero-- meaning, we start
      prediction from the previous sample.  */
@@ -379,10 +367,24 @@ static inline void lilcom_update_autocorrelation(
   for (i = 0; i <= lpc_order; i++) {
     lpc->autocorr[i] -= lpc->autocorr_to_remove[i];
     lpc->autocorr_to_remove[i] = 0;
-    /** The division below is a 'safer' way of right-shifting by
-        AUTOCORR_DECAY_EXPONENT, which would technically give undefined results
-        for negative input */
-    lpc->autocorr[i] -= (lpc->autocorr[i] / (1 << AUTOCORR_DECAY_EXPONENT));
+
+    /**
+      Now we scale down / decay the previously computed autocorrelation coefficients
+      to account for the exponential windowing function.
+       What we really want to do is, if a is the autocorrelation coefficient
+       and d == AUTOCORR_DECAY_EXPONENT, to scale it by
+         a *=  (1 - 2^-d)^2  =  (1 - 2^{-(d-1)} + 2^{-2d})
+       (it's squared because autocorrelations are products of 2 signal values.)
+       So assuming right-shift was guaranteed to be arithmetic right-shift
+       (which, unfortunately, C doesn't seem to guarantee), we'd want to do:
+          a = a  - a>>(d-1)  + a>>(2*d)
+       The divisions below is a 'safer' way of right-shifting by those
+       amounts; technically, right-shift gives implementation-defined results
+       for negative input.
+    */
+    lpc->autocorr[i] = lpc->autocorr[i] -
+        (lpc->autocorr[i] / (1 << (AUTOCORR_DECAY_EXPONENT - 1))) +
+        (lpc->autocorr[i] / (1 << (2*AUTOCORR_DECAY_EXPONENT)));
     temp_autocorr[i] = 0;
   }
 
@@ -406,7 +408,9 @@ static inline void lilcom_update_autocorrelation(
     for (j = 0; j <= i; j++)
       temp_autocorr[j] += signal[i - j] * signal_i;
     for (j = i + 1; j <= lpc_order; j++)
-      lpc->autocorr[j] += (signal[i - j] * signal_i) * AUTOCORR_DECAY_SQRT;
+      lpc->autocorr[j] += (signal[i - j] * signal_i) *
+          ((1 << AUTOCORR_LEFT_SHIFT) -
+           (1 << (AUTOCORR_LEFT_SHIFT - AUTOCORR_DECAY_EXPONENT)));
   }
 
   /** OK, now we handle the samples that aren't close to the boundary.
@@ -477,19 +481,24 @@ static inline void lilcom_update_autocorrelation(
      object, and it will usually already have the correct value.  Return
      immediately if so.  */
   int exponent = lpc->max_exponent;
-  int64_t autocorr_0 = lpc->autocorr[0],
-      twice_autocorr_0 = autocorr_0 * 2;
-  assert(autocorr_0 != 0);
-  if ((twice_autocorr_0 >> exponent) == 1) {
+  int64_t autocorr_0 = lpc->autocorr[0];
+  assert(autocorr_0 != 0 && exponent > 0);
+  if ((autocorr_0 >> (exponent-1)) == 1) {
     /*  max_exponent has the correct value.  This is the normal code path. */
     return;
   }
-  while ((twice_autocorr_0 >> exponent) == 0)
+  while ((autocorr_0 >> (exponent-1)) == 0)
     exponent--;
-  while ((twice_autocorr_0 >> exponent) > 1)
+  while ((autocorr_0 >> (exponent-1)) > 1)
     exponent++;
-  assert((twice_autocorr_0 >> exponent) == 1 &&
-         autocorr_0 >> exponent == 0);
+  /** We can assert that exponent > 0 because we know that lpc->autocorr[0] is
+      at this point comfortably greater than 1; see above, the term
+      (AUTOCORR_BLOCK_SIZE*AUTOCORR_EXTRA_VARIANCE)<<AUTOCORR_LEFT_SHIFT)).
+      The fact that exponent > 0 is necessary to stop right-shifting
+      by (exponent-1) from generating an error.
+  */
+  assert((autocorr_0 >> (exponent-1)) == 1 &&
+         (autocorr_0 >> exponent) == 0 && exponent > 0);
   lpc->max_exponent = exponent;
 }
 
@@ -1859,8 +1868,8 @@ static inline int lilcom_decompress_time_zero(
   /** Failure in the following assert would be a code error, not an error in the
       input.  We already checked the exponent range in
      `lilcom_header_plausible`.  */
-  assert(mantissa_m1 >= -32 && mantissa_m1 <= 31 &&
-         exponent_m1 >= 0 && exponent_m1 <= 12);
+  assert(mantissa_m1 >= -64 && mantissa_m1 < 64 &&
+         exponent_m1 >= 0 && exponent_m1 <= 11);
   int32_t sample_m1 = mantissa_m1 << exponent_m1;
   int8_t code_0 = header[input_stride * LILCOM_HEADER_BYTES];
   int exponent_bit = (code_0 & 1),
@@ -1903,7 +1912,8 @@ int lilcom_decompress(int64_t num_samples,
   lilcom_init_lpc(&lpc, lpc_order);
   /** The following is necessary because of some loop unrolling we do while
       applying lpc; search for "sum2". */
-  lpc.lpc_coeffs[lpc_order] = 0;
+  if (lpc_order % 2 == 1)
+    lpc.lpc_coeffs[lpc_order] = 0;
 
   /** The first LPC_MAX_ORDER samples are for left-context; view the array as
       starting from the element with index LPC_MAX_ORDER.
@@ -2319,21 +2329,18 @@ static inline int lilcom_check_constants() {
   assert(MAX_LPC_ORDER % 2 == 0);
   assert(LPC_EST_LEFT_SHIFT + (AUTOCORR_EXTRA_VARIANCE_EXPONENT+1)/2 <= 31);
   assert(LPC_APPLY_LEFT_SHIFT + 16 < 31);
-  assert((30 + AUTOCORR_LEFT_SHIFT + log(AUTOCORR_BLOCK_SIZE) + AUTOCORR_DECAY_EXPONENT)
-         <= 61);
+  assert((30 + AUTOCORR_LEFT_SHIFT + LOG_AUTOCORR_BLOCK_SIZE + (AUTOCORR_DECAY_EXPONENT-1))
+         < 61);
   assert((AUTOCORR_BLOCK_SIZE & (AUTOCORR_BLOCK_SIZE-1)) == 0);  /** Power of 2. */
   assert(AUTOCORR_BLOCK_SIZE > MAX_LPC_ORDER);
   assert(LPC_COMPUTE_INTERVAL % AUTOCORR_BLOCK_SIZE == 0);
   assert(AUTOCORR_BLOCK_SIZE >> LOG_AUTOCORR_BLOCK_SIZE == 1);
-  {
-    int64_t n1 = (int64_t)AUTOCORR_DECAY_SQRT;
-    n1 *= n1;
-    n1 >>= AUTOCORR_LEFT_SHIFT;
-    int64_t n2 = (1 << AUTOCORR_LEFT_SHIFT) - (1 << (AUTOCORR_LEFT_SHIFT - AUTOCORR_DECAY_EXPONENT));
-    assert(lilcom_abs(n1 - n2) <= 3);
-  }
-  /** assumed in some code where we left shift by the difference.*/
+
+
+  /** the following inequalitites are assumed in some code where we left shift
+   * by the difference.*/
   assert(AUTOCORR_LEFT_SHIFT >= AUTOCORR_EXTRA_VARIANCE_EXPONENT);
+  assert(AUTOCORR_LEFT_SHIFT >= AUTOCORR_DECAY_EXPONENT);
 
   assert((LPC_COMPUTE_INTERVAL & (LPC_COMPUTE_INTERVAL-1)) == 0);  /* Power of 2. */
   assert((LPC_COMPUTE_INTERVAL & (LPC_COMPUTE_INTERVAL-1)) == 0);  /* Power of 2. */
@@ -2409,6 +2416,36 @@ void lilcom_test_compress_sine() {
   assert(exponent2 == exponent);
   fprintf(stderr, "Sine snr (dB) = %f%%\n", lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
 }
+
+
+void lilcom_test_compress_maximal() {
+  /** this is mostly to check for overflow when computing autocorrelation. */
+
+  for (int i = 0; i < 2; i++) {
+    int16_t buffer[4096];
+    int lpc_order = 10;
+    if (i == 0) {
+      for (int i = 0; i < 1000; i++)
+        buffer[i] = -32768;
+    } else {
+      for (int i = 0; i < 1000; i++)
+        buffer[i] = 32767;
+    }
+
+    int8_t compressed[4100];
+    int exponent = -15, exponent2;
+    lilcom_compress(4096, buffer, 1, compressed, 1,
+                    lpc_order, exponent);
+    int16_t decompressed[4096];
+    if (lilcom_decompress(4096, compressed, 1, decompressed, 1, &exponent2) != 0) {
+      fprintf(stderr, "Decompression failed\n");
+    }
+    assert(exponent2 == exponent);
+    fprintf(stderr, "Minimal snr (dB) = %f%%\n",
+            lilcom_compute_snr(4096, buffer, 1, decompressed, 1));
+  }
+}
+
 
 void lilcom_test_compress_sine_overflow() {
   int16_t buffer[1000];
@@ -2579,6 +2616,7 @@ void lilcom_test_get_max_abs_float_value() {
 int main() {
   lilcom_check_constants();
   lilcom_test_compress_sine();
+  lilcom_test_compress_maximal();
   lilcom_test_compress_sine_overflow();
   lilcom_test_compress_float();
   lilcom_test_compute_conversion_exponent();
