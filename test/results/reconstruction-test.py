@@ -1,24 +1,68 @@
-AudioFormats = ["lilcom", "mp3_320", "mp3_256", "mp3_224", "mp3_192", "mp3_160"]
 
-import lilcom
-import numpy
-import math
-import os
-from scipy.io import wavfile
+import lilcom   # The target module
+import numpy    # To manipulate arrays
+import math     # Mathemtical functions i.e. logarithm
+import os       # For directory managements i.e. ls, dir, etc
+from scipy.io import wavfile    # To read and write wavefiles
 import random
-import pydub
-import pandas
+import pydub    # For conversion between audio formats
+import pandas   # For using dataframes
+import librosa  # For downsampling
 
-def MSE (arr, reconst):
+# Audio formats for compaison
+AudioFormats = ["lilcom",
+                "mp3_320",
+                "mp3_256",
+                "mp3_224",
+                "mp3_192",
+                "mp3_160"]
+
+MP3BitRates = [320, 256, 224, 192, 160]
+
+dataSetDirectory = "./audio-samples/samples"
+
+
+def MSE(originalArray, reconstructedArray):
+    """ This dunction calculates the mean square error between a signal and its recons-
+    -truction
+
+       Args:
+        originalArray:   A numpy array which should be the original array before compres-
+                          -sion and reconstruction.
+        reconstructedArray: A numpy array which in this case should be an array which is
+                            reconstructed from the compression function.  
+       
+       Returns:
+           A rational number which is the result of mean square error between two given 
+           arrays
+   """
+    #initial value
     result = 0
-    for x, y in numpy.nditer([arr, reconst]):
+    # iterating on both arrays
+    for x, y in numpy.nditer([originalArray, reconstructedArray]):
         result += (x - y)**2
-    result /= arr.size
+    result /= originalArray.size
     return result
 
-def PSNR (arr, reconst):
-    MAXI = 2**16 - 1
-    mse = MSE (arr, reconst)
+
+def PSNR (originalArray, reconstructedArray, quantizationLevel = 16):
+    """ This dunction calculates the peak signal to noise ratio between a signal 
+    and its reconstruction
+
+       Args:
+        originalArray:   A numpy array which should be the original array before compres-
+                          -sion and reconstruction.
+        reconstructedArray: A numpy array which in this case should be an array which is
+                            reconstructed from the compression function.  
+        quantizationLevel:  The level of quantization which an audio is supposed to be in
+                            By default it is supposed to be 16
+       
+       Returns:
+           A rational number which is the result of psnr between two given 
+    """
+    
+    MAXI = 2**quantizationLevel - 1
+    mse = MSE (originalArray, reconstructedArray)
     if mse != 0:
         psnr = 20 * math.log10(MAXI) - 10 * math.log10(mse)
     else:
@@ -27,25 +71,20 @@ def PSNR (arr, reconst):
     return psnr
 
 
-def evaluateMP3(filename, bitrate):
+def evaluateMP3(filename, audioArray,bitrate):
+    
+    # Creating a temporary path for MP3 and reconstruction File
     tmpPath = "./ReconstTemp"
-
     if tmpPath[2:] in os.listdir("./"):
         os.system("rm -dR "+ tmpPath)
-
     os.system("mkdir "+ tmpPath)
-
     wavFile = pydub.AudioSegment.from_wav(filename)
     wavFile.export(tmpPath + "/output.mp3", format="mp3", bitrate=bitrate)
-
     mp3File = pydub.AudioSegment.from_mp3(tmpPath + "/output.mp3")
     mp3File.export(tmpPath + "/reconst.wav", format="wav")
-
-    # os.system("ffmpeg -i "+ filename +" -codec:a libmp3lame -qscale:a 2 " + tmpPath + "/output.mp3")
-    # os.system("ffmpeg -i "+ tmpPath + "/output.mp3 " + tmpPath + "/reconst.wav")
-
-    sampleRate, audioArray = wavfile.read(filename)
     sampleRateReconst, audioReconst = wavfile.read(tmpPath + "/reconst.wav")
+    print (audioArray.shape)
+    print (audioReconst.shape)
 
     psnr = PSNR(audioArray, audioReconst)
 
@@ -53,72 +92,64 @@ def evaluateMP3(filename, bitrate):
     return psnr
 
 
-def evaluateLilcom(filename, lpc = 4):
+def evaluateLilcom(audioArray, lpc = 4):
 
-    sampleRate, inputArray = wavfile.read(filename)
-
-    outputShape = list(inputArray.shape)
+    outputShape = list(audioArray.shape)
 
     outputShape[0] += 4
     outputShape = tuple(outputShape)
 
     outputArray = numpy.ndarray(outputShape, numpy.int8)
-    reconstructedArray = numpy.ndarray(inputArray.shape, numpy.int16)
+    reconstructedArray = numpy.ndarray(audioArray.shape, numpy.int16)
 
-    lilcom.compress(inputArray, out=outputArray, lpc_order = lpc, axis = 0)
+    lilcom.compress(audioArray, out=outputArray, lpc_order = lpc, axis = 0)
     lilcom.decompress(outputArray, out=reconstructedArray, axis = 0)
 
-    psnr = PSNR(inputArray, reconstructedArray)
+    psnr = PSNR(audioArray, reconstructedArray)
     return psnr
 
+# Empty lists for test results
+psnrComparisonResults = []
+psnrLpcResults = []
 
+# Fetching results
+testFiles = os.listdir(dataSetDirectory)
+if ".DS_Store" in testFiles:
+    testFiles.remove(".DS_Store")
 
-# Goes through the test folder and find test scenarios
-psnrTestResult = []
-lpcTestResult = []
+for testFile in testFiles:
+    filePath = dataSetDirectory + "/" + testFile
+    
+    # Just for debug
+    print(filePath)
 
-dataAddresses = ["./audio-samples/" + item for item in os.listdir("audio-samples")]
-if "./audio-samples/.DS_Store" in dataAddresses:
-        dataAddresses.remove("./audio-samples/.DS_Store")
-for dirs in dataAddresses:
-    files = os.listdir(dirs)
-    if ".DS_Store" in files:
-        files.remove(".DS_Store")
+    
+    
+    # Reading audio file
+    sampleRate, audioArray = wavfile.read(filePath)
 
-    scenarioPSNR = []
-    scenarioLPC = []
+    # Convertying audio file sampling rates needed and 
+    #   evaluating it 
+        
+    # PSNR for MP3 vs Lilcom
+    entityPsnrComparisonResults = [testFile, sampleRate, 
+                                    evaluateLilcom(audioArray),
+                                    evaluateMP3(filePath, audioArray, "320k"),
+                                    evaluateMP3(filePath, audioArray, "256k"),
+                                    evaluateMP3(filePath, audioArray, "224k"),
+                                    evaluateMP3(filePath, audioArray, "192k"),
+                                    evaluateMP3(filePath, audioArray, "160k")]
+    psnrComparisonResults.append(entityPsnrComparisonResults)
+    
+    # PSNR for comparison among LPCs
+    entityPsnrLpcResults = [testFile, sampleRate]+\
+            [evaluateLilcom(audioArray, l) for l in range(0, 14)]
+    psnrLpcResults.append(entityPsnrLpcResults)
 
-    print ("Test scenraio: ", dirs)
-#     dirResults = []
-    for file in files:
-        filename = dirs + "/" + file
+    # Just for Debuging
+    print(entityPsnrComparisonResults)
+    print(entityPsnrLpcResults)
 
-        trackLPCPSNR = [file]
-
-        resLilcom = evaluateLilcom(filename)
-        resMp3_320 = evaluateMP3(filename, "320k")
-        resMp3_256 = evaluateMP3(filename, "256k")
-        resMp3_224 = evaluateMP3(filename, "224k")
-        resMp3_192 = evaluateMP3(filename, "192k")
-        resMp3_160 = evaluateMP3(filename, "160k")
-
-        trackPSNR = [file, resLilcom, resMp3_320, resMp3_256,\
-            resMp3_224, resMp3_192, resMp3_160]
-
-        print(trackPSNR)
-        scenarioPSNR.append(trackPSNR)
-
-        for lpc in range (0 , 14):
-            trackLPCPSNR.append(evaluateLilcom(filename, lpc))
-        print (trackLPCPSNR)
-        scenarioLPC.append(trackLPCPSNR)
-
-
-    scenarioPSNR = pandas.DataFrame(data= scenarioPSNR, columns= ["file"]+AudioFormats)
-    scenarioPSNR.to_csv(dirs[16:]+"-Scenario.csv")
-    scenarioLPC = pandas.DataFrame(data= scenarioLPC, columns= ["file"]+list(range(0 , 16)))
-    scenarioLPC.to_csv(dirs[16:]+"-LPC.csv")
-
-    psnrTestResult.append(scenarioPSNR)
+# Dataframe works
 
 
