@@ -18,7 +18,7 @@ AudioFormats = ["lilcom",
 
 MP3BitRates = [320, 256, 224, 192, 160]
 
-dataSetDirectory = "./audio-samples/samples"
+dataSetDirectory = "./audio-samples/tiny-samples"
 
 
 def MSE(originalArray, reconstructedArray):
@@ -166,8 +166,8 @@ for testFile in testFiles:
 
 # Dataframe related works
 
-comparisonDataFrame = pandas.Dataframe(entityPsnrComparisonResults)
-LpcDataFrame = pandas.Dataframe(psnrLpcResults)
+comparisonDataFrame = pandas.DataFrame(psnrComparisonResults)
+LpcDataFrame = pandas.DataFrame(psnrLpcResults)
 
 comparisonDataFrame.to_csv("Comparison.csv")
 LpcDataFrame.to_csv("Lpc.csv")
