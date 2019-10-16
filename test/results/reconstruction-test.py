@@ -1,4 +1,3 @@
-
 import lilcom   # The target module
 import numpy    # To manipulate arrays
 import math     # Mathemtical functions i.e. logarithm
@@ -83,8 +82,8 @@ def evaluateMP3(filename, audioArray,bitrate):
     mp3File = pydub.AudioSegment.from_mp3(tmpPath + "/output.mp3")
     mp3File.export(tmpPath + "/reconst.wav", format="wav")
     sampleRateReconst, audioReconst = wavfile.read(tmpPath + "/reconst.wav")
-    print (audioArray.shape)
-    print (audioReconst.shape)
+    # print (audioArray.shape)
+    # print (audioReconst.shape)
 
     psnr = PSNR(audioArray, audioReconst)
 
@@ -112,7 +111,22 @@ def evaluateLilcom(audioArray, lpc = 4):
 psnrComparisonResults = []
 psnrLpcResults = []
 
-# Fetching results
+# Fetching sample files
+testFiles = os.listdir(dataSetDirectory)
+if ".DS_Store" in testFiles:
+    testFiles.remove(".DS_Store")
+
+# Resampler
+for testFile in testFiles:
+    filePath = dataSetDirectory + "/" + testFile
+    sampleRate , audioArray =  wavfile.read(filePath)
+    print ("Subsampling " + filePath)
+    for sr in [16000, 8000]:
+        wavfile.write(dataSetDirectory + "/subsampled-"+str(sr)+testFile,
+                    sr, audioArray)
+        print (dataSetDirectory + "/subsampled-"+str(sr)+testFile)
+    
+# renewing sample files
 testFiles = os.listdir(dataSetDirectory)
 if ".DS_Store" in testFiles:
     testFiles.remove(".DS_Store")
@@ -150,6 +164,13 @@ for testFile in testFiles:
     print(entityPsnrComparisonResults)
     print(entityPsnrLpcResults)
 
-# Dataframe works
+# Dataframe related works
 
+comparisonDataFrame = pandas.Dataframe(entityPsnrComparisonResults)
+LpcDataFrame = pandas.Dataframe(psnrLpcResults)
 
+comparisonDataFrame.to_csv("Comparison.csv")
+LpcDataFrame.to_csv("Lpc.csv")
+
+# Removing Subsampled Data
+os.system("rm "+dataSetDirectory+"/subsampled*")
