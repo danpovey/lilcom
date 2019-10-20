@@ -1,10 +1,10 @@
-#include "lilcom.h"
 #include <assert.h>
 #include <stdlib.h>  /* for malloc */
 #include <math.h>  /* for frexp and frexpf and pow, used in floating point compression. */
 #include <stdio.h>  /* TEMP-- for debugging. */
 #include <float.h>  /* for FLT_MAX */
 
+#include "lilcom.h"
 
 /**
    The version number of the format.   Note: you can't change the various

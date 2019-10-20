@@ -1,2 +1,7 @@
 *~
 [#]*[#]
+
+# for build
+build/
+dist/ 
+lilcom.egg-info/
