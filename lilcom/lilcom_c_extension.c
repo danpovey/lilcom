@@ -1,4 +1,3 @@
-// Needed definitions and includes for python C interface
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include "unistd.h"  /* For malloc and free */
@@ -126,7 +125,7 @@ static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject * keywd
   */
   static char *kwlist[] = {"input", "output",
                            "lpc_order","bits_per_sample",
-                           "conversion_exponent", NULL}; //definition of keywords received in the function call from python
+                           "conversion_exponent", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|iii", kwlist,
                                    &input, &output,
                                    &lpc_order, &bits_per_sample,
@@ -420,11 +419,11 @@ static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keyw
      objects.
   */
   static char *kwlist[] = {"input", "output",
-                           "lpc_order", "bits_per_sample", NULL}; //definition of keywords received in the function call from python
-  // Parsing Arguments
+                           "lpc_order", "bits_per_sample", NULL};
+
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|ii", kwlist,
-                                   &input, &output,
-                                   &lpc_order))
+                                   &input, &output, &lpc_order,
+                                   &bits_per_sample))
     goto error_return;
 
   const float *input_data = (const float*)PyArray_DATA(input);
@@ -432,8 +431,7 @@ static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keyw
 
 
 
-  // Initializing shape related variables
-  int num_axes = PyArray_NDIM(input); // Get the number of dimensions
+  int num_axes = PyArray_NDIM(input);
   if (PyArray_NDIM(output) != num_axes)
     goto error_return;
 
@@ -541,11 +539,11 @@ int decompress_float_internal(int num_axes, int axis,
 */
 static PyObject *decompress_float(PyObject *self, PyObject *args, PyObject *keywds)
 {
-  PyObject *input; // The input signal, passed as a numpy array.
-  PyObject *output; // The output signal, passed as a numpy array.
+  PyObject *input; /* The input signal, passed as a numpy array. */
+  PyObject *output; /* The output signal, passed as a numpy array. */
 
   static char *kwlist[] = {"input", "output", NULL};
-  // Parsing Arguments
+
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist,
                                    &input, &output))
     goto error_return;
