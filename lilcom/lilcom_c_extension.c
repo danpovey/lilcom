@@ -6,7 +6,7 @@
 #include "numpy/arrayobject.h"
 
 /* The core library */
-#include "./lilcom.h"
+#include "lilcom.h"
 
 
 
