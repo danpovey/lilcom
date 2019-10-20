@@ -31,6 +31,7 @@
                     for its dimension and stride information
    @param [in] lpc_order   User-specified number in [0..15], higher means slower
                     but less lossy compression.
+   @param [in] bits_per_sample  User-specified number in [4..8]
    @param [in] conversion_exponent   User specified number that affects what
                     happens when we convert to float.  Will normally be 0.
 
@@ -42,7 +43,7 @@ int compress_int16_internal(int num_axes, int axis,
                             const int16_t *input_data,
                             int8_t *output_data,
                             PyObject *input, PyObject *output,
-                            int lpc_order,
+                            int lpc_order, int bits_per_sample,
                             int conversion_exponent) {
   assert(axis >= 0 && axis < num_axes);
   int dim = PyArray_DIM(input, axis),
@@ -55,7 +56,8 @@ int compress_int16_internal(int num_axes, int axis,
     for (int i = 0; i < dim; i++) {
       int ret = compress_int16_internal(num_axes, axis + 1, input_data,
                                         output_data, input, output,
-                                        lpc_order, conversion_exponent);
+                                        lpc_order, bits_per_sample,
+                                        conversion_exponent);
       if (ret != 0)
         return ret;  /** Some kind of failure */
       input_data += input_stride;
@@ -67,7 +69,8 @@ int compress_int16_internal(int num_axes, int axis,
       return 2;
     int ret = lilcom_compress(dim, input_data, input_stride,
                               output_data, output_stride,
-                              lpc_order, conversion_exponent);
+                              lpc_order, bits_per_sample,
+                              conversion_exponent);
     if (ret != 0)
       return ret;  /** Failure, e.g. invalid lpc_order, dim or exponent. */
   }
@@ -90,6 +93,7 @@ int compress_int16_internal(int num_axes, int axis,
             the last dimension is greater by 4 (for the header).
        lpc_order:  A user-specifiable number in the range [0..15];
             higher values are slower but less lossy.
+       bits_per_sample:  User-specified number in [4..8]
        conversion_exponent: A user-specifiable number in the range
             [-127..128].  The same value will be returned by `decompress_int16`.
             You won't normally want to modify the default.  It affects what
@@ -107,12 +111,13 @@ int compress_int16_internal(int num_axes, int axis,
      """
  */
 
-static PyObject *compress_int16(PyObject *self, PyObject * args, PyObject * keywds)
+static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject * keywds)
 {
-  PyObject *input; // The input signal, passed as a numpy array.
-  PyObject *output; // The output signal, passed as a numpy array.
-  int lpc_order; // LPC Order defined in the core function (more information -> lilcom.h)
-  int conversion_exponent; // Conversion Exponent defined in the core function (more information -> lilcom.h)
+  PyObject *input; /* The input signal, passed as a numpy array. */
+  PyObject *output; /* The output signal, passed as a numpy array. */
+  int lpc_order = 4,
+      bits_per_sample = 8,
+      conversion_exponent = 0;
 
   /* Reading and information - extracting for input data
      From the python function there are two numpy arrays and an intger (optional) LPC_order
@@ -120,27 +125,26 @@ static PyObject *compress_int16(PyObject *self, PyObject * args, PyObject * keyw
      objects.
   */
   static char *kwlist[] = {"input", "output",
-                           "lpc_order", "conversion_exponent", NULL}; //definition of keywords received in the function call from python
-  // Parsing Arguments: All input arguments are obligatory. Default assignment left for python wrapper.
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OOii", kwlist,
+                           "lpc_order","bits_per_sample",
+                           "conversion_exponent", NULL}; //definition of keywords received in the function call from python
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|iii", kwlist,
                                    &input, &output,
-                                   &lpc_order, &conversion_exponent))
+                                   &lpc_order, &bits_per_sample,
+                                   &conversion_exponent))
     goto error_return;
 
   const int16_t *input_data = (const int16_t*)PyArray_DATA(input);
   int8_t *output_data = (int8_t*) PyArray_DATA(output);
 
-
-  // Initializing shape related variables
-  int num_axes = PyArray_NDIM(input); // Get the number of dimensions
+  int num_axes = PyArray_NDIM(input);
   if (PyArray_NDIM(output) != num_axes)
     goto error_return;
 
 
-  // Calles the internal function which recursively calles it self until it's ready for compression
   int ret = compress_int16_internal(num_axes, 0,
                                     input_data, output_data,
                                     input, output, lpc_order,
+                                    bits_per_sample,
                                     conversion_exponent);
   return Py_BuildValue("i", ret);
 error_return:
@@ -269,8 +273,8 @@ int decompress_int16_internal(int num_axes, int axis,
  */
 static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keywds)
 {
-  PyObject *input; // The input signal, passed as a numpy array.
-  PyObject *output; // The output signal, passed as a numpy array.
+  PyObject *input; /* The input signal, passed as a numpy array. */
+  PyObject *output; /* The output signal, passed as a numpy array. */
 
   /* Reading and information - extracting for input data
      From the python function there are two numpy arrays and an intger (optional) LPC_order
@@ -278,7 +282,6 @@ static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keyw
      objects.
   */
   static char *kwlist[] = {"input", "output", NULL};
-  // Parsing Arguments
 
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist,
                                    &input, &output))
@@ -289,8 +292,7 @@ static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keyw
   int16_t *output_data = (int16_t*) PyArray_DATA(output);
 
 
-  // Initializing shape related variables
-  int num_axes = PyArray_NDIM(input); // Get the number of dimensions
+  int num_axes = PyArray_NDIM(input);
   if (PyArray_NDIM(output) != num_axes)
     goto error_return;
 
@@ -339,7 +341,8 @@ int compress_float_internal(int num_axes, int axis,
                             const float *input_data,
                             int8_t *output_data,
                             PyObject *input, PyObject *output,
-                            int lpc_order, int16_t *temp_space) {
+                            int lpc_order, int bits_per_sample,
+                            int16_t *temp_space) {
   assert(axis >= 0 && axis < num_axes);
   int dim = PyArray_DIM(input, axis),
       input_stride = PyArray_STRIDE(input, axis) / sizeof(float),
@@ -351,7 +354,8 @@ int compress_float_internal(int num_axes, int axis,
     for (int i = 0; i < dim; i++) {
       int ret = compress_float_internal(num_axes, axis + 1, input_data,
                                         output_data, input, output,
-                                        lpc_order, temp_space);
+                                        lpc_order, bits_per_sample,
+                                        temp_space);
       if (ret != 0)
         return ret;  /** Some kind of failure */
       input_data += input_stride;
@@ -363,7 +367,8 @@ int compress_float_internal(int num_axes, int axis,
       return 4;
     int ret = lilcom_compress_float(dim, input_data, input_stride,
                                     output_data, output_stride,
-                                    lpc_order, temp_space);
+                                    lpc_order, bits_per_sample,
+                                    temp_space);
     if (ret != 0)
       return ret;  /** Failure, e.g. invalid lpc_order, dim or exponent. */
   }
@@ -403,9 +408,10 @@ int compress_float_internal(int num_axes, int axis,
  */
 static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keywds)
 {
-  PyObject *input; // The input signal, passed as a numpy array.
-  PyObject *output; // The output signal, passed as a numpy array.
-  int lpc_order = 5; // LPC Order defined in the core function (more information -> lilcom.h)
+  PyObject *input; /* The input signal, passed as a numpy array. */
+  PyObject *output; /* The output signal, passed as a numpy array. */
+  int lpc_order = 4,
+      bits_per_sample = 8;
   int16_t *temp_space = NULL;
 
   /* Reading and information - extracting for input data
@@ -414,9 +420,9 @@ static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keyw
      objects.
   */
   static char *kwlist[] = {"input", "output",
-                           "lpc_order", NULL}; //definition of keywords received in the function call from python
+                           "lpc_order", "bits_per_sample", NULL}; //definition of keywords received in the function call from python
   // Parsing Arguments
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|i", kwlist,
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|ii", kwlist,
                                    &input, &output,
                                    &lpc_order))
     goto error_return;
@@ -440,7 +446,7 @@ static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keyw
   int ret = compress_float_internal(num_axes, 0,
                                     input_data, output_data,
                                     input, output, lpc_order,
-                                    temp_space);
+                                    bits_per_sample, temp_space);
   free(temp_space);
   return Py_BuildValue("i", ret);
 error_return:
@@ -547,8 +553,7 @@ static PyObject *decompress_float(PyObject *self, PyObject *args, PyObject *keyw
   const int8_t *input_data = (const int8_t*)PyArray_DATA(input);
   float *output_data = (float*) PyArray_DATA(output);
 
-  // Initializing shape related variables
-  int num_axes = PyArray_NDIM(input); // Get the number of dimensions
+  int num_axes = PyArray_NDIM(input);
   if (PyArray_NDIM(output) != num_axes)
     goto error_return;
 
@@ -583,3 +588,5 @@ PyMODINIT_FUNC PyInit_lilcom_c_extension(void)
     import_array();
     return PyModule_Create(&lilcom);
 }
+
+

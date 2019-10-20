@@ -2,8 +2,8 @@ import numpy as np
 from . import lilcom_c_extension
 
 
-# Remove the underscore once you start using this interface.
-def compress(input, axis=-1, lpc_order=4, default_exponent=0, out=None):
+def compress(input, axis=-1, lpc_order=4, bits_per_sample=8,
+             default_exponent=0, out=None):
    """ This function compresses sequence data (for example, audio data) to 1 byte per
         sample.
 
@@ -20,6 +20,8 @@ def compress(input, axis=-1, lpc_order=4, default_exponent=0, out=None):
                           prediction.  Compression/decompression time will rise
                           roughly linearly with lpc_order, and the compression will
                           get more lossy for small lpc_order.
+       bits_per_sample (int):  A number in [4..8]; smaller values mean higher
+                          compression ratio.
        default_exponent (int):  This number, which must be in the range [-127..128],
                           affects the range of the output only in cases where the
                           array was compressed from int16_t source but is
@@ -100,7 +102,8 @@ def compress(input, axis=-1, lpc_order=4, default_exponent=0, out=None):
 
 
    if input.dtype == np.float32:
-      ret = lilcom_c_extension.compress_float(input, out, lpc_order=lpc_order)
+      ret = lilcom_c_extension.compress_float(input, out, lpc_order=lpc_order,
+                                              bits_per_sample=bits_per_sample)
       if ret is False:
          raise RuntimeError("Something went wrong calling the 'c' code, likely "
                             "implementation bug.")
@@ -111,6 +114,7 @@ def compress(input, axis=-1, lpc_order=4, default_exponent=0, out=None):
    else:
       assert input.dtype == np.int16
       ret = lilcom_c_extension.compress_int16(input, out, lpc_order=lpc_order,
+                                              bits_per_sample=bits_per_sample,
                                               conversion_exponent=default_exponent)
       assert isinstance(ret, int)
       if ret != 0:

@@ -6,7 +6,7 @@
    data) into 'num_samples + 4' bytes.
 
       @param [in] num_samples  The number of samples of sequence
-                      data.  Mus be greater than zero.
+                      data.  Must be greater than zero.
       @param [in] input   The 16-bit input sequence data: a pointer
                       to an array of size at least `num_samples`
       @param [in] input_stride  The offset from one input sample to
@@ -29,6 +29,8 @@
                       Larger values will give higher fidelity (especially
                       for audio data) but the compression and decompression
                       will be slower.
+      @param [in] bits_per_sample  The number of bits per sample; must be
+                      in [4..8].  We normally recommend 8.
       @param [in] conversion_exponent  A user-specified number which
                       is required to be in the range [-127, 128] and which will
                       be returned to the user by lilcom_decompress().  This
@@ -56,7 +58,8 @@
 int lilcom_compress(int64_t num_samples,
                     const int16_t *input, int input_stride,
                     int8_t *output, int output_stride,
-                    int lpc_order, int conversion_exponent);
+                    int lpc_order, int bits_per_sample,
+                    int conversion_exponent);
 
 /**
    Lossily compresses 'num_samples' samples of floating-point sequence data
@@ -93,6 +96,8 @@ int lilcom_compress(int64_t num_samples,
                       Larger values will give higher fidelity (especially
                       for audio data) but the compression and decompression
                       will be slower.
+      @param [in] bits_per_sample  The number of bits per sample; must be
+                      in [4..8].  We normally recommend 8.
       @param [in] temp_space  A pointer to a temporary array of int16_t that
                       can be used inside this function.  It must have size
                       at least `num_samples`.  If NULL is provided, this
@@ -113,8 +118,35 @@ int lilcom_compress(int64_t num_samples,
 int lilcom_compress_float(int64_t num_samples,
                           const float *input, int input_stride,
                           int8_t *output, int output_stride,
-                          int lpc_order, int16_t *temp_space);
+                          int lpc_order, int bits_per_sample,
+                          int16_t *temp_space);
 
+
+/**
+   Returns the number of samples we'd need to store the decompressed
+   output corresponding to this compressed code
+      @param [in] input  Pointer to the start of the compressed data;
+                      would correspond to the `output` argument to
+                      lilcom_compress() or lilcom_compress_float().
+      @param [in] input_stride  Stride of the input array (would
+                      normally be 1.)
+      @param [in] input_length  Length of the input array (note:
+                      this is necessary to find out the number of
+                      samples, as the number of samples is not
+                      directly stored in the header.)
+
+      @return  Returns -1 if, from the information provided,
+             this does not seem to correspond to lilcom-compressed
+             data (e.g. input_length is too small or the header is
+             invalid).
+               Otherwise returns the number of samples that the
+             data that was compressed contained, corresponding
+             to the num_samples argument to lilcom_compress or
+             lilcom_compress_float.
+ */
+int lilcom_get_num_samples(const int8_t *input,
+                           int input_stride,
+                           int64_t input_length);
 
 
 /**
@@ -165,7 +197,7 @@ int lilcom_decompress(int64_t num_samples,
       @param [in] input_stride  The offset from one input sample to
                       the next, in elements.  Would normally be 1.
                       May have any nonzero value.
-      @param [in] input   The 8-bit compresed data:  a pointer
+      @param [in] input   The 8-bit compressed data:  a pointer
                       to an array of size at least `num_samples + 4`,
                       where the extra 4 bytes form a header.  Note:
                       the header does not contain the length of the
