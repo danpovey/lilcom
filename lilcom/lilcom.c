@@ -244,19 +244,26 @@
 
 
 /**
-   STAGING_BLOCK_SIZE is the size of one of two blocks in a rolling buffer
-   containing the compressed signal.  The buffer contains the signal as bytes,
-   one per time-step, which will later be consolidated if bytes_per_sample < 8.
+   STAGING_BLOCK_SIZE is the size of a block in a rolling buffer containing the
+   compressed signal.  The buffer contains the signal as bytes, one per
+   time-step, which will later be consolidated if bytes_per_sample < 8.
 
    We require that STAGING_BLOCK_SIZE be a multiple of 8, which
    ensures that the number of bits in the staging block must be a multiple of
-   8, hence a whole number of bites.
+   8, hence a whole number of bytes.
 
    It should be at least twice the maximum number of time steps we might backtrack
-   (which is MAX_POSSIBLE_EXPONENT*2 = 30).  We choose to make it 32 bytes,
+   (which is MAX_POSSIBLE_EXPONENT*2 = 30).  We choose to make it 16 bytes,
    meaning the entire staging area contains 64 bytes.
+
+   There are 4 staging blocks in the buffer.  3 is the minimum number
+   necessary to avoid certain pathologies that can happen with backtracking,
+   but we make it 4 to keep it a power of 2, since we use a power-of-two
+   trick to maybe make a modulus operation faster.
  */
 #define STAGING_BLOCK_SIZE 32
+#define NUM_STAGING_BLOCKS 4
+
 
 
 /** returns the sign of 'val', i.e. +1 if is is positive, -1 if
@@ -667,7 +674,7 @@ struct CompressionState {
      indexed by t modulo the buffer size, whereas `compressed_code`
      has bit-packing.
   */
-  int8_t staging_buffer[STAGING_BLOCK_SIZE*2];
+  int8_t staging_buffer[STAGING_BLOCK_SIZE*NUM_STAGING_BLOCKS];
 
 
   /**  The input signal that we are compressing  */
@@ -929,7 +936,7 @@ static void commit_staging_block(int64_t begin_t,
     /** Treat this case specially as it can be more efficient.  */
     int8_t *compressed_code = state->compressed_code;
     int64_t t = begin_t,
-        s = begin_t % (STAGING_BLOCK_SIZE*2);
+        s = begin_t % (STAGING_BLOCK_SIZE*NUM_STAGING_BLOCKS);
     for (; t < end_t; s++, t++) {
       state->compressed_code[t*compressed_code_stride] =
           state->staging_buffer[s];
@@ -937,21 +944,22 @@ static void commit_staging_block(int64_t begin_t,
   } else {
     /** The division below will always be exact because STAGING_BLOCK_SIZE is a
         multiple of 8. */
-    int64_t s = begin_t % (STAGING_BLOCK_SIZE*2);
+    int64_t s = begin_t % (STAGING_BLOCK_SIZE*NUM_STAGING_BLOCKS);
     const int8_t *src = state->staging_buffer + s;
     int8_t *compressed_code = state->compressed_code +
         compressed_code_stride * ((begin_t * bits_per_sample) / 8);
-    int code = 0, mask = (1 << bits_per_sample) - 1, bit_shift = 0;
+    int code = 0, mask = (1 << bits_per_sample) - 1, bits_in_code = 0;
     for (int64_t t = begin_t; t < end_t; t++) {
-      code |= (*(src++) & mask) << bit_shift;
-      bit_shift += bits_per_sample;
-      if (bit_shift >= 8) {  /* Shift off the lowest-order byte */
+      code |= ((((int)(unsigned char)(*(src++))) & mask) << bits_in_code);
+      bits_in_code += bits_per_sample;
+      if (bits_in_code >= 8) {  /* Shift off the lowest-order byte */
         *compressed_code = (int8_t) code;
         compressed_code += compressed_code_stride;
         code >>= 8;
+        bits_in_code -= 8;
       }
     }
-    if (bit_shift != 0) {
+    if (bits_in_code != 0) {
       /* Get rid of the last partial byte; this will only be
          reached at the end of the file. */
       *compressed_code = (int8_t) code;
@@ -968,9 +976,9 @@ static void commit_staging_block(int64_t begin_t,
 static inline void write_compressed_code(int64_t t,
                                          int8_t code,
                                          struct CompressionState *state) {
-  /** Read the following index as t % STAGING_BLOCK_SIZE*2,
+  /** Read the following index as t % STAGING_BLOCK_SIZE*NUM_STAGING_BLOCKS,
       i.e. t modulo the size of the staging buffer. */
-  state->staging_buffer[t & (STAGING_BLOCK_SIZE*2 - 1)] = code;
+  state->staging_buffer[t & (STAGING_BLOCK_SIZE*NUM_STAGING_BLOCKS - 1)] = code;
 
 
   /** If the next t value divides STAGING_BLOCK_SIZE, we may have
@@ -1969,7 +1977,6 @@ int lilcom_compress(int64_t num_samples,
     start_t = (num_samples - STAGING_BLOCK_SIZE) & ~(STAGING_BLOCK_SIZE-1);
   }
   while (start_t < num_samples) {
-    printf("num-samples = %d, start_t = %d, committing\n", (int)num_samples, (int)start_t);
     int64_t end_t = start_t + STAGING_BLOCK_SIZE;
     if (end_t > num_samples)
       end_t = num_samples;
@@ -2097,7 +2104,6 @@ static inline int lilcom_decompress_one_sample(
   int exponent_bit = (input_code & 1),
       min_codable_exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, *exponent),
       mantissa = extract_mantissa(input_code, bits_per_sample);
-  printf("code = %d, bps = %d, Mantissa = %d\n", input_code, bits_per_sample, mantissa);
   *exponent = min_codable_exponent + exponent_bit;
 
   assert(*exponent >= 0);
@@ -2184,8 +2190,9 @@ int lilcom_get_num_samples(const int8_t *input,
 /**
    This is a function used in lilcom_decompress, which we have broken out here
    for clarity but we strongly anticipate will be inlined.  It gets the next
-   compressed code.  (It's assumed to be called in order for t=0, t=1, and so
-   on.)
+   compressed code (this is necessary because if bits_per_sample != 8, it's
+   not trivial to just look up the codes.
+   This funnction is assumed to be called in order for t=0, t=1, and so on.)
 
       @param [in]      bits_per_sample  The bits per sample, in [4..8].
       @param [in,out]  leftover_bits   This is a value that the user should initialize
@@ -2212,7 +2219,7 @@ static inline int lilcom_get_next_compressed_code(
   if (*num_bits < bits_per_sample) {
     /** We need more bits.  Put them above (i.e. higher-order-than) any bits we
         have currently. */
-    *leftover_bits |= (((int)(**cur_input)) << *num_bits);
+    *leftover_bits |= (((int)((unsigned char)(**cur_input))) << *num_bits);
     *cur_input += input_stride;
     *num_bits += 8;
   }
@@ -2224,7 +2231,6 @@ static inline int lilcom_get_next_compressed_code(
   /** As documented above, the higher-order bits of ans are actually
    * undefined. */
   return ans;
-
 }
 
 
@@ -2258,9 +2264,6 @@ int lilcom_decompress(int64_t num_samples,
     printf("Bad time zero\n"); /**TEMP*/
     return 1;  /** Error */
   }
-  /*TEMP*/
-  printf("Time t=0, exponent=%d, output=%d\n", exponent, (int)output[0]);
-
   struct LpcComputation lpc;
   lilcom_init_lpc(&lpc, lpc_order);
   /** The following is necessary because of some loop unrolling we do while
@@ -2292,8 +2295,6 @@ int lilcom_decompress(int64_t num_samples,
       return 1;  /** Error */
     }
     output[t * output_stride] = output_buffer[MAX_LPC_ORDER + t];
-    /*TEMP*/
-    printf("Time t=%d, exponent=%d, output=%d\n", t, exponent, (int)output[t * output_stride]);
   }
   if (t >= num_samples)
     return 0;  /** Success */
@@ -2701,6 +2702,8 @@ int lilcom_decompress_float(int64_t num_samples,
 static inline int lilcom_check_constants() {
   assert(STAGING_BLOCK_SIZE > 2*MAX_POSSIBLE_EXPONENT);
   assert((STAGING_BLOCK_SIZE & (STAGING_BLOCK_SIZE - 1)) == 0);
+  assert(NUM_STAGING_BLOCKS >= 3);
+  assert((NUM_STAGING_BLOCKS & (NUM_STAGING_BLOCKS-1)) == 0);
   assert(EXPONENT_BUFFER_SIZE > 2*MAX_POSSIBLE_EXPONENT);
   assert((LPC_ROLLING_BUFFER_SIZE - 1) * AUTOCORR_BLOCK_SIZE > 24);
   assert(MAX_LPC_ORDER >> LPC_ORDER_BITS == 0);
@@ -2800,6 +2803,7 @@ void lilcom_test_compress_sine() {
     buffer[i] = 700 * sin(i * 0.01);
 
   for (int bits_per_sample = 8; bits_per_sample >= 4; bits_per_sample--) {
+    printf("Bits per sample = %d\n", bits_per_sample);
     int8_t compressed[1004];
     int exponent = -15, exponent2;
     lilcom_compress(1000, buffer, 1, compressed, 1,
