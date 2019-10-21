@@ -2,6 +2,26 @@
 
 
 /**
+   Returns the number of bytes we'd need to compress a sequence with this
+   many samples and the provided bits_per_sample.
+   output corresponding to this compressed code
+
+      @param [in] num_samples  Must be >0.  The number of samples
+                      in the input sequence.
+      @param [in] bits_per_sample  The bits per sample to be used
+                      for compression; must be in [4..8].
+
+
+      @return  Returns the number of bytes needed to compress this
+             sequence; will always be >= 5, since the header is
+             4 bytes and there will be at least one sample.
+             It may crash if you pass num_samples < 0.
+ */
+int64_t lilcom_get_num_bytes(int64_t num_samples,
+                             int bits_per_sample);
+
+
+/**
    Lossily compresses 'num_samples' samples of int16 sequence data (e.g. audio
    data) into 'num_samples + 4' bytes.
 
@@ -14,12 +34,12 @@
                       May have any nonzero value, but this might not
                       be checked.
       @param [out] output   The 8-bit compresed data:  a pointer
-                      to an array of size at least `num_samples + 4`,
-                      where the extra 4 bytes form a header.  Note:
-                      the header does not contain the length of the
-                      sequence, that is assumed to be known
-                      externally (e.g. from the file length or
-                      the dimension of the matrix).
+                      to an array of the size returned by
+                      lilcom_get_num_bytes(num_samples, bits_per_sample)
+                      which should previously have been called by the
+                      user.  Note: the header will not contain the length of the
+                      sequence; the length of the array or of the file will be
+                      used to work out the length of the original sequence
       @param [in] output_stride  The offset from one output sample to
                       the next, in elements.  Would normally be 1.
                       May have any nonzero value, but this might not
@@ -81,8 +101,9 @@ int lilcom_compress(int64_t num_samples,
                       the next, in elements.  Would normally be 1.
                       May have any nonzero value, but this might not
                       be checked.
-      @param [out] output   The 8-bit compresed data:  a pointer
-                      to an array with at least `num_samples + 4`
+      @param [out] output   The 8-bit compresed data:
+                      a pointer to an array with
+                      `lilcom_get_num_bytes(num_samples, bits_per_sample)`
                       elements and stride `output_stride`.  Note:
                       the header does not contain the length of the sequence;
                       that is assumed to be known externally (e.g. from the file
@@ -98,11 +119,11 @@ int lilcom_compress(int64_t num_samples,
                       will be slower.
       @param [in] bits_per_sample  The number of bits per sample; must be
                       in [4..8].  We normally recommend 8.
-      @param [in] temp_space  A pointer to a temporary array of int16_t that
-                      can be used inside this function.  It must have size
-                      at least `num_samples`.  If NULL is provided, this
-                      function will allocate one (you can provide one in
-                      order to avoid allocations and deallocations).
+      @param [in] temp_space  A pointer to a temporary array of `num_samples`
+                      int16_t's that can be used inside this function.  If NULL
+                      is provided, this function will allocate one (you can
+                      provide one in order to avoid allocations and
+                      deallocations).
 
       @return         Returns:
                         0  on success
@@ -123,8 +144,8 @@ int lilcom_compress_float(int64_t num_samples,
 
 
 /**
-   Returns the number of samples we'd need to store the decompressed
-   output corresponding to this compressed code
+   Returns the number of samples in the signal that was compressed
+   to this sequence of bytes.
       @param [in] input  Pointer to the start of the compressed data;
                       would correspond to the `output` argument to
                       lilcom_compress() or lilcom_compress_float().
@@ -136,7 +157,7 @@ int lilcom_compress_float(int64_t num_samples,
                       directly stored in the header.)
 
       @return  Returns -1 if, from the information provided,
-             this does not seem to correspond to lilcom-compressed
+             this cannot correspond to lilcom-compressed
              data (e.g. input_length is too small or the header is
              invalid).
                Otherwise returns the number of samples that the
@@ -153,28 +174,38 @@ int lilcom_get_num_samples(const int8_t *input,
    Uncompress 'num_samples' samples of sequence data that was previously
    compressed by lilcom_compress().
 
-      @param [in] input   The 8-bit compresed data:  a pointer
-                      to an array of size at least `num_samples + 4`,
-                      where the extra 4 bytes form a header.  Note:
-                      the header does not contain the length of the
-                      sequence, that is assumed to be known
-                      externally (e.g. from the file length or
-                      the dimension of the matrix).
+      @param [in] num_samples  The number of samples in the original
+                      compressed sequence; this may have been worked
+                      out by calling
+                      `lilcom_get_num_samples(length_of_input_array,
+                          input, input_stride)` on the input sequence,
+                      where length_of_input_array is assumed to be
+                      known from some external source such as the
+                      file size or array dimension.
+      @param [in] input   The 8-bit compressed data:  a pointer
+                      to an array of size, let's say,
+                      length_of_input_array, which is required to equal
+                      lilcom_get_num_bytes(num_samples, bits_per_sample)
+                      with the bits_per_sample obtained from the header
+                      information.  If not it is an error and this
+                      function will return 1.
       @param [in] input_stride  The offset from one input sample
                       to the next; may have any nonzero value.
-      @param [out] output     The decompressed data will be
-                      written to here, on success; on failure, the
-                      contents are undefined.
+      @param [out] output   An array of size num_samples.
+                      The decompressed data will be written to here, on success;
+                      on failure, the contents are undefined.
       @param [in] output_stride  The offset from one output sample to
                       the next, in elements.  Would normally be 1.
                       May have any nonzero value.
       @param [out] conversion_exponent
                       This will be set to the value in the range [-125,120]
                       which was passed into the original call to
-                      lilcom_compress() via its 'conversion_exponent' parameter.
-                      It is for use when we are actually compressing a sequence of
+                      lilcom_compress() via its 'conversion_exponent' parameter
+                      (it is obtained from the header).  It is useful in cases
+                      when we are actually compressing a sequence of
                       floating-point numbers, to set the appropriate scale for
                       integerization.
+
       @return      Returns:
                       0 on success
                       1 on failure
@@ -192,6 +223,7 @@ int lilcom_decompress(int64_t num_samples,
    Uncompress 'num_samples' samples of sequence data that was previously
    compressed by lilcom_compress_float() or lilcom_compress_double().
 
+      @param [in] num_samples  The number of samples of
       @param [in] input   The flo input sequence data: a pointer
                       to an array of size at least `num_samples`
       @param [in] input_stride  The offset from one input sample to

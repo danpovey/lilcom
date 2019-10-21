@@ -24,9 +24,8 @@
 #define LILCOM_VERSION 1
 
 /**
-   Number of bytes in the header we use when compressing 16-bit to 8-bit ints.
-   I don't expect this to ever be changed.
- */
+   Number of bytes in the header
+*/
 #define LILCOM_HEADER_BYTES 4
 
 
@@ -172,15 +171,29 @@
  */
 #define LPC_COMPUTE_INTERVAL 64
 
+/**
+   This is a literal 15 in the code in many places.  It's the maximum possible
+   value of an exponent in our coding scheme (the compressed values are
+   of the form mantissa << exponent).
+
+   The mantissas encode prediction residuals.  The largest-magnitude residual is
+   65535, which is 13767 - (-13768).  smallest allowed value of the
+   bits_per_sample is 4, meaning there are 3 bits for the mantissa so the
+   mantissas must be in the range [-4,3].  Of the numbers representable by
+   (mantissa in [-4,3]) << (integer exponent), the closest approximation of
+   65535 is 65536, and the lowest exponent that can generate that number is 15:
+   (65536 = 2 << 15)
+ */
+#define MAX_POSSIBLE_EXPONENT 15
 
 /**
    This rolling-buffer size determines how far back in time we keep the
    exponents we used to compress the signal.  It determines how far it's
    possible for us to backtrack when we encounter out-of-range values and need
    to increase the exponent.  The most we'd ever need to add to the exponent
-   is +16, and we can only increase the exponent every other frame, so
-   this needs to be at least 32 (or maybe one or two more than that, I forget
-   the exact logic; so we're making it 64 for safety).
+   is +15, and we can only increase the exponent every other frame, so
+   this needs to be at least 30 (or maybe one or two more than that, I forget
+   the exact logic); anyway 32 is enough.
 
    This must be a power of 2 due to a trick used to compute a modulus, which
    dictates 32.
@@ -203,21 +216,22 @@
 #define LPC_ROLLING_BUFFER_SIZE 4
 
 /**
-   SIGNAL_BUFFER_SIZE determines the size of a rolling buffer containing
+   SIGNAL_BUFFER_SIZE determines the size of one of two blocks in a rolling buffer containing
    the history of the compressed version of the signal, to be used while
    compressing.  It must be a multiple of AUTOCORR_BLOCK_SIZE.  It must
    also satisfy:
 
     SIGNAL_BUFFER_SIZE >
-       AUTOCORR_BLOCK_SIZE + EXPONENT_BUFFER_SIZE + MAX_LPC_ORDER
+       AUTOCORR_BLOCK_SIZE + (MAX_POSSIBLE_EXPONENT*2) + MAX_LPC_ORDER
 
-    (currently: 128 > 32 + 8 + 15).
+    (currently: 128 > 16 + (15*2) + 14).
 
-   That is: it needs to store a whole block's worth of data, plus the farthest
-   we might backtrack, plus enough context to process the first sample of the
-   block.  This backtracking is because there may be situations where we need to
-   recompute the autocorrelation coefficients of a block if backtracking
-   causes us to revisit it.
+   That is: it needs to store a whole autocorrelation-stats block's worth of
+   data, plus the farthest we might backtrack (MAX_POSSIBLE_EXPONENT * 2),
+   plus enough context to process the first sample of the block
+   (i.e. MAX_LPC_ORDER).  This backtracking is because there may be situations
+   where we need to recompute the autocorrelation coefficients of a block if
+   backtracking causes us to revisit that autocorrelation block.
 
    It must also be a power of 2, due to tricks we use when computing modulus.
 
@@ -229,6 +243,20 @@
 #define SIGNAL_BUFFER_SIZE 128
 
 
+/**
+   STAGING_BLOCK_SIZE is the size of one of two blocks in a rolling buffer
+   containing the compressed signal.  The buffer contains the signal as bytes,
+   one per time-step, which will later be consolidated if bytes_per_sample < 8.
+
+   We require that STAGING_BLOCK_SIZE be a multiple of 8, which
+   ensures that the number of bits in the staging block must be a multiple of
+   8, hence a whole number of bites.
+
+   It should be at least twice the maximum number of time steps we might backtrack
+   (which is MAX_POSSIBLE_EXPONENT*2 = 30).  We choose to make it 32 bytes,
+   meaning the entire staging area contains 64 bytes.
+ */
+#define STAGING_BLOCK_SIZE 32
 
 
 /** returns the sign of 'val', i.e. +1 if is is positive, -1 if
@@ -633,6 +661,14 @@ struct CompressionState {
   */
   int16_t decompressed_signal[MAX_LPC_ORDER + SIGNAL_BUFFER_SIZE];
 
+  /**
+     staging_buffer is a place where we temporarily put the compressed
+     code before writing to `compressed_code`.  staging_buffer is
+     indexed by t modulo the buffer size, whereas `compressed_code`
+     has bit-packing.
+  */
+  int8_t staging_buffer[STAGING_BLOCK_SIZE*2];
+
 
   /**  The input signal that we are compressing  */
   const int16_t *input_signal;
@@ -677,10 +713,10 @@ struct CompressionState {
              The highest-order bit is 1 if the num_samples of the
              input was odd and 0 if it was even (this is used to
              disambiguate the sequence length).
-    Byte 2:  Low order 7 bits contain the mantissa of the -1'th sample, in
-             [-64..63] regardless of the value of bits_per_sample.
-             The highest-order bit is never set; and this is used to
-             work out the time axis of compressed data.
+    Byte 2:  Low order 7 bits are the corresponding bits of the mantissa
+             of the -1'th sample, in [-64..63] regardless of the value of
+             bits_per_sample.  The highest-order bit is never set; this is
+             used to work out the time axis of compressed data.
     Byte 3:  The negative of the conversion exponent c, as int8_t.  (We store
              as the negative because the allowed range of c is [-127..128], and
              an int8_t can store [-128..127].  The conversion exponent is only
@@ -692,7 +728,6 @@ struct CompressionState {
              originally int16; this will mean that when converting to float,
              we'll remain in the range [-1, 1]
  */
-
 
 
 /** Set the exponent for frame -1 in the header.  This also sets the
@@ -718,8 +753,10 @@ static inline int lilcom_header_get_exponent_m1(const int8_t *header,
 static inline int lilcom_header_plausible(const int8_t *header,
                                           int stride) {
   /** Currently only one version number is supported. */
-    return (((int)header[0 * stride]) & 0xF0) == ((LILCOM_VERSION << 4) + 128);
-  }
+  int byte0 = header[0 * stride], byte2 = header[2 * stride];
+  return (byte0 & 0xF0) == ((LILCOM_VERSION << 4) + 128) &&
+      (byte2 & 128) == 0;
+}
 
 /** Set the conversion_exponent in the header.
         @param [in] header  Pointer to start of the header
@@ -744,17 +781,23 @@ static inline int lilcom_header_get_conversion_exponent(
 }
 
 
-/** Set the LPC order and the bits-per-sample in the header.
-    This goes in byte 1.  Note: LPC order is in [0..14]
-    and bits_per_sample is in [4..8] but we subtract 4
-    before storing it.
+/** Set the LPC order, the bits-per-sample and the bit saying
+    whether the num-samples was odd, in the header.
+         @param [out] header  Pointer to start of header
+         @param [in] stride  Stride of header
+         @param [in] lpc_order  lpc order in [0..14].
+         @param [in] bits_per_sample  bits_per_sample in [4..8]
+         @param [in] num_samples_odd  1 if num-samples was odd, else 0.
+   All this goes in byte 1 of the header, i.e. the 2nd byte.
 */
 static inline void lilcom_header_set_user_configs(
     int8_t *header, int stride, int lpc_order,
-    int bits_per_sample) {
+    int bits_per_sample, int num_samples_odd) {
   assert(lpc_order >= 0 && lpc_order <= MAX_LPC_ORDER &&
-         bits_per_sample >= 0 && bits_per_sample <= 8);
-  header[1 * stride] = (int8_t)lpc_order + ((bits_per_sample - 4) << 4);
+         bits_per_sample >= 4 && bits_per_sample <= 8 &&
+         num_samples_odd <= 1);
+  header[1 * stride] = (int8_t)lpc_order + ((bits_per_sample - 4) << 4)
+      + (num_samples_odd << 7);
 }
 
 /** Return the LPC order from the header.  Does no range checking!  */
@@ -762,16 +805,34 @@ static inline int lilcom_header_get_lpc_order(const int8_t *header, int stride) 
   return (int)(header[1 * stride] & 15);
 }
 
-/** Set the -1'th sample's mantissa in the header.  This goes in byte 2. */
+/** Returns bits_per_sample from the header; result will be in [4..8].  */
+static inline int lilcom_header_get_bits_per_sample(const int8_t *header, int stride) {
+  return ((int)(header[1 * stride] & 112)) >> 4;
+}
+
+/** Returns the parity of the original num-samples from the header,
+    i.e. 0 if it was even, 1 if it was odd. */
+static inline int lilcom_header_get_num_samples_parity(const int8_t *header, int stride) {
+  return ((int)(header[1 * stride] & 128)) != 0;
+}
+
+
+/** Set the -1'th sample's mantissa in the header.  This goes in byte 2.
+    We zero out the highest-order bit, though; this is used in disambiguating
+    the time axis when we decompress.
+ */
 static inline void lilcom_header_set_mantissa_m1(int8_t *header,
                                           int stride, int mantissa) {
   assert(mantissa >= -64 && mantissa <= 63);
-  header[2 * stride] = (int8_t) mantissa;
+  header[2 * stride] = (int8_t) (mantissa & 127);
 }
 /** Return the -1'th sample's mantissa from the header, it's in byte 2. */
 static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
                                                 int stride) {
-  return (int)header[2 * stride];
+  /** Shifting left and dividing by 2 as an int8_t ensures the highest bit has
+      the same value as the 6th bit, so the sign will be correct.  (We zeroed
+      out the 7th bit when writing to the header.)  */
+  return (int)(((int8_t)(header[2 * stride] << 1)) / 2);
 }
 
 
@@ -843,6 +904,85 @@ static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
                          LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_t).
  */
 #define LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent_t) (exponent_t - ((((int)t)+exponent_t)&1))
+
+
+
+
+
+/**
+   Commits one block of data from the staging area, beginning at
+   `begin_t` and ending at `end_t - 1`.  Note: any partial bytes
+   will be written out at the end.  This won't be a problem
+   because we ensure that begin_t is always a multiple of
+   STAGING_BLOCK_SIZE which means we always start at the beginning
+   of a byte; the only time we won't end at the end of a byte is
+   at the end of the sequence.
+ */
+static void commit_staging_block(int64_t begin_t,
+                                 int64_t end_t,
+                                 struct CompressionState *state) {
+  int i = 0, num_bits = 0,
+      bits_per_sample = state->bits_per_sample,
+      compressed_code_stride = state->compressed_code_stride;
+
+  if (bits_per_sample == 8) {
+    /** Treat this case specially as it can be more efficient.  */
+    int8_t *compressed_code = state->compressed_code;
+    int64_t t = begin_t,
+        s = begin_t % (STAGING_BLOCK_SIZE*2);
+    for (; t < end_t; s++, t++) {
+      state->compressed_code[t*compressed_code_stride] =
+          state->staging_buffer[s];
+    }
+  } else {
+    /** The division below will always be exact because STAGING_BLOCK_SIZE is a
+        multiple of 8. */
+    int64_t s = begin_t % (STAGING_BLOCK_SIZE*2);
+    const int8_t *src = state->staging_buffer + s;
+    int8_t *compressed_code = state->compressed_code +
+        compressed_code_stride * ((begin_t * bits_per_sample) / 8);
+    int code = 0, mask = (1 << bits_per_sample) - 1, bit_shift = 0;
+    for (int64_t t = begin_t; t < end_t; t++) {
+      code |=  (*(src++) & mask) << bit_shift;
+      bit_shift += bits_per_sample;
+      if (bit_shift >= 8) {  /* Shift off the lowest-order byte */
+        *compressed_code = (int8_t) code;
+        compressed_code += compressed_code_stride;
+        code >>= 8;
+      }
+    }
+    if (bit_shift != 0) {
+      /* Get rid of the last partial byte; this will only be
+         reached at the end of the file. */
+      *(compressed_code++) = (int8_t) code;
+    }
+  }
+}
+
+/**
+   This function writes the compressed code `code` to the buffer in `state`
+   (state->compressed_buffer) and eventually to its permanent home in
+   state->compressed_code.  The reason for introducing the staging area is the
+   complexities introduced when bits_per_sample is != 8.
+ */
+static inline void write_compressed_code(int64_t t,
+                                         int8_t code,
+                                         struct CompressionState *state) {
+  /** Read the following as t % STAGING_BLOCK_SIZE*2 == 0,
+      i.e. t modulo the size of the staging buffer. */
+  state->staging_buffer[t & (STAGING_BLOCK_SIZE*2 - 1)] = code;
+  /** Read the following as `if (t % STAGING_BLOCK_SIZE == 0)`.  The reason for
+      adding `&& t >= 2*STAGING_BLOCK_SIZE` is that we write out a block at a
+      time, but with a one-block delay.  This prevents any inconvenience caused
+      by backtracking (i.e. we know the previous block is not going to change
+      any more).
+  */
+  if ((t & (STAGING_BLOCK_SIZE - 1)) == 0 && t >= 2*STAGING_BLOCK_SIZE) {
+    commit_staging_block(t - 2*STAGING_BLOCK_SIZE,
+                         t - STAGING_BLOCK_SIZE,
+                         state);
+  }
+}
 
 
 /**
@@ -922,11 +1062,6 @@ static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
 
      (-(2M+2) << e) <= residual * 2 <= (2M-1) << e)
 
-   NOTE ON THE RANGE OF THE EXPONENT, explaining why it could be as large as 15.
-   The largest-magnitude residual is 65535, which is 13767 - (-13768), and the
-   smallest allowed value of M is 4.  Of the numbers representable by (mantissa
-   in [-4,3]) << (integer exponent), the closest approximation of 65535 is
-   65536, and the lowest exponent that can generate that number is 15 (65536 = 2 << 15)
 */
 static inline int least_exponent(int32_t residual,
                                  int16_t predicted,
@@ -1530,8 +1665,7 @@ static inline int lilcom_compress_for_time_internal(
     /** Success; we can represent this.  This is (hopefully) the normal code
         path. */
     assert(mantissa >= -mantissa_limit && mantissa < mantissa_limit);
-    state->compressed_code[t*state->compressed_code_stride] =
-        (int8_t)((mantissa << 1) + exponent_delta);
+    write_compressed_code(t, (int8_t)((mantissa << 1) + exponent_delta), state);
     state->exponents[t & (EXPONENT_BUFFER_SIZE - 1)] = exponent;
     return exponent;
   } else {
@@ -1565,7 +1699,6 @@ static inline int lilcom_compress_for_time_internal(
 void lilcom_compress_for_time_zero(
     int min_exponent,
     struct CompressionState *state) {
-  int c_stride = state->compressed_code_stride;
   int header_stride = state->compressed_code_stride;
   int8_t *header = state->compressed_code -
       (LILCOM_HEADER_BYTES * header_stride);
@@ -1629,8 +1762,7 @@ void lilcom_compress_for_time_zero(
   assert(exponent_bit >= 0 && exponent_bit <= 1 &&
          mantissa_0 >= -state->mantissa_limit && mantissa_0 < state->mantissa_limit);
 
-  state->compressed_code[0 * c_stride] =
-      (int8_t)((mantissa_0 << 1) + exponent_bit);
+  write_compressed_code(0, (int8_t)((mantissa_0 << 1) + exponent_bit), state);
 
   for (int i = 0; i < MAX_LPC_ORDER; i++) {
     /** All samples prior to t=0 are treated as having zero value for purposes of
@@ -1782,13 +1914,22 @@ static inline void lilcom_init_compression(
   lilcom_header_set_conversion_exponent(output, output_stride,
                                         conversion_exponent);
   lilcom_header_set_user_configs(output, output_stride,
-                                 lpc_order, bits_per_sample);
+                                 lpc_order, bits_per_sample,
+                                 num_samples % 2);
 
   /** The remaining parts of the header will be initialized in
       lilcom_compress_for_time_zero`. */
   int min_exponent = 0;
   lilcom_compress_for_time_zero(min_exponent, state);
 }
+
+/*  See documentation in lilcom.h.  */
+int64_t lilcom_get_num_bytes(int64_t num_samples,
+                             int bits_per_sample) {
+  assert(num_samples > 0 && bits_per_sample >= 4 && bits_per_sample <= 8);
+  return 4 + (bits_per_sample * num_samples  +  7) / 8;
+}
+
 
 
 /*  See documentation in lilcom.h  */
@@ -1811,6 +1952,14 @@ int lilcom_compress(int64_t num_samples,
 
   for (int64_t t = 1; t < num_samples; t++)
     lilcom_compress_for_time(t, &state);
+
+  if ((num_samples & (STAGING_BLOCK_SIZE-1)) != 0) {
+    /** If num_samples is not a multiple of STAGING_BLOCK_SIZE,
+        then write out the last partial block from the
+        staging area.  */
+    int64_t start_t = num_samples & ~(STAGING_BLOCK_SIZE-1);
+    commit_staging_block(start_t, num_samples, &state);
+  }
 
   assert(fprintf(stderr, "Backtracked %f%% of the time\n",
                  ((state.num_backtracks * 100.0) / num_samples)) || 1);
@@ -1930,7 +2079,7 @@ static inline int lilcom_decompress_one_sample(
              input).
  */
 static inline int lilcom_decompress_time_zero(
-    const int8_t *header, int input_stride,
+    const int8_t *header, int input_stride, int bits_per_sample,
     int16_t *output, int *exponent) {
   int exponent_m1 = lilcom_header_get_exponent_m1(header, input_stride),
       mantissa_m1 = lilcom_header_get_mantissa_m1(header, input_stride);
@@ -1940,9 +2089,27 @@ static inline int lilcom_decompress_time_zero(
   assert(mantissa_m1 >= -64 && mantissa_m1 < 64 &&
          exponent_m1 >= 0 && exponent_m1 <= 15);
   int32_t sample_m1 = mantissa_m1 << exponent_m1;
+  /** Note: the bits we want are the low-order bits_per_sample bits of code_0. */
   int8_t code_0 = header[input_stride * LILCOM_HEADER_BYTES];
-  int exponent_bit = (code_0 & 1),
-      mantissa = (code_0 & ~(int8_t)1) / 2;
+  /**  The lowest-order bit is the exponent, that's easy.
+
+       The next `bits_per_sample-1` bits are the mantissa, and we need to treat
+       that as a 2's complement signed value with `bits_per_sample-1` bits.
+
+       The first term in the outer-level 'or' is all the `bits_per_sample-1` of
+       the mantissa, which will be correct for positive mantissa but for
+       negative mantissa we need all the higher-order-than-bits_per_sample bits
+       to be set as well.  That's what the second term in the or is for.  The
+       big number is 2^31 - 1, which means that we duplicate that bit (think of
+       it as the sign bit), at its current position and at all positions to its
+       left.
+  */
+  int32_t
+      exponent_bit = (code_0 & 1),
+      mantissa =
+      ((code_0 > 1) & ((1<<(bits_per_sample - 1)) - 1)) |
+      ((code_0 & (1<<(bits_per_sample-1)))*2147483647);
+
   *exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(0, exponent_m1) + exponent_bit;
   int32_t sample_0 = sample_m1 + (mantissa << *exponent);
   if (((sample_0 + 32768) & ~(int32_t)65535) != 0) {
@@ -1955,6 +2122,28 @@ static inline int lilcom_decompress_time_zero(
 
 
 
+int lilcom_get_num_samples(const int8_t *input,
+                           int input_stride,
+                           int64_t input_length) {
+  if (input_length <= 5 || input_stride == 0 ||
+      !lilcom_header_plausible(input, input_stride))
+    return -1;  /** Error */
+  int bits_per_sample = lilcom_header_get_bits_per_sample(input, input_stride),
+      parity = lilcom_header_get_num_samples_parity(input, input_stride);
+  /* num_samples is set below to the maximum number of samples that could be
+     encoded by `input_length` bytes.  There may be some ambiguity because we
+     had to round up to a multiple of 8 bits when compressing, (i.e. the
+     original number of samples might have been one less), so we use 'parity' to
+     disambiguate.
+  */
+  int64_t num_samples = ((input_length - 4) * 8) / bits_per_sample;
+
+  if (num_samples % 2 != parity)
+    num_samples--;
+  return num_samples;
+}
+
+
 int lilcom_decompress(int64_t num_samples,
                       const int8_t *input, int input_stride,
                       int16_t *output, int output_stride,
@@ -1963,14 +2152,15 @@ int lilcom_decompress(int64_t num_samples,
       !lilcom_header_plausible(input, input_stride))
     return 1;  /** Error */
 
-  int lpc_order = lilcom_header_get_lpc_order(input, input_stride);
+  int lpc_order = lilcom_header_get_lpc_order(input, input_stride),
+      bits_per_sample = lilcom_header_get_bits_per_sample(input, input_stride);
+
   *conversion_exponent = lilcom_header_get_conversion_exponent(
       input, input_stride);
 
   int exponent;
-  if (lilcom_decompress_time_zero(input, input_stride,
-                                  &(output[0]),
-                                  &exponent))
+  if (lilcom_decompress_time_zero(input, input_stride, bits_per_sample,
+                                  &(output[0]), &exponent))
     return 1;  /** Error */
 
   /** This is called input 4 because (if stride == 1)
@@ -2390,15 +2580,6 @@ int lilcom_decompress_float(int64_t num_samples,
   return 0;  /* Success */
 }
 
-int lilcom_get_num_samples(const int8_t *input,
-                           int input_stride,
-                           int64_t input_length) {
-  /* TODO: implement this properly with support for different
-     bits-per-sample than 8. */
-  return input_length - 4;
-}
-
-
 
 #ifdef LILCOM_TEST
 
@@ -2409,7 +2590,9 @@ int lilcom_get_num_samples(const int8_t *input,
     various relationships between the #defined constants are satisfied.
 */
 static inline int lilcom_check_constants() {
-  assert(EXPONENT_BUFFER_SIZE > 24);
+  assert(STAGING_BLOCK_SIZE > 2*MAX_POSSIBLE_EXPONENT);
+  assert((STAGING_BLOCK_SIZE & (STAGING_BLOCK_SIZE - 1)) == 0);
+  assert(EXPONENT_BUFFER_SIZE > 2*MAX_POSSIBLE_EXPONENT);
   assert((LPC_ROLLING_BUFFER_SIZE - 1) * AUTOCORR_BLOCK_SIZE > 24);
   assert(MAX_LPC_ORDER >> LPC_ORDER_BITS == 0);
   assert(MAX_LPC_ORDER % 2 == 0);
@@ -2443,6 +2626,7 @@ static inline int lilcom_check_constants() {
   assert(SIGNAL_BUFFER_SIZE % AUTOCORR_BLOCK_SIZE == 0);
   assert((SIGNAL_BUFFER_SIZE & (SIGNAL_BUFFER_SIZE - 1)) == 0);  /* Power of 2. */
   assert(SIGNAL_BUFFER_SIZE > AUTOCORR_BLOCK_SIZE + EXPONENT_BUFFER_SIZE + MAX_LPC_ORDER);
+
   return 1;
 }
 
@@ -2566,6 +2750,7 @@ void lilcom_test_compress_sine_overflow() {
   fprintf(stderr, "Sine-overflow snr (dB) = %f\n",
           lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
 }
+
 
 /**
    Note on SNR's.  A absolute (and not-tight) limit on how negative the SNR

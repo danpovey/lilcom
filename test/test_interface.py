@@ -7,22 +7,23 @@ import lilcom
 
 
 def test_float():
-    for axis in [-1, 1, 0, -2]:
-        for use_out in [False, True]:
-            a = np.random.randn(100, 200).astype(np.float32)
-            out_shape = list(a.shape)
-            out_shape[axis] += 4
-            out_shape = tuple(out_shape)
+    for bits_per_sample in [4,6,8]:
+        for axis in [-1, 1, 0, -2]:
+            for use_out in [False, True]:
+                a = np.random.randn(100, 200).astype(np.float32)
+                out_shape = list(a.shape)
+                out_shape[axis] += 4
+                out_shape = tuple(out_shape)
 
-            b = lilcom.compress(a, axis=axis,
-                                out=(np.empty(out_shape, dtype=np.int8) if use_out else None))
-            c = lilcom.decompress(b, dtype=(None if use_out else np.float32),
-                                  axis=axis,
-                                  out=(np.empty(a.shape, dtype=np.float32) if use_out else None))
+                b = lilcom.compress(a, axis=axis, bits_per_sample=bits_per_sample,
+                                    out=(np.empty(out_shape, dtype=np.int8) if use_out else None))
+                c = lilcom.decompress(b, dtype=(None if use_out else np.float32),
+                                      axis=axis,
+                                      out=(np.empty(a.shape, dtype=np.float32) if use_out else None))
 
-        rel_error = (np.fabs(a - c)).sum() / (np.fabs(a)).sum()
-        print("Relative error in float compression (axis={}) is {}".format(
-                axis, rel_error))
+            rel_error = (np.fabs(a - c)).sum() / (np.fabs(a)).sum()
+            print("Relative error in float compression (axis={}, bits-per-sample={}) is {}".format(
+                    axis, bits_per_sample, rel_error))
 
 def test_int16():
     a = ((np.random.rand(100, 200) * 65535) - 32768).astype(np.int16)
