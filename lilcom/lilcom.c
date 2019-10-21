@@ -928,8 +928,7 @@ static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
 static void commit_staging_block(int64_t begin_t,
                                  int64_t end_t,
                                  struct CompressionState *state) {
-  int i = 0, num_bits = 0,
-      bits_per_sample = state->bits_per_sample,
+  int bits_per_sample = state->bits_per_sample,
       compressed_code_stride = state->compressed_code_stride;
 
   if (bits_per_sample == 8) {
@@ -938,7 +937,7 @@ static void commit_staging_block(int64_t begin_t,
     int64_t t = begin_t,
         s = begin_t % (STAGING_BLOCK_SIZE*NUM_STAGING_BLOCKS);
     for (; t < end_t; s++, t++) {
-      state->compressed_code[t*compressed_code_stride] =
+      compressed_code[t*compressed_code_stride] =
           state->staging_buffer[s];
     }
   } else {
