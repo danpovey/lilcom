@@ -2803,6 +2803,10 @@ void lilcom_test_compress_sine() {
     int exponent = -15, exponent2;
     lilcom_compress(1000, buffer, 1, compressed, 1,
                     lpc_order, bits_per_sample, exponent);
+    int sum = 0;
+    for (int32_t i = 0; i < 1004; i++)
+      sum += compressed[i];
+    printf("hash = %d\n", sum);
     int16_t decompressed[1000];
     if (lilcom_decompress(1000, compressed, 1, decompressed, 1, &exponent2) != 0) {
       fprintf(stderr, "Decompression failed\n");
