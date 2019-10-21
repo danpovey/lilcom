@@ -10,4 +10,4 @@ lilcom.o: lilcom.c
 # -Ofast, because that will disable the checks for NaN's and inf's.
 
 test: lilcom.c
-	gcc -g -o test -DLILCOM_TEST=1 lilcom.c -o lilcom -lm
+	gcc -Wall -ftrapv -g -o test -DLILCOM_TEST=1 lilcom.c -o lilcom -lm

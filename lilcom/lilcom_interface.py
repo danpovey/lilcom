@@ -2,7 +2,61 @@ import numpy as np
 from . import lilcom_c_extension
 
 
-def compress(input, axis=-1, lpc_order=4, bits_per_sample=8,
+
+def compressed_num_bytes(num_samples, bits_per_sample=8):
+   """
+     This returns the number of bytes in a sequence with `num_samples`
+     samples in it and the provided bits_per_sample.
+
+   Args:
+      num_samples:   The length of the sequence; must be > 0.
+      bits_per_sample:  Must be in [4..8], the user-chosen number of
+                     bits to encode each sample in.
+   Return:
+      Returns the number of bytes in the sequence; raises an
+      exception if an input was out of range.
+   """
+   num_bytes = lilcom_c_extension.get_num_bytes(num_samples,
+                                                bits_per_sample);
+   if not num_bytes > 0:
+      raise ValueError("Input was out of range: num_samples={} or "
+                       "bits_per_sample={}".format(num_samples,
+                                                   bits_per_sample))
+   return num_bytes
+
+
+def get_compressed_shape(shape, axis, bits_per_sample=8):
+   """
+   This returns what the shape of the provided array will be after
+   compression.  (Note: the compressed array will be an array of
+   bytes).
+
+   Args:
+     shape:  The shape an array to be compressed, as a tuple.
+     axis:   The axis of the array that we're treating as the time
+             axis; may be any index which would be a valid
+             tuple index into `shape`.
+     bits_per_sample:  The number of bits per sample to
+             be used for compression: must be in the range
+             [4..8].
+   Return:
+     Returns the modified shape, which will be the same
+     as `shape` except in axis `axis`.
+   Raises:
+     Raises ValueError if one of the inputs was out of range.
+     Note: shape[axis] must be defined and >0.
+   """
+   num_bytes = lilcom_c_extension.get_num_bytes(shape[axis], bits_per_sample)
+   if num_bytes > 0:
+      shape = list(shape)
+      shape[axis] = num_bytes
+      return tuple(shape)
+   else:
+      raise ValueError("Invalid input: shape={}, axis={}, bits-per-sample={}".format(
+            shape, axis, bits_per_sample))
+
+
+def compress(input, axis, lpc_order=4, bits_per_sample=8,
              default_exponent=0, out=None):
    """ This function compresses sequence data (for example, audio data) to 1 byte per
         sample.
@@ -31,10 +85,11 @@ def compress(input, axis=-1, lpc_order=4, bits_per_sample=8,
                           double in such a case.  The value default_exponent=0 would
                           produce output iwhere the range of int64_t corresponds
                           to the floating-point range [-1.0,1.0].
-       out                The user may pass in numpy.ndarray with dtype=np.int8, of the same
-                          dimension as the output of this function would have been.
-                          In that case, the output will be placed here.  If an array
-                          of the wrong dimension is passed, ValueError will be raised.
+       out                The user may pass in numpy.ndarray with dtype=np.int8,
+                          with a shape identical to
+                          get_compressed_shape(input.shape, axis, bits_per_sample).
+                          If this is not None and does not satisfy these properties,
+                          ValueError will be raised.
 
        Returns:
            On success, returns a numpy.ndarray with dtype=np.int8, and with

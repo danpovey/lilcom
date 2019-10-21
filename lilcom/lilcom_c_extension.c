@@ -38,12 +38,12 @@
              in lilcom_compress and 2 if there was a dimension mismatch detected
              by this function.
 */
-int compress_int16_internal(int num_axes, int axis,
-                            const int16_t *input_data,
-                            int8_t *output_data,
-                            PyObject *input, PyObject *output,
-                            int lpc_order, int bits_per_sample,
-                            int conversion_exponent) {
+static int compress_int16_internal(int num_axes, int axis,
+                                   const int16_t *input_data,
+                                   int8_t *output_data,
+                                   PyObject *input, PyObject *output,
+                                   int lpc_order, int bits_per_sample,
+                                   int conversion_exponent) {
   assert(axis >= 0 && axis < num_axes);
   int dim = PyArray_DIM(input, axis),
       input_stride = PyArray_STRIDE(input, axis) / sizeof(int16_t),
@@ -186,10 +186,10 @@ error_return:
                      probably indicate that this matrix was originally
                      compressed from a float matrix.)
 */
-int decompress_int16_internal(int num_axes, int axis,
-                              const int8_t *input_data,
-                              int16_t *output_data,
-                              PyObject *input, PyObject *output) {
+static int decompress_int16_internal(int num_axes, int axis,
+                                     const int8_t *input_data,
+                                     int16_t *output_data,
+                                     PyObject *input, PyObject *output) {
   assert(axis >= 0 && axis < num_axes);
 
   int conversion_exponent = -1;
@@ -270,8 +270,7 @@ int decompress_int16_internal(int num_axes, int axis,
                      was noticed in this function.
      """
  */
-static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keywds)
-{
+static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keywds) {
   PyObject *input; /* The input signal, passed as a numpy array. */
   PyObject *output; /* The output signal, passed as a numpy array. */
 
@@ -336,12 +335,12 @@ error_return:
              any of the sequences.  This should only happen if infinities and
              NaN's are encountered.
 */
-int compress_float_internal(int num_axes, int axis,
-                            const float *input_data,
-                            int8_t *output_data,
-                            PyObject *input, PyObject *output,
-                            int lpc_order, int bits_per_sample,
-                            int16_t *temp_space) {
+static int compress_float_internal(int num_axes, int axis,
+                                   const float *input_data,
+                                   int8_t *output_data,
+                                   PyObject *input, PyObject *output,
+                                   int lpc_order, int bits_per_sample,
+                                   int16_t *temp_space) {
   assert(axis >= 0 && axis < num_axes);
   int dim = PyArray_DIM(input, axis),
       input_stride = PyArray_STRIDE(input, axis) / sizeof(float),
@@ -454,6 +453,37 @@ error_return:
 }
 
 
+/**
+   The following will document this function as if it were a native
+   Python function.
+
+    def get_num_bytes(num_samples, bits_per_sample):
+      """
+
+      Args:
+       num_samples: an integer > 0.
+       bits_per_sample: an integer in [4..8].
+      Returns:
+       Returns the number of bytes that lilcom would use to compress
+       a sequence with this num_samples and this bits_per_sample,
+       or -1 if an error was encountered.
+      """
+ */
+static PyObject *get_num_bytes(PyObject *self, PyObject * args, PyObject * keywds) {
+  int num_samples, bits_per_sample;
+
+  static char *kwlist[] = {"num_samples", "bits_per_sample", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "ii", kwlist,
+                                   &num_samples, &bits_per_sample))
+    goto error_return;
+
+  int64_t num_bytes = lilcom_get_num_bytes(num_samples, bits_per_sample);
+  return Py_BuildValue("i", num_bytes);
+error_return:
+  return Py_BuildValue("i", -1);
+
+}
+
 
 /**
    Internal implementation of decompress_float().
@@ -503,7 +533,7 @@ int decompress_float_internal(int num_axes, int axis,
     if (PyArray_DIM(output, axis) != dim - 4)
       return 2;
     int ret = lilcom_decompress_float(dim - 4, input_data, input_stride,
-                                output_data, output_stride);
+                                      output_data, output_stride);
     return ret;
   }
 }
@@ -569,6 +599,7 @@ static PyMethodDef LilcomMethods[] = {
   { "compress_float", (PyCFunction)compress_float, METH_VARARGS | METH_KEYWORDS, "Lossily compresses samples of float sequence data (e.g. audio data) int8_t."},
   { "decompress_int16", (PyCFunction)decompress_int16, METH_VARARGS | METH_KEYWORDS, "Decompresses a compressed signal to int16"  },
   { "decompress_float", (PyCFunction)decompress_float, METH_VARARGS | METH_KEYWORDS, "Decompresses a compressed signal to float16"  },
+  { "get_num_bytes", (PyCFunction)get_num_bytes, METH_VARARGS | METH_KEYWORDS, "Returns the number of bytes needed to compress a sequence" },
   { NULL, NULL, 0, NULL }
 };
 
