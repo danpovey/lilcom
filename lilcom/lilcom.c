@@ -1,7 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>  /* for malloc */
 #include <math.h>  /* for frexp and frexpf and pow, used in floating point compression. */
-#include <stdio.h>  /* TEMP-- for debugging. */
+#include <stdio.h>  /* print statements are only made if NDEBUG is not defined. */
 #include <float.h>  /* for FLT_MAX */
 
 #include "lilcom.h"
@@ -1383,8 +1383,9 @@ void lilcom_compute_lpc(int lpc_order,
      assert that E <= autocorr[0] because even if the data is totally
      uncorrelated, we should never be increasing the predicted error vs. having
      no LPC at all.  But I account for the possibility that in pathological
-     cases, rounding errors might make this untrue.  */
-  assert(E > 0 && E <= (autocorr[0] + (autocorr[0] >> 10)));
+     cases, rounding errors might make this untrue.
+  */
+  assert(E > 0 && E <= (autocorr[0] + (((uint64_t)autocorr[0]) >> 10)));
 
 
   /**
@@ -1400,7 +1401,7 @@ void lilcom_compute_lpc(int lpc_order,
 
 panic:
 #ifndef NDEBUG
-  fprintf(stderr, "Lilcom: warning: panic case reached.\n");
+  fprintf(stderr, "Lilcom: warning: panic code reached.\n");
 #endif
   lpc->lpc_coeffs[0] = (1 << LPC_APPLY_LEFT_SHIFT);
   for (int i = 0; i < lpc_order; i++)
@@ -1426,7 +1427,7 @@ static inline int16_t lilcom_compute_predicted_value(
     struct CompressionState *state,
     int64_t t) {
   uint32_t lpc_index =
-      ((uint32_t)(t >> LOG_AUTOCORR_BLOCK_SIZE)) % LPC_ROLLING_BUFFER_SIZE;
+      ((uint32_t)(((uint64_t)t) >> LOG_AUTOCORR_BLOCK_SIZE)) % LPC_ROLLING_BUFFER_SIZE;
   struct LpcComputation *lpc = &(state->lpc_computations[lpc_index]);
 
   int lpc_order = state->lpc_order;
@@ -1600,7 +1601,7 @@ void lilcom_update_autocorrelation_and_lpc(
   /** The expressions below are defined because the args to '%' are unsigned;
       modulus for negative args is implementation-defined according to the C
       standard.  */
-  uint32_t lpc_index = ((uint32_t)(t >> LOG_AUTOCORR_BLOCK_SIZE)) % LPC_ROLLING_BUFFER_SIZE,
+  uint32_t lpc_index = ((uint32_t)(((uint64_t)t) >> LOG_AUTOCORR_BLOCK_SIZE)) % LPC_ROLLING_BUFFER_SIZE,
       prev_lpc_index = (lpc_index + LPC_ROLLING_BUFFER_SIZE - 1) % LPC_ROLLING_BUFFER_SIZE;
 
   struct LpcComputation *this_lpc = &(state->lpc_computations[lpc_index]);
@@ -1885,7 +1886,6 @@ void lilcom_compress_for_time_backtracking(
          happen, as if previous samples are coded differently the LPC prediction
          would change.].  We can deal with this case via recursion.  */
       exponent = -exponent;
-      /* fprintf(stderr, "Hit unusual code path\n"); */
       assert(exponent > min_codable_exponent + 1 && exponent > min_exponent);
       lilcom_compress_for_time_backtracking(t, exponent, state);
     }
@@ -2027,9 +2027,10 @@ int lilcom_compress(
     commit_staging_block(start_t, end_t, &state);
     start_t = end_t;
   }
-
-  assert(fprintf(stderr, "Backtracked %f%% of the time\n",
-                 ((state.num_backtracks * 100.0) / num_samples)) || 1);
+#ifndef NDEBUG
+  fprintf(stderr, "Backtracked %f%% of the time\n",
+          ((state.num_backtracks * 100.0) / num_samples));
+#endif
 
   return 0;
 }
@@ -2059,7 +2060,7 @@ static inline int extract_mantissa(int code, int bits_per_sample) {
      big number is 2^31 - 1, which means that we duplicate that bit (think of
      it as the sign bit), at its current position and at all positions to its
      left.  */
-  return ((code >> 1) & ((1<<(bits_per_sample - 1)) - 1)) |
+  return ((((unsigned int)code) >> 1) & ((1<<(bits_per_sample - 1)) - 1)) |
       ((((unsigned int)code) & (1<<(bits_per_sample-1)))*2147483647);
 }
 
@@ -2163,7 +2164,10 @@ static inline int lilcom_decompress_one_sample(
   if (((new_sample + 32768) & ~(int32_t)65535) != 0) {
     /** If `new_sample` is outside the range [-32768 .. 32767], it
         is an error; we should not be generating such samples. */
-    printf("new_sample = %d\n", new_sample); /*TEMP*/
+#ifndef NDEBUG
+    fprintf(stderr, "lilcom: decompression failure (corruption?): new_sample = %d\n",
+            (int)new_sample);
+#endif
     return 1;
   }
   output_sample[0] = new_sample;
@@ -2264,7 +2268,7 @@ int64_t lilcom_get_num_samples(const int8_t *input,
                   higher order than that are undefined and may have any value)
  */
 static inline int lilcom_get_next_compressed_code(
-    int bits_per_sample, int *leftover_bits, int *num_bits,
+    int bits_per_sample, unsigned int *leftover_bits, int *num_bits,
     const int8_t **cur_input, int input_stride) {
   if (*num_bits < bits_per_sample) {
     /** We need more bits.  Put them above (i.e. higher-order-than) any bits we
@@ -2308,14 +2312,18 @@ int lilcom_decompress(const int8_t *input, int64_t num_bytes, int input_stride,
       from the stream. */
   const int8_t *cur_input = input + (input_stride * LILCOM_HEADER_BYTES);
 
-  int num_bits = 0, leftover_bits = 0;
+  int num_bits = 0;
+  unsigned int leftover_bits = 0;
 
   int code_0 = lilcom_get_next_compressed_code(
       bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
   int exponent;
   if (lilcom_decompress_time_zero(input, code_0, input_stride, bits_per_sample,
                                   &(output[0]), &exponent)) {
-    printf("Bad time zero\n"); /**TEMP*/
+#ifndef NDEBUG
+    fprintf(stderr, "lilcom: decompressing: error uncmopressing time zero "
+            "(Maybe not lilcom-compressed data?)\n");
+#endif
     return 1;  /** Error */
   }
   struct LpcComputation lpc;
@@ -2345,7 +2353,10 @@ int lilcom_decompress(const int8_t *input, int64_t num_bytes, int input_stride,
                                      lpc.lpc_coeffs, code,
                                      &(output_buffer[MAX_LPC_ORDER + t]),
                                      &exponent)) {
-      printf("Bad t=%d\n", (int)t); /**TEMP*/
+#ifndef NDEBUG
+      fprintf(stderr, "lilcom: decompression failure for t=%d\n",
+              (int)t);
+#endif
       return 1;  /** Error */
     }
     output[t * output_stride] = output_buffer[MAX_LPC_ORDER + t];
@@ -2395,7 +2406,10 @@ int lilcom_decompress(const int8_t *input, int64_t num_bytes, int input_stride,
                 t, bits_per_sample, lpc_order,
                 lpc.lpc_coeffs, code,
                 output + t, &exponent)) {
-          printf("Bad t=%d\n", (int)t); /**TEMP*/
+#ifndef NDEBUG
+          fprintf(stderr, "lilcom: decompression failure for t=%d\n",
+                  (int)t);
+#endif
           return 1;  /** Error */
         }
       }
@@ -2446,7 +2460,10 @@ int lilcom_decompress(const int8_t *input, int64_t num_bytes, int input_stride,
                 t, bits_per_sample, lpc_order, lpc.lpc_coeffs, code,
                 output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1)),
                 &exponent)) {
-          printf("Bad t=%d\n", (int)t); /**TEMP*/
+#ifndef NDEBUG
+          fprintf(stderr, "lilcom: decompression failure for t=%d\n",
+                  (int)t);
+#endif
           return 1;  /** Error */
         }
 
@@ -2574,7 +2591,6 @@ int compute_conversion_exponent(float max_abs_value) {
   frexpf(max_abs_value, &i);
   i += 1;
 
-
   /**
      The range of base-2 exponents allowed for single-precision floating point
      numbers is [-126..127].  If we get to close to the edges of this range, we
@@ -2599,7 +2615,10 @@ int compute_conversion_exponent(float max_abs_value) {
 
   if (i == 1000 || i == -1000) {
     /** This point should never be reached. */
-    fprintf(stderr, "Warning: something went wrong while finding the exponent\n");
+#ifndef NDEBUG
+    fprintf(stderr, "lilcom: warning: something went wrong while "
+            "finding the exponent: i=%d\n", i);
+#endif
     return -256;
   }
 
