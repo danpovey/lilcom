@@ -2107,6 +2107,7 @@ static inline int lilcom_decompress_one_sample(
   if (((new_sample + 32768) & ~(int32_t)65535) != 0) {
     /** If `new_sample` is outside the range [-32768 .. 32767], it
         is an error; we should not be generating such samples. */
+    printf("new_sample = %d\n", new_sample); /*TEMP*/
     return 1;
   }
   output_sample[0] = new_sample;
@@ -2778,8 +2779,8 @@ float lilcom_compute_snr_float(int64_t num_samples,
 
 void lilcom_test_extract_mantissa() {
   for (int bits_per_sample = 4; bits_per_sample <= 8; bits_per_sample++) {
-    for (int mantissa = -(1<<(bits_per_sample-1));
-         mantissa < (1<<(bits_per_sample-1)); mantissa++) {
+    for (int mantissa = -(1<<(bits_per_sample-2));
+         mantissa < (1<<(bits_per_sample-2)); mantissa++) {
       for (int exponent_bit = 0; exponent_bit < 1; exponent_bit++) {
         for (int random = -3; random <= 3; random++) {
           int code = (((mantissa << 1) + exponent_bit) & ((1<<bits_per_sample)-1)) +
@@ -3032,6 +3033,7 @@ void lilcom_test_get_max_abs_float_value() {
 
 int main() {
   lilcom_check_constants();
+  lilcom_test_extract_mantissa();
   lilcom_test_compress_sine();
   lilcom_test_compress_maximal();
   lilcom_test_compress_sine_overflow();
