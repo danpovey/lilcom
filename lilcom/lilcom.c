@@ -2256,6 +2256,8 @@ int lilcom_decompress(int64_t num_samples,
     printf("Bad time zero\n"); /**TEMP*/
     return 1;  /** Error */
   }
+  /*TEMP*/
+  printf("Time t=0, exponent=%d, output=%d\n", exponent, (int)output[0]);
 
   struct LpcComputation lpc;
   lilcom_init_lpc(&lpc, lpc_order);
@@ -2288,6 +2290,8 @@ int lilcom_decompress(int64_t num_samples,
       return 1;  /** Error */
     }
     output[t * output_stride] = output_buffer[MAX_LPC_ORDER + t];
+    /*TEMP*/
+    printf("Time t=%d, exponent=%d, output=%d\n", t, exponent, (int)output[t * output_stride]);
   }
   if (t >= num_samples)
     return 0;  /** Success */
