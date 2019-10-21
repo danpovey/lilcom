@@ -807,7 +807,7 @@ static inline int lilcom_header_get_lpc_order(const int8_t *header, int stride) 
 
 /** Returns bits_per_sample from the header; result will be in [4..8].  */
 static inline int lilcom_header_get_bits_per_sample(const int8_t *header, int stride) {
-  return ((int)(header[1 * stride] & 112)) >> 4;
+  return (((int)(header[1 * stride] & 112)) >> 4) + 4;
 }
 
 /** Returns the parity of the original num-samples from the header,
@@ -943,7 +943,7 @@ static void commit_staging_block(int64_t begin_t,
         compressed_code_stride * ((begin_t * bits_per_sample) / 8);
     int code = 0, mask = (1 << bits_per_sample) - 1, bit_shift = 0;
     for (int64_t t = begin_t; t < end_t; t++) {
-      code |=  (*(src++) & mask) << bit_shift;
+      code |= (*(src++) & mask) << bit_shift;
       bit_shift += bits_per_sample;
       if (bit_shift >= 8) {  /* Shift off the lowest-order byte */
         *compressed_code = (int8_t) code;
@@ -1953,18 +1953,52 @@ int lilcom_compress(int64_t num_samples,
   for (int64_t t = 1; t < num_samples; t++)
     lilcom_compress_for_time(t, &state);
 
-  if ((num_samples & (STAGING_BLOCK_SIZE-1)) != 0) {
-    /** If num_samples is not a multiple of STAGING_BLOCK_SIZE,
-        then write out the last partial block from the
-        staging area.  */
-    int64_t start_t = num_samples & ~(STAGING_BLOCK_SIZE-1);
-    commit_staging_block(start_t, num_samples, &state);
+  /** We write the staging blocks with a delay, so there will be at least
+      one to flush out and possibly two. */
+  int64_t start_t = 0;
+  if (num_samples > STAGING_BLOCK_SIZE) {
+    start_t = (num_samples - STAGING_BLOCK_SIZE - 1) & ~(STAGING_BLOCK_SIZE-1);
+  }
+  while (start_t < num_samples) {
+    int64_t end_t = start_t + STAGING_BLOCK_SIZE;
+    if (end_t > num_samples)
+      end_t = num_samples;
+    commit_staging_block(start_t, end_t, &state);
+    start_t = end_t;
   }
 
   assert(fprintf(stderr, "Backtracked %f%% of the time\n",
                  ((state.num_backtracks * 100.0) / num_samples)) || 1);
 
   return 0;
+}
+
+
+/**  This function extracts a signed mantissa from an integer compressed code
+
+       @param [in] code  The lowest-order `bits_per_sample` bits of `code`
+                     are the compressed code, which is the lowest-order
+                     `bits_per_sample` bits of (exponent_bit | (mantissa << 1)).
+                     Thus, the bits numbered 1 through bits_per_sample - 1
+                     of code are to be interpreted as a 2s-complement
+                     integer with `bits_per_sample - 1` bits in it.
+                       The higher-order bits of `code` are undefined and may
+                    have any value.
+       @param [in] bits_per_sample  The bits per sample of our code in [4..8].
+
+    @return  Returns the mantissa.
+*/
+static inline int extract_mantissa(int code, int bits_per_sample) {
+  /*
+     The first term in the outer-level 'or' is all the `bits_per_sample-1` of
+     the mantissa, which will be correct for positive mantissa but for
+     negative mantissa we need all the higher-order-than-bits_per_sample bits
+     to be set as well.  That's what the second term in the or is for.  The
+     big number is 2^31 - 1, which means that we duplicate that bit (think of
+     it as the sign bit), at its current position and at all positions to its
+     left.  */
+  return ((code > 1) & ((1<<(bits_per_sample - 1)) - 1)) |
+      ((code & (1<<(bits_per_sample-1)))*2147483647);
 }
 
 
@@ -1975,13 +2009,17 @@ int lilcom_compress(int64_t num_samples,
 
       @param [in] t    The current time index, cast to int; we actually
                      only need its lowest-order bit.
-      @param [in] input_code  The int8_t code for the sample that
-                      we are about to decompress.
+      @param [in] bits_per_sample  The number of bits per sample,
+                     in [4..8].
       @param [in] lpc_order  The order of the LPC computation,
                      a number in [0..LPC_MAX_ORDER] obtained from
                      the header.
       @param [in] lpc_coeffs  The LPC coefficients, multiplied
                      by 2^23 and represented as integers.
+      @param [in] input_code  The code for the sample that
+                      we are about to decompress.  Its lower-order
+                      `bits_per_sample` bits correspond to the code;
+                      its higher-order bit values are undefined.
       @param [in,out] output_sample  A pointer to the output sample
                      for time t.  CAUTION: this function assumes that
                      `output_sample` this is a pointer to an array with stride 1
@@ -2002,9 +2040,10 @@ int lilcom_compress(int64_t num_samples,
  */
 static inline int lilcom_decompress_one_sample(
     int64_t t,
-    int8_t input_code,
+    int bits_per_sample,
     int lpc_order,
     const int32_t *lpc_coeffs,
+    int input_code,
     int16_t *output_sample,
     int *exponent) {
 
@@ -2047,7 +2086,7 @@ static inline int lilcom_decompress_one_sample(
    */
   int exponent_bit = (input_code & 1),
       min_codable_exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, *exponent),
-      mantissa = (input_code & ~((int8_t)1)) / 2;
+      mantissa = extract_mantissa(input_code, bits_per_sample);
   *exponent = min_codable_exponent + exponent_bit;
 
   assert(*exponent >= 0);
@@ -2068,6 +2107,9 @@ static inline int lilcom_decompress_one_sample(
 /*
   This function attempts to obtain the first sample (the one for t = 0).
     @param [in] header   Pointer to the beginning of the header.
+    @param [in] code_0   The compressed code value for time t=0 are in
+                        the lower-order `bits_per_sample` bits of this;
+                        the remaining bits are undefined.
     @paran [in] input_stride  Stride between elements of `header`
                         (naturally, past the header there are real samples,
                         with the same stride).
@@ -2079,7 +2121,7 @@ static inline int lilcom_decompress_one_sample(
              input).
  */
 static inline int lilcom_decompress_time_zero(
-    const int8_t *header, int input_stride, int bits_per_sample,
+    const int8_t *header, int code_0, int input_stride, int bits_per_sample,
     int16_t *output, int *exponent) {
   int exponent_m1 = lilcom_header_get_exponent_m1(header, input_stride),
       mantissa_m1 = lilcom_header_get_mantissa_m1(header, input_stride);
@@ -2089,26 +2131,10 @@ static inline int lilcom_decompress_time_zero(
   assert(mantissa_m1 >= -64 && mantissa_m1 < 64 &&
          exponent_m1 >= 0 && exponent_m1 <= 15);
   int32_t sample_m1 = mantissa_m1 << exponent_m1;
-  /** Note: the bits we want are the low-order bits_per_sample bits of code_0. */
-  int8_t code_0 = header[input_stride * LILCOM_HEADER_BYTES];
-  /**  The lowest-order bit is the exponent, that's easy.
 
-       The next `bits_per_sample-1` bits are the mantissa, and we need to treat
-       that as a 2's complement signed value with `bits_per_sample-1` bits.
-
-       The first term in the outer-level 'or' is all the `bits_per_sample-1` of
-       the mantissa, which will be correct for positive mantissa but for
-       negative mantissa we need all the higher-order-than-bits_per_sample bits
-       to be set as well.  That's what the second term in the or is for.  The
-       big number is 2^31 - 1, which means that we duplicate that bit (think of
-       it as the sign bit), at its current position and at all positions to its
-       left.
-  */
   int32_t
       exponent_bit = (code_0 & 1),
-      mantissa =
-      ((code_0 > 1) & ((1<<(bits_per_sample - 1)) - 1)) |
-      ((code_0 & (1<<(bits_per_sample-1)))*2147483647);
+      mantissa = extract_mantissa(code_0, bits_per_sample);
 
   *exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(0, exponent_m1) + exponent_bit;
   int32_t sample_0 = sample_m1 + (mantissa << *exponent);
@@ -2143,6 +2169,54 @@ int lilcom_get_num_samples(const int8_t *input,
   return num_samples;
 }
 
+/**
+   This is a function used in lilcom_decompress, which we have broken out here
+   for clarity but we strongly anticipate will be inlined.  It gets the next
+   compressed code.  (It's assumed to be called in order for t=0, t=1, and so
+   on.)
+
+      @param [in]      bits_per_sample  The bits per sample, in [4.l8].
+      @param [in,out]  leftover_bits   This is a value that the user should initialize
+                        to 0 before calling this for the first time.  It will
+                        get new input bytes added into its higher bits and
+                        they will get shifted off by bits_per_sample bits
+                        at a time as we consume sample.
+      @param [in,out]  num_bits  This is a value that the user should initialize
+                        to 0 before calling this for the first time.  It is
+                        the number of bits currently in `leftover_bits`.  It will increase
+                        8 at a time and decrease bits_per_sample bits at a time.
+      @param [in,out] cur_input  Pointer to a pointer to the current input
+                        byte.  This function will add input_stride to the pointer
+                        time we consume a byte.
+      @param [in]  input_stride  The stride of the compressed code (would normally
+                        be 1.)
+      @return     Returns a number whose lower-order `bits_per_sample` bits
+                  correspond to the next compressed sample.  (The bits with
+                  higher order than that are undefined and may have any value)
+
+ */
+static inline int lilcom_get_next_compressed_code(
+    int bits_per_sample, int *leftover_bits, int *num_bits,
+    const int8_t **cur_input, int input_stride) {
+  if (*num_bits < bits_per_sample) {
+    /** We need more bits.  Put them above (i.e. higher-order-than) any bits we
+        have currently. */
+    *leftover_bits |= (((int)(**cur_input)) << *num_bits);
+    *cur_input += input_stride;
+    *num_bits += 8;
+  }
+  /** Now we know that *num_bits >= bits_per_sample, because bits_per_sample
+      is in [4..8] and we never let num_bits become negative. */
+
+  int ans = *leftover_bits;
+  *leftover_bits >>= bits_per_sample;
+  *num_bits -= bits_per_sample;
+  /** As documented above, the higher-order bits of ans are actually
+   * undefined. */
+  return ans;
+
+}
+
 
 int lilcom_decompress(int64_t num_samples,
                       const int8_t *input, int input_stride,
@@ -2158,14 +2232,18 @@ int lilcom_decompress(int64_t num_samples,
   *conversion_exponent = lilcom_header_get_conversion_exponent(
       input, input_stride);
 
-  int exponent;
-  if (lilcom_decompress_time_zero(input, input_stride, bits_per_sample,
+  /** cur_input will always point to the next byte to be extracted
+      from the stream. */
+  const int8_t *cur_input = input + (input_stride * LILCOM_HEADER_BYTES);
+
+  int num_bits = 0, leftover_bits = 0;
+
+  int exponent, code_0 = lilcom_get_next_compressed_code(
+      bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
+
+  if (lilcom_decompress_time_zero(input, code_0, input_stride, bits_per_sample,
                                   &(output[0]), &exponent))
     return 1;  /** Error */
-
-  /** This is called input 4 because (if stride == 1)
-      it's 4 bytes past input. */
-  const int8_t *input4  = input + (input_stride * LILCOM_HEADER_BYTES);
 
   struct LpcComputation lpc;
   lilcom_init_lpc(&lpc, lpc_order);
@@ -2187,8 +2265,11 @@ int lilcom_decompress(int64_t num_samples,
   output_buffer[MAX_LPC_ORDER] = output[0];
   int t;
   for (t = 1; t < AUTOCORR_BLOCK_SIZE && t < num_samples; t++) {
-    if (lilcom_decompress_one_sample(t, input4[t * input_stride],
-                                     lpc_order, lpc.lpc_coeffs,
+    int code = lilcom_get_next_compressed_code(
+        bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
+
+    if (lilcom_decompress_one_sample(t, bits_per_sample, lpc_order,
+                                     lpc.lpc_coeffs, code,
                                      &(output_buffer[MAX_LPC_ORDER + t]),
                                      &exponent))
       return 1;  /** Error */
@@ -2233,13 +2314,15 @@ int lilcom_decompress(int64_t num_samples,
       }
       int64_t local_max_t = (t + AUTOCORR_BLOCK_SIZE < num_samples ?
                              t + AUTOCORR_BLOCK_SIZE : num_samples);
-      for (; t < local_max_t; t++)
-        if (lilcom_decompress_one_sample(t,
-                                         input4[t * input_stride],
-                                         lpc_order, lpc.lpc_coeffs,
-                                         output + t,
-                                         &exponent))
+      for (; t < local_max_t; t++) {
+        int code = lilcom_get_next_compressed_code(
+            bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
+        if (lilcom_decompress_one_sample(
+                t, bits_per_sample, lpc_order,
+                lpc.lpc_coeffs, code,
+                output + t, &exponent))
           return 1;  /** Error */
+      }
     }
     return 0;  /** Success */
   } else {
@@ -2280,10 +2363,13 @@ int lilcom_decompress(int64_t num_samples,
       int64_t local_max_t = (t + AUTOCORR_BLOCK_SIZE < num_samples ?
                              t + AUTOCORR_BLOCK_SIZE : num_samples);
       for (; t < local_max_t; t++) {
-        if (lilcom_decompress_one_sample(t, input4[t * input_stride],
-                                         lpc_order, lpc.lpc_coeffs,
-                                         output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1)),
-                                         &exponent))
+        int code = lilcom_get_next_compressed_code(
+            bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
+
+        if (lilcom_decompress_one_sample(
+                t, bits_per_sample, lpc_order, lpc.lpc_coeffs, code,
+                output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1)),
+                &exponent))
           return 1;  /** Error */
 
         output[t * output_stride] =
@@ -2668,6 +2754,21 @@ float lilcom_compute_snr_float(int64_t num_samples,
     return 10.0 * log10((noise_sumsq * 1.0) / signal_sumsq);
 }
 
+void lilcom_test_extract_mantissa() {
+  for (int bits_per_sample = 4; bits_per_sample <= 8; bits_per_sample++) {
+    for (int mantissa = -(1<<(bits_per_sample-1));
+         mantissa < (1<<(bits_per_sample-1)); mantissa++) {
+      for (int exponent_bit = 0; exponent_bit < 1; exponent_bit++) {
+        for (int random = -3; random <= 3; random++) {
+          int code = (((mantissa << 1) + exponent_bit) & ((1<<bits_per_sample)-1)) +
+              (random << bits_per_sample);
+          assert(extract_mantissa(code, bits_per_sample) == mantissa &&
+                 (code&1) == exponent_bit);
+        }
+      }
+    }
+  }
+}
 
 void lilcom_test_compress_sine() {
   int16_t buffer[1000];
@@ -2675,7 +2776,7 @@ void lilcom_test_compress_sine() {
   for (int i = 0; i < 1000; i++)
     buffer[i] = 700 * sin(i * 0.01);
 
-  for (int bits_per_sample = 4; bits_per_sample <= 8; bits_per_sample++) {
+  for (int bits_per_sample = 8; bits_per_sample >= 4; bits_per_sample--) {
     int8_t compressed[1004];
     int exponent = -15, exponent2;
     lilcom_compress(1000, buffer, 1, compressed, 1,
