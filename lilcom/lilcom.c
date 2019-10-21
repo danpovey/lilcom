@@ -2185,7 +2185,7 @@ int lilcom_get_num_samples(const int8_t *input,
    compressed code.  (It's assumed to be called in order for t=0, t=1, and so
    on.)
 
-      @param [in]      bits_per_sample  The bits per sample, in [4.l8].
+      @param [in]      bits_per_sample  The bits per sample, in [4..8].
       @param [in,out]  leftover_bits   This is a value that the user should initialize
                         to 0 before calling this for the first time.  It will
                         get new input bytes added into its higher bits and
@@ -2197,13 +2197,12 @@ int lilcom_get_num_samples(const int8_t *input,
                         8 at a time and decrease bits_per_sample bits at a time.
       @param [in,out] cur_input  Pointer to a pointer to the current input
                         byte.  This function will add input_stride to the pointer
-                        time we consume a byte.
+                        each time we consume a byte.
       @param [in]  input_stride  The stride of the compressed code (would normally
                         be 1.)
       @return     Returns a number whose lower-order `bits_per_sample` bits
                   correspond to the next compressed sample.  (The bits with
                   higher order than that are undefined and may have any value)
-
  */
 static inline int lilcom_get_next_compressed_code(
     int bits_per_sample, int *leftover_bits, int *num_bits,
@@ -2217,7 +2216,6 @@ static inline int lilcom_get_next_compressed_code(
   }
   /** Now we know that *num_bits >= bits_per_sample, because bits_per_sample
       is in [4..8] and we never let num_bits become negative. */
-
   int ans = *leftover_bits;
   *leftover_bits >>= bits_per_sample;
   *num_bits -= bits_per_sample;
@@ -2233,8 +2231,10 @@ int lilcom_decompress(int64_t num_samples,
                       int16_t *output, int output_stride,
                       int *conversion_exponent){
   if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
-      !lilcom_header_plausible(input, input_stride))
+      !lilcom_header_plausible(input, input_stride)) {
+    printf("Bad header\n");  /*TEMP*/
     return 1;  /** Error */
+  }
 
   int lpc_order = lilcom_header_get_lpc_order(input, input_stride),
       bits_per_sample = lilcom_header_get_bits_per_sample(input, input_stride);
@@ -2248,12 +2248,14 @@ int lilcom_decompress(int64_t num_samples,
 
   int num_bits = 0, leftover_bits = 0;
 
-  int exponent, code_0 = lilcom_get_next_compressed_code(
+  int code_0 = lilcom_get_next_compressed_code(
       bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
-
+  int exponent;
   if (lilcom_decompress_time_zero(input, code_0, input_stride, bits_per_sample,
-                                  &(output[0]), &exponent))
+                                  &(output[0]), &exponent)) {
+    printf("Bad time zero\n"); /**TEMP*/
     return 1;  /** Error */
+  }
 
   struct LpcComputation lpc;
   lilcom_init_lpc(&lpc, lpc_order);
@@ -2281,9 +2283,10 @@ int lilcom_decompress(int64_t num_samples,
     if (lilcom_decompress_one_sample(t, bits_per_sample, lpc_order,
                                      lpc.lpc_coeffs, code,
                                      &(output_buffer[MAX_LPC_ORDER + t]),
-                                     &exponent))
+                                     &exponent)) {
+      printf("Bad t=%d\n", (int)t); /**TEMP*/
       return 1;  /** Error */
-
+    }
     output[t * output_stride] = output_buffer[MAX_LPC_ORDER + t];
   }
   if (t >= num_samples)
@@ -2330,8 +2333,10 @@ int lilcom_decompress(int64_t num_samples,
         if (lilcom_decompress_one_sample(
                 t, bits_per_sample, lpc_order,
                 lpc.lpc_coeffs, code,
-                output + t, &exponent))
+                output + t, &exponent)) {
+          printf("Bad t=%d\n", (int)t); /**TEMP*/
           return 1;  /** Error */
+        }
       }
     }
     return 0;  /** Success */
@@ -2379,8 +2384,10 @@ int lilcom_decompress(int64_t num_samples,
         if (lilcom_decompress_one_sample(
                 t, bits_per_sample, lpc_order, lpc.lpc_coeffs, code,
                 output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1)),
-                &exponent))
+                &exponent)) {
+          printf("Bad t=%d\n", (int)t); /**TEMP*/
           return 1;  /** Error */
+        }
 
         output[t * output_stride] =
             output_buffer[MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1))];
