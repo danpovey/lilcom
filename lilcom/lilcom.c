@@ -2007,7 +2007,7 @@ static inline int extract_mantissa(int code, int bits_per_sample) {
      big number is 2^31 - 1, which means that we duplicate that bit (think of
      it as the sign bit), at its current position and at all positions to its
      left.  */
-  return ((code > 1) & ((1<<(bits_per_sample - 1)) - 1)) |
+  return ((code >> 1) & ((1<<(bits_per_sample - 1)) - 1)) |
       ((code & (1<<(bits_per_sample-1)))*2147483647);
 }
 
@@ -2097,7 +2097,7 @@ static inline int lilcom_decompress_one_sample(
   int exponent_bit = (input_code & 1),
       min_codable_exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, *exponent),
       mantissa = extract_mantissa(input_code, bits_per_sample);
-  printf("Mantissa = %d\n", mantissa);
+  printf("code = %d, bps = %d, Mantissa = %d\n", input_code, bits_per_sample, mantissa);
   *exponent = min_codable_exponent + exponent_bit;
 
   assert(*exponent >= 0);
