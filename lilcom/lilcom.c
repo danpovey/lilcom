@@ -2097,6 +2097,7 @@ static inline int lilcom_decompress_one_sample(
   int exponent_bit = (input_code & 1),
       min_codable_exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, *exponent),
       mantissa = extract_mantissa(input_code, bits_per_sample);
+  printf("Mantissa = %d\n", mantissa);
   *exponent = min_codable_exponent + exponent_bit;
 
   assert(*exponent >= 0);
