@@ -954,7 +954,7 @@ static void commit_staging_block(int64_t begin_t,
     if (bit_shift != 0) {
       /* Get rid of the last partial byte; this will only be
          reached at the end of the file. */
-      *(compressed_code++) = (int8_t) code;
+      *compressed_code = (int8_t) code;
     }
   }
 }
@@ -968,11 +968,16 @@ static void commit_staging_block(int64_t begin_t,
 static inline void write_compressed_code(int64_t t,
                                          int8_t code,
                                          struct CompressionState *state) {
-  /** Read the following as t % STAGING_BLOCK_SIZE*2 == 0,
+  /** Read the following index as t % STAGING_BLOCK_SIZE*2,
       i.e. t modulo the size of the staging buffer. */
   state->staging_buffer[t & (STAGING_BLOCK_SIZE*2 - 1)] = code;
+
+
+  /** If the next t value divides STAGING_BLOCK_SIZE, we may have
+      to commit some data to state->compressed_data.  */
+  t++;
   /** Read the following as `if (t % STAGING_BLOCK_SIZE == 0)`.  The reason for
-      adding `&& t >= 2*STAGING_BLOCK_SIZE` is that we write out a block at a
+      adding `&& (t+1) >= 2*STAGING_BLOCK_SIZE` is that we write out a block at a
       time, but with a one-block delay.  This prevents any inconvenience caused
       by backtracking (i.e. we know the previous block is not going to change
       any more).
@@ -1916,6 +1921,10 @@ static inline void lilcom_init_compression(
   lilcom_header_set_user_configs(output, output_stride,
                                  lpc_order, bits_per_sample,
                                  num_samples % 2);
+  /* TODO: Remove the following. */
+  assert(lilcom_header_get_lpc_order(output, output_stride) == lpc_order &&
+         lilcom_header_get_bits_per_sample(output, output_stride) == bits_per_sample &&
+         lilcom_header_get_num_samples_parity(output, output_stride) == num_samples % 2);
 
   /** The remaining parts of the header will be initialized in
       lilcom_compress_for_time_zero`. */
@@ -1957,9 +1966,10 @@ int lilcom_compress(int64_t num_samples,
       one to flush out and possibly two. */
   int64_t start_t = 0;
   if (num_samples > STAGING_BLOCK_SIZE) {
-    start_t = (num_samples - STAGING_BLOCK_SIZE - 1) & ~(STAGING_BLOCK_SIZE-1);
+    start_t = (num_samples - STAGING_BLOCK_SIZE) & ~(STAGING_BLOCK_SIZE-1);
   }
   while (start_t < num_samples) {
+    printf("num-samples = %d, start_t = %d, committing\n", (int)num_samples, (int)start_t);
     int64_t end_t = start_t + STAGING_BLOCK_SIZE;
     if (end_t > num_samples)
       end_t = num_samples;
