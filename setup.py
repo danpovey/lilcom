@@ -27,7 +27,10 @@ def read(fname):
 extension_mod = Extension("lilcom.lilcom_c_extension",
                           sources=["lilcom/lilcom_c_extension.c",
                                    "lilcom/lilcom.c"],
-                          #extra_compile_args=["-DNDEBUG"],
+                          # Actually it turns out that the optimization level
+                          # and debugging code makes very little difference to
+                          # the speed.
+                          #extra_compile_args=["-DNDEBUG -O3"],
                           extra_compile_args=["-g -Wall -ftrapv"],
                           include_dirs=[numpy.get_include()])
 
