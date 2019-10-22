@@ -13,7 +13,8 @@ def test_float():
     for bits_per_sample in [4,6,8]:
         for axis in [-1, 1, 0, -2]:
             for use_out in [False, True]:
-                a = np.random.randn(100, 200).astype(np.float32)
+                a = np.random.randn(100+bits_per_sample+axis,
+                                    200+bits_per_sample+axis).astype(np.float32)
                 out_shape = lilcom.get_compressed_shape(a.shape, axis, bits_per_sample)
 
                 b = lilcom.compress(a, axis=axis, bits_per_sample=bits_per_sample,
@@ -26,10 +27,10 @@ def test_float():
                     axis, bits_per_sample, rel_error))
 
 def test_int16():
-    a = ((np.random.rand(100, 200) * 65535) - 32768).astype(np.int16)
-
     for bits_per_sample in [4,5,8]:
         for axis in [-1, 1, 0, -2]:
+            a = ((np.random.rand(100 + bits_per_sample + axis,
+                                 200 + 10*bits_per_sample + axis) * 65535) - 32768).astype(np.int16)
             for use_out in [False, True]:
                 out_shape = lilcom.get_compressed_shape(a.shape, axis, bits_per_sample)
 
