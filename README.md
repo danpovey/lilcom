@@ -1,18 +1,22 @@
 # lilcom
 
 
-Package for compression and decompression of sequence data (especially audio
-files), compatible with NumPy arrays.  The main anticipated use is in
-machine learning applications.
+This package lossily compresses 16-bit integer or floating-point NumPy arrays
+into NumPy arrays of characters, using between 4 and 8 bits per sample (this is
+selected by the user).  The main anticipated use is in machine learning
+applications.
 
-This package lossily compresses 16-bit integer or floating-point
-NumPy arrays into NumPy arrays of characters, using
-between 4 and 8 bits per sample (this is selected by the user).
-
-=======
 This package requires Python 3 and is not compatible with Python 2.
 
 ## Installation
+
+### Using PyPi
+
+From PyPi you can install this with just
+```
+pip3 install lilcom
+```
+
 
 ### Using Github Repository
 To install lilcom first clone the repository;
@@ -25,8 +29,8 @@ then run setup with `install` argument.
 ```
 python3 setup.py install
 ```
-
-and then for test, cd to `test` and run:
+(you may need to add the `--user` flag if you don't have system privileges).
+To test it, you can then cd to `test` and run:
 
 ```
 python3 test_interface.py
@@ -52,8 +56,10 @@ for audio data that's sampled at a high rate like 44.1kHz.
 
 The argument `axis=1` specifies which axis which will be treated as the "time"
 axis.  This should be the axis along which the user expects successive amples to
-be the most highly correlated, and also one that has reasonably long sequences;
-a 4-byte header is created for each sequence in that axis direction.
+be the most highly correlated, and also one that has reasonably long sequences
+(bear in mind that a 4-byte header is created for each sequence in that axis
+direction, so the dimension on that axis should be reasonably large or
+the compression would be ineffective).
 
 
 
@@ -82,5 +88,6 @@ that we need to avoid signed integer overflow and signed right-shift).
 
 The compression quality is very respectable; at the same bit-rate as MP3 we get
 better PSNR, i.e. less compression noise.  (However, bear in mind that MP3 is
-optimized for perceptual quality and not PSNR).
+optimized for perceptual quality and not PSNR).  See
+`test/results/reconstruction-test.py` which does these comparisons.
 

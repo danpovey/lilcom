@@ -40,7 +40,7 @@ extension_mod = Extension("lilcom.lilcom_c_extension",
 setup(
     name = "lilcom",
     python_requires='>=3.5',
-    version = "0.0.0",
+    version = "0.1.0",
     author = "Daniel Povey, Soroush Zargar, Mahsa Yarmohammadi, Jian Wu",
     author_email = "dpovey@gmail.com",
     description = ("Small compression utility for sequence data in NumPy"),
@@ -51,6 +51,7 @@ setup(
     ext_modules=[extension_mod],
     long_description=read('README.md'),
     long_description_content_type="text/markdown",
+    install_requires=['numpy'],
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Topic :: Utilities",
