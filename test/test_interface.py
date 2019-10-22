@@ -4,6 +4,9 @@
 import numpy as np
 import lilcom
 
+def test_num_bytes():
+    assert lilcom.compressed_num_bytes(10, 8) == 14
+    assert lilcom.compressed_num_bytes(10, 4) == 9
 
 
 def test_float():
@@ -18,7 +21,6 @@ def test_float():
                 b = lilcom.compress(a, axis=axis, bits_per_sample=bits_per_sample,
                                     out=(np.empty(out_shape, dtype=np.int8) if use_out else None))
                 c = lilcom.decompress(b, dtype=(None if use_out else np.float32),
-                                      axis=axis,
                                       out=(np.empty(a.shape, dtype=np.float32) if use_out else None))
 
             rel_error = (np.fabs(a - c)).sum() / (np.fabs(a)).sum()
@@ -41,7 +43,6 @@ def test_int16():
             for d in [np.int16, np.float32, np.float64]:
                 c = lilcom.decompress(b,
                                       dtype=(None if use_out else d),
-                                      axis=axis,
                                       out=(np.empty(a.shape, dtype=d) if use_out else None))
 
                 a2 = a.astype(np.float32) * (1.0/32768.0 if d != np.int16 else 1.0)
@@ -82,6 +83,7 @@ def test_double():
 
 
 def main():
+    test_num_bytes()
     test_int16()
     test_float()
     test_int16_lpc_order()

@@ -1,7 +1,9 @@
 #include <assert.h>
 #include <stdlib.h>  /* for malloc */
 #include <math.h>  /* for frexp and frexpf and pow, used in floating point compression. */
+#ifndef NDEBUG
 #include <stdio.h>  /* print statements are only made if NDEBUG is not defined. */
+#endif
 #include <float.h>  /* for FLT_MAX */
 
 #include "lilcom.h"
