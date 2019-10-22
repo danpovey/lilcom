@@ -193,14 +193,13 @@ static int decompress_int16_internal(int num_axes, int axis,
                                      PyObject *input, PyObject *output) {
   assert(axis >= 0 && axis < num_axes);
 
-  int conversion_exponent = -1;
-
   int input_dim = PyArray_DIM(input, axis),
       output_dim =  PyArray_DIM(output, axis),
       input_stride = PyArray_STRIDE(input, axis) / sizeof(int8_t),
       output_stride = PyArray_STRIDE(output, axis) / sizeof(int16_t);
 
   if (axis < num_axes - 1) {  /** Not the time axis. */
+    int conversion_exponent = -1;
     if (output_dim != input_dim)
       return 1002;
     for (int i = 0; i < input_dim; i++) {

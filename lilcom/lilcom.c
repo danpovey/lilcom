@@ -1962,7 +1962,9 @@ static inline void lilcom_init_compression(
   state->compressed_code_stride = output_stride;
 
   /** Put it in an assert so it doesn't happen in non-debug mode. */
-  assert(((state->num_backtracks = 0) == 0));
+#ifndef NDEBUG
+  state->num_backtracks = 0;
+#endif
 
 
   for (int i = 0; i < MAX_LPC_ORDER; i++)
@@ -2435,7 +2437,7 @@ int lilcom_decompress(const int8_t *input, int64_t num_bytes, int input_stride,
       if ((t & (SIGNAL_BUFFER_SIZE-1)) == 0) {
         /** A multiple of SIGNAL_BUFFER_SIZE.  We need to copy the context to
             before the beginning of the buffer.  */
-        for (int i = 1; i <= lpc_order; i++)
+        for (i = 1; i <= lpc_order; i++)
           output_buffer[MAX_LPC_ORDER - i] =
               output_buffer[MAX_LPC_ORDER + SIGNAL_BUFFER_SIZE - i];
       }
