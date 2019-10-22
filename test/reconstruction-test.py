@@ -11,8 +11,6 @@ import lilcom
 # For mathematic calculus, Built-in
 import math
 
-globalVals = dict.fromkeys(["dataset", "samplerate"])
-
 
 def PSNR(originalArray, reconstructedArray):
     """ This function calculates the peak signal to noise ratio between a
