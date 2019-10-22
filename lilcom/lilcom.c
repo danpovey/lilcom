@@ -1,7 +1,9 @@
 #include <assert.h>
 #include <stdlib.h>  /* for malloc */
 #include <math.h>  /* for frexp and frexpf and pow, used in floating point compression. */
-#include <stdio.h>  /* TEMP-- for debugging. */
+#ifndef NDEBUG
+#include <stdio.h>  /* print statements are only made if NDEBUG is not defined. */
+#endif
 #include <float.h>  /* for FLT_MAX */
 
 #include "lilcom.h"
@@ -24,9 +26,8 @@
 #define LILCOM_VERSION 1
 
 /**
-   Number of bytes in the header we use when compressing 16-bit to 8-bit ints.
-   I don't expect this to ever be changed.
- */
+   Number of bytes in the header
+*/
 #define LILCOM_HEADER_BYTES 4
 
 
@@ -57,14 +58,12 @@
 #define LPC_EST_LEFT_SHIFT 23
 
 /**
-   The power of two by which the LPC coefficients are multiplied when
-   stored in struct LpcComputation and while being applied during
-   prediction.  This corresponds roughly to a precision.  The
-   reason why we use this value is so that we can do the summation
-   in int32_t.
+   The power of two by which the LPC coefficients are multiplied when stored as
+   integers in struct LpcComputation and while being applied during prediction.
+   The specific value is chosen so that we can do the summation in int32_t.
 
-   CAUTION: this cannot be greater than 14 = 30 - 16, due to tricks
-   used in the prediction code.
+   CAUTION: this cannot be greater than 14 = 30 - 16, due to tricks used in the
+   prediction code.
  */
 #define LPC_APPLY_LEFT_SHIFT 14
 
@@ -172,17 +171,31 @@
  */
 #define LPC_COMPUTE_INTERVAL 64
 
+/**
+   This is a literal 15 in the code in many places.  It's the maximum possible
+   value of an exponent in our coding scheme (the compressed values are
+   of the form mantissa << exponent).
+
+   The mantissas encode prediction residuals.  The largest-magnitude residual is
+   65535, which is 13767 - (-13768).  smallest allowed value of the
+   bits_per_sample is 4, meaning there are 3 bits for the mantissa so the
+   mantissas must be in the range [-4,3].  Of the numbers representable by
+   (mantissa in [-4,3]) << (integer exponent), the closest approximation of
+   65535 is 65536, and the lowest exponent that can generate that number is 15:
+   (65536 = 2 << 15)
+ */
+#define MAX_POSSIBLE_EXPONENT 15
 
 /**
    This rolling-buffer size determines how far back in time we keep the
    exponents we used to compress the signal.  It determines how far it's
    possible for us to backtrack when we encounter out-of-range values and need
    to increase the exponent.  The most we'd ever need to add to the exponent
-   is +12, and we can only increase the exponent every other frame, so
-   this needs to be at least 24 (or maybe one or two more than that, I forget
-   the exact logic.)
+   is +15, and we can only increase the exponent every other frame, so
+   this needs to be at least 30 (or maybe one or two more than that, I forget
+   the exact logic); anyway 32 is enough.
 
-   It must be a power of 2 due to a trick used to compute a modulus, which
+   This must be a power of 2 due to a trick used to compute a modulus, which
    dictates 32.
  */
 #define EXPONENT_BUFFER_SIZE 32
@@ -203,31 +216,54 @@
 #define LPC_ROLLING_BUFFER_SIZE 4
 
 /**
-   SIGNAL_BUFFER_SIZE determines the size of a rolling buffer containing
-   the history of the compressed version of the signal, to be used while
-   compressing.  It must be a multiple of AUTOCORR_BLOCK_SIZE.  It must
-   also satisfy:
+   SIGNAL_BUFFER_SIZE determines the size of a rolling buffer containing the
+   history of the compressed version of the signal, to be used while
+   compressing.  It must be a multiple of AUTOCORR_BLOCK_SIZE.  It must also
+   satisfy:
 
     SIGNAL_BUFFER_SIZE >
-       AUTOCORR_BLOCK_SIZE + EXPONENT_BUFFER_SIZE + MAX_LPC_ORDER
+       AUTOCORR_BLOCK_SIZE + (MAX_POSSIBLE_EXPONENT*2) + MAX_LPC_ORDER
 
-    (currently: 128 > 32 + 8 + 15).
+   (currently: 128 > 16 + (15*2) + 14).
 
-   That is: it needs to store a whole block's worth of data, plus the farthest
-   we might backtrack, plus enough context to process the first sample of the
-   block.  This backtracking is because there may be situations where we need to
-   recompute the autocorrelation coefficients of a block if backtracking
-   causes us to revisit it.
+   That is: it needs to store a whole autocorrelation-stats block's worth of
+   data, plus the farthest we might backtrack (MAX_POSSIBLE_EXPONENT * 2),
+   plus enough context to process the first sample of the block
+   (i.e. MAX_LPC_ORDER).  This backtracking is because there may be situations
+   where we need to recompute the autocorrelation coefficients of a block if
+   backtracking causes us to revisit that autocorrelation block.
 
    It must also be a power of 2, due to tricks we use when computing modulus.
 
    Every time we get to the beginning of the buffer we need to do a little extra
-   work to place the history before the start of the buffer, that's why we don't
-   just make this 64 (i.e. two blocks' worth).  The reason for not using a huge
-   value is to save memory and be kind to the cache.
+   work to place the history before the start of the buffer; the desire to avoid
+   this extra work is why we don't just make this 64 (i.e. two blocks' worth).
+   The reason for not using a huge value is to save memory and be kind to the
+   cache.
  */
 #define SIGNAL_BUFFER_SIZE 128
 
+
+/**
+   STAGING_BLOCK_SIZE is the size of a block in a rolling buffer containing the
+   compressed signal.  The buffer contains the signal as bytes, one per
+   time-step, which will later be consolidated if bytes_per_sample < 8.
+
+   We require that STAGING_BLOCK_SIZE be a multiple of 8, which
+   ensures that the number of bits in the staging block must be a multiple of
+   8, hence a whole number of bytes.
+
+   It should be at least twice the maximum number of time steps we might backtrack
+   (which is MAX_POSSIBLE_EXPONENT*2 = 30).  We choose to make it 16 bytes,
+   meaning the entire staging area contains 64 bytes.
+
+   There are 4 staging blocks in the buffer.  3 is the minimum number
+   necessary to avoid certain pathologies that can happen with backtracking,
+   but we make it 4 to keep it a power of 2, since we use a power-of-two
+   trick to maybe make a modulus operation faster.
+ */
+#define STAGING_BLOCK_SIZE 32
+#define NUM_STAGING_BLOCKS 4
 
 
 
@@ -492,7 +528,9 @@ static inline void lilcom_update_autocorrelation(
      object, and it will usually already have the correct value.  Return
      immediately if so.  */
   int exponent = lpc->max_exponent;
-  int64_t autocorr_0 = lpc->autocorr[0];
+  /* Make autocorr_0 unsigned to make it clear that right-shift is well defined... actually
+     it can never be negative as it is a sum of squares. */
+  uint64_t autocorr_0 = lpc->autocorr[0];
   assert(autocorr_0 != 0 && exponent > 0);
   if ((autocorr_0 >> (exponent-1)) == 1) {
     /*  max_exponent has the correct value.  This is the normal code path. */
@@ -568,7 +606,16 @@ static inline void lilcom_update_autocorrelation(
 struct CompressionState {
 
   /** The LPC order, a value in [0..MAX_LPC_ORDER].  User-specified.  */
-  int32_t lpc_order;
+  int lpc_order;
+
+  /** The user-specified bits per sample, in the range [4..8]. */
+  int bits_per_sample;
+
+  /** This is 1 << (bits_per_sample - 2), e.g.
+      64 if bits_per_sample is 8.  Will be one of
+      [4,8,16,32,64].  */
+  int mantissa_limit;
+
 
   /**
      'lpc_computations' is to be viewed as a circular buffer of size 2,
@@ -624,6 +671,14 @@ struct CompressionState {
   */
   int16_t decompressed_signal[MAX_LPC_ORDER + SIGNAL_BUFFER_SIZE];
 
+  /**
+     staging_buffer is a place where we temporarily put the compressed
+     code before writing to `compressed_code`.  staging_buffer is
+     indexed by t modulo the buffer size, whereas `compressed_code`
+     has bit-packing.
+  */
+  int8_t staging_buffer[STAGING_BLOCK_SIZE*NUM_STAGING_BLOCKS];
+
 
   /**  The input signal that we are compressing  */
   const int16_t *input_signal;
@@ -654,10 +709,24 @@ struct CompressionState {
 
   The format of the 4-byte header is:
 
-    Byte 0:  most-significant 4 bytes contain exponent for frame -1;
-             least-significant 4 bytes contain LILCOM_VERSION (currently 1)
-    Byte 1:  contains the LPC order (this was user-specifiable)
-    Byte 2:  the mantissa of the -1'th sample.
+    Byte 0:  Least-significant 4 bits contain exponent for the
+             sample at t=-1.
+             The next 3 bits contain LILCOM_VERSION (currently 1).
+             The highest-order bit is always set (this helps work out the
+             time axis when decompressing, together with it never being
+             set for byte 2.
+    Byte 1:  Least significant 4 bits contain the LPC order (this is
+             user-specifiable in 0..14).
+             The next 3 bits contain the bits_per_sample minus 4;
+             the bits_per_sample is in [4..8] so bits_per_sample-4 is
+             in [0..4].
+             The highest-order bit is 1 if the num_samples of the
+             input was odd and 0 if it was even (this is used to
+             disambiguate the sequence length).
+    Byte 2:  Low order 7 bits are the corresponding bits of the mantissa
+             of the -1'th sample, in [-64..63] regardless of the value of
+             bits_per_sample.  The highest-order bit is never set; this is
+             used to work out the time axis of compressed data.
     Byte 3:  The negative of the conversion exponent c, as int8_t.  (We store
              as the negative because the allowed range of c is [-127..128], and
              an int8_t can store [-128..127].  The conversion exponent is only
@@ -671,22 +740,22 @@ struct CompressionState {
  */
 
 
-
 /** Set the exponent for frame -1 in the header.  This also sets the
-    version number in the lower-order 4 bits.  */
+    version number in the lower-order 4 bits and ensures the top
+    bit is set.  */
 static inline void lilcom_header_set_exponent_m1(int8_t *header, int stride,
                                                  int exponent) {
-  assert(exponent >= 0 && exponent <= 11);
-  header[0 * stride] = (int8_t)(exponent << 4 | LILCOM_VERSION);
+  assert(exponent >= 0 && exponent <= 15);
+  header[0 * stride] = (int8_t)(exponent + (LILCOM_VERSION << 4) + 128);
 }
 
 /** The exponent for the phantom sample at t = -1 is located in the
     4 highest bits of the first byte.  This function returns that
-    value (it does not check it is in the range (0..12)).  */
+    value (it does not check it is in the range (0..15)).  */
 static inline int lilcom_header_get_exponent_m1(const int8_t *header,
                                                 int stride) {
   /** For some reason uint8_t doesn't seem to be defined. */
-  return ((int)((unsigned char)(header[0 * stride]))) >> 4;
+  return (int)(header[0 * stride] & 15);
 }
 
 /**  Check that this is plausibly a lilcom header.  The low-order 4 bits of the
@@ -694,11 +763,12 @@ static inline int lilcom_header_get_exponent_m1(const int8_t *header,
 static inline int lilcom_header_plausible(const int8_t *header,
                                           int stride) {
   /** Currently only one version number is supported. */
-  return ((header[0 * stride] & 0xF) == LILCOM_VERSION) &&
-      lilcom_header_get_exponent_m1(header, stride) <= 11;
+  int byte0 = header[0 * stride], byte2 = header[2 * stride];
+  return (byte0 & 0xF0) == ((LILCOM_VERSION << 4) + 128) &&
+      (byte2 & 128) == 0;
 }
 
-/**  Initialize the header.
+/** Set the conversion_exponent in the header.
         @param [in] header  Pointer to start of the header
         @param [in] stride  Stride of the output int8_t data, normally 1
         @param [in] conversion_exponent   Search above for 'Byte 3:' for an
@@ -721,29 +791,58 @@ static inline int lilcom_header_get_conversion_exponent(
 }
 
 
-/** Set the LPC order in the header.  This goes in byte 1.  Currently it only
-    uses 4 bits since the max LPC order allowed is currently 15.  */
-static inline void lilcom_header_set_lpc_order(int8_t *header,
-                                        int stride, int lpc_order) {
-  assert(lpc_order >= 0 && lpc_order <= MAX_LPC_ORDER);
-  header[1 * stride] = (int8_t)lpc_order;
+/** Set the LPC order, the bits-per-sample and the bit saying
+    whether the num-samples was odd, in the header.
+         @param [out] header  Pointer to start of header
+         @param [in] stride  Stride of header
+         @param [in] lpc_order  lpc order in [0..14].
+         @param [in] bits_per_sample  bits_per_sample in [4..8]
+         @param [in] num_samples_odd  1 if num-samples was odd, else 0.
+   All this goes in byte 1 of the header, i.e. the 2nd byte.
+*/
+static inline void lilcom_header_set_user_configs(
+    int8_t *header, int stride, int lpc_order,
+    int bits_per_sample, int num_samples_odd) {
+  assert(lpc_order >= 0 && lpc_order <= MAX_LPC_ORDER &&
+         bits_per_sample >= 4 && bits_per_sample <= 8 &&
+         num_samples_odd <= 1);
+  header[1 * stride] = (int8_t)lpc_order + ((bits_per_sample - 4) << 4)
+      + (num_samples_odd << 7);
 }
 
 /** Return the LPC order from the header.  Does no range checking!  */
 static inline int lilcom_header_get_lpc_order(const int8_t *header, int stride) {
-  return (int)(header[1 * stride]);
+  return (int)(header[1 * stride] & 15);
 }
 
-/** Set the -1'th sample's mantissa in the header.  This goes in byte 2. */
+/** Returns bits_per_sample from the header; result will be in [4..8].  */
+static inline int lilcom_header_get_bits_per_sample(const int8_t *header, int stride) {
+  return (((unsigned int)(header[1 * stride] & 112)) >> 4) + 4;
+}
+
+/** Returns the parity of the original num-samples from the header,
+    i.e. 0 if it was even, 1 if it was odd. */
+static inline int lilcom_header_get_num_samples_parity(const int8_t *header, int stride) {
+  return ((int)(header[1 * stride] & 128)) != 0;
+}
+
+
+/** Set the -1'th sample's mantissa in the header.  This goes in byte 2.
+    We zero out the highest-order bit, though; this is used in disambiguating
+    the time axis when we decompress.
+ */
 static inline void lilcom_header_set_mantissa_m1(int8_t *header,
                                           int stride, int mantissa) {
   assert(mantissa >= -64 && mantissa <= 63);
-  header[2 * stride] = (int8_t) mantissa;
+  header[2 * stride] = (int8_t) (mantissa & 127);
 }
 /** Return the -1'th sample's mantissa from the header, it's in byte 2. */
 static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
-                                          int stride) {
-  return (int)header[2 * stride];
+                                                int stride) {
+  /** Shifting left and dividing by 2 as an int8_t ensures the highest bit has
+      the same value as the 6th bit, so the sign will be correct.  (We zeroed
+      out the 7th bit when writing to the header.)  */
+  return (int)(((int8_t)(header[2 * stride] << 1)) / 2);
 }
 
 
@@ -755,7 +854,7 @@ static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
        @param [in] t   The time for which we want to know the possible
                        exponent range.  t >= -1.
        @param [in] exponent_tm1   The exponent used for time t-1:
-                       a value in [0..11], otherwise it is an error.
+                       a value in [0..15], otherwise it is an error.
        @return min_exponent  The minimum exponent that time t
                        will be able to use, given exponent_tm1.
                        This equals exponent_tm1 - ((t+exponent_tm1)&1),
@@ -765,23 +864,17 @@ static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
                        a grid you'll see that this choice has nice
                        properties that allows exponents to change
                        quite fast when needed.  The return value is a value
-                       in [-1..11], but currently going to exponent
+                       in [-1..15], but currently going to exponent
                        -1 is "forbidden", meaning the encoded bit for exponent
                        change is bound to be 1 in this case so the
                        exponent for time t would be zero.  We may later
                        make excursions to negative exponents allowed,
-                       which would allow us to save and then pack
+                       which would allow us to save and then re-use
                        bits, e.g. for on-disk formats.
 
-                       CAUTION: conceptually, even though we write the
-                       formula as a function of t, you should view
-                       this as pertaining to t-1, i.e. giving us the
-                       lowest value to which (t-1, exponent_tm1)
-                       can transition.
-
-   Note: the maximum exponent is just min_exponent + 1, because we use 1 bit for
-   the change in exponent; a bit value of 1 means we choose the max, zero means
-   we choose the min.
+   Note: the maximum exponent is just min_exponent + 1 where min_exponent is
+   what this macro returns, because we use 1 bit for the change in exponent; a
+   bit value of 1 means we choose the max, zero means we choose the min.
  */
 #define LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_tm1) (exponent_tm1 - ((((int)t)+exponent_tm1)&1))
 
@@ -823,10 +916,95 @@ static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
 #define LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent_t) (exponent_t - ((((int)t)+exponent_t)&1))
 
 
+
+
+
+/**
+   Commits one block of data from the staging area, beginning at
+   `begin_t` and ending at `end_t - 1`.  Note: any partial bytes
+   will be written out at the end.  This won't be a problem
+   because we ensure that begin_t is always a multiple of
+   STAGING_BLOCK_SIZE which means we always start at the beginning
+   of a byte; the only time we won't end at the end of a byte is
+   at the end of the sequence.
+ */
+static void commit_staging_block(int64_t begin_t,
+                                 int64_t end_t,
+                                 struct CompressionState *state) {
+  int bits_per_sample = state->bits_per_sample,
+      compressed_code_stride = state->compressed_code_stride;
+
+  if (bits_per_sample == 8) {
+    /** Treat this case specially as it can be more efficient.  */
+    int8_t *compressed_code = state->compressed_code;
+    int64_t t = begin_t,
+        s = begin_t % (STAGING_BLOCK_SIZE*NUM_STAGING_BLOCKS);
+    for (; t < end_t; s++, t++) {
+      compressed_code[t*compressed_code_stride] =
+          state->staging_buffer[s];
+    }
+  } else {
+    /** The division below will always be exact because STAGING_BLOCK_SIZE is a
+        multiple of 8. */
+    int64_t s = begin_t % (STAGING_BLOCK_SIZE*NUM_STAGING_BLOCKS);
+    const int8_t *src = state->staging_buffer + s;
+    int8_t *compressed_code = state->compressed_code +
+        compressed_code_stride * ((begin_t * bits_per_sample) / 8);
+    /** Make code unsigned so that right-shift is well defined. */
+    unsigned int code = 0, mask = (1 << bits_per_sample) - 1, bits_in_code = 0;
+    for (int64_t t = begin_t; t < end_t; t++) {
+      code |= ((((int)(unsigned char)(*(src++))) & mask) << bits_in_code);
+      bits_in_code += bits_per_sample;
+      if (bits_in_code >= 8) {  /* Shift off the lowest-order byte */
+        *compressed_code = (int8_t) code;
+        compressed_code += compressed_code_stride;
+        code >>= 8;
+        bits_in_code -= 8;
+      }
+    }
+    if (bits_in_code != 0) {
+      /* Get rid of the last partial byte; this will only be
+         reached at the end of the file. */
+      *compressed_code = (int8_t) code;
+    }
+  }
+}
+
+/**
+   This function writes the compressed code `code` to the buffer in `state`
+   (state->compressed_buffer) and eventually to its permanent home in
+   state->compressed_code.  The reason for introducing the staging area is the
+   complexities introduced when bits_per_sample is != 8.
+ */
+static inline void write_compressed_code(int64_t t,
+                                         int8_t code,
+                                         struct CompressionState *state) {
+  /** Read the following index as t % STAGING_BLOCK_SIZE*NUM_STAGING_BLOCKS,
+      i.e. t modulo the size of the staging buffer. */
+  state->staging_buffer[t & (STAGING_BLOCK_SIZE*NUM_STAGING_BLOCKS - 1)] = code;
+
+
+  /** If the next t value divides STAGING_BLOCK_SIZE, we may have
+      to commit some data to state->compressed_data.  */
+  t++;
+  /** Read the following as `if (t % STAGING_BLOCK_SIZE == 0)`.  The reason for
+      adding `&& (t+1) >= 2*STAGING_BLOCK_SIZE` is that we write out a block at a
+      time, but with a one-block delay.  This prevents any inconvenience caused
+      by backtracking (i.e. we know the previous block is not going to change
+      any more).
+  */
+  if ((t & (STAGING_BLOCK_SIZE - 1)) == 0 && t >= 2*STAGING_BLOCK_SIZE) {
+    commit_staging_block(t - 2*STAGING_BLOCK_SIZE,
+                         t - STAGING_BLOCK_SIZE,
+                         state);
+  }
+}
+
+
 /**
    Computes the least exponent (subject to a caller-specified floor) which
    is sufficient to encode (an approximation of) this residual; also
-   computes the associated mantissa and the next predicted value
+   computes the associated mantissa and the next predicted value.
 
       @param [in] residual  The residual that we are trying to encode,
                      meaning: the observed value minus the value that was
@@ -845,15 +1023,20 @@ static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
                      having to implement extra checks in the decoder).
 
        @param [in] min_exponent  A caller-supplied floor on the exponent;
-                     must be in the range [0, 11].  This function will
+                     must be in the range [0, 15].  This function will
                      never return a value less than this.  min_exponent will
                      normally be the maximum of zero and the previous sample's
                      exponent minus 1, but may be more than that if we are
                      backtracking (because future samples need a larger
                      exponent).
 
+       @param [in]  mantissa_limit  A power of 2 in [4,8,16,32,64],
+                     equal to 1 << (bits_per_sample - 1).  The allowed
+                     range of the mantissa is [-mantissa_limit.. mantissa_limit-1]
+
        @param [out] mantissa  This function will write an integer in
-                    the range [-64, 63] to here, such that
+                    the range [-mantissa_limit.. mantissa_limit-1]
+                    to here, such that
                     (mantissa << exponent) is a close approximation
                     of `residual` and satisfies the property that
                     `predicted + (mantissa << exponent)` does not
@@ -867,7 +1050,7 @@ static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
 
 
    The intention of this function is to return the exponent in the range
-   [min_exponent..11] which gives the closest approximation to `residual` that
+   [min_exponent..15] which gives the closest approximation to `residual` that
    we could get with any exponent, while choosing the lower exponent in case of
    ties.  This is largely what it does, although it may not always do so in the
    corner cases where we needed to modify the mantissa to not exceed the range
@@ -880,36 +1063,33 @@ static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
    as:
             m(e) =  residual / (2^e),
    viewed as an exact mathematical expresion, not as an integer.
+   Let M be shorthand for mantissa_limit (a power of 2).
    We want to return the smallest value of e such that
 
-     -65.0 <= m(e) <= 63.5.
+      -(M+1) <= m(e) <= (M-0.5).
 
    This inequality ensures that there will be no loss of accuracy by choosing e
    instead of e+1 as the exponent.  (If we had a larger exponent, the closest
-   points we'd be able to reach would be equivalent to m(e) = -66 or +64; and if
+   points we'd be able to reach would be equivalent to m(e) = -(M+2) or +M; and if
    m(e) satisfies the inequality above we'd have no loss of precision by using e
-   rather than e + 1 as the exponent.  (Notice that -65.0 is the midpoint of
-   [-66,-64] and 63.5 is the midpoint of [63,64]).  Multiplying by two, we can
+   rather than e + 1 as the exponent.  (Notice that -(M+1) is the midpoint of
+   [-(M+2),-M] and (M-0.5) is the midpoint of [M-1,M]).  Multiplying by two, we can
    express the above in integer math as:
 
-     (-130 << e) <= residual * 2 <= (127 << e)
+     (-(2M+2) << e) <= residual * 2 <= (2M-1) << e)
 
-   NOTE ON THE RANGE OF THE EXPONENT, explaining why it could be as large as 11.
-   The largest-magnitude residual is 65535, which is 13767 - (-13768).  Of the
-   numbers representable by (mantissa in [-64,63]) << (integer exponent),
-   the closest approximation of 65535 is 65536, for which the lowest exponent
-   that can generate that number is 12 (65536 = 32 << 11)
 */
 static inline int least_exponent(int32_t residual,
                                  int16_t predicted,
                                  int min_exponent,
+                                 int mantissa_limit,
                                  int *mantissa,
                                  int16_t *next_decompressed_value) {
-  assert (min_exponent >= 0 && min_exponent <= 11); /* TODO: remove this */
+  assert (min_exponent >= 0 && min_exponent <= 15); /* TODO: remove this */
   int exponent = min_exponent;
   int32_t residual2 = residual * 2,
-      minimum = -130 << exponent,
-      maximum = 127 << exponent;
+      minimum = -(2*mantissa_limit + 2) << exponent,
+      maximum = (2*mantissa_limit - 1) << exponent;
   while (residual2 < minimum || residual2 > maximum) {
     minimum *= 2;
     maximum *= 2;
@@ -918,12 +1098,13 @@ static inline int least_exponent(int32_t residual,
   {
     /**
        This code block computes 'mantissa', the integer mantissa which we call
-       which should be a value in the range [-64, 63].
+       which should be a value in the range [-M, M-1] where M is
+       mantissa_limit
 
        The mantissa will be the result of rounding (residual /
        (float)2^exponent) to the nearest integer (see below for the rounding
        behavior in case of ties, which we randomize); and then, if the result is
-       -65 or +64, changing it to -64 or +63 respectively.
+       -(M+1) or +M, changing it to -M or M-1 respectively.
 
        What we'd like to do, approximately, is to compute
 
@@ -932,24 +1113,25 @@ static inline int least_exponent(int32_t residual,
        where >> can be interpreted, roughly, as division by 2^exponent; but we
        want some control of the rounding behavior.  To maximize accuracy we want
        to round to the closest, like what round() does for floating point
-       expressions; but we want some control of what happens in case of ties.
-       Always rounding towards zero might possibly generate a slight ringing, in
-       certain circumstances (it's a kind of bias toward the LPC prediction), so
-       we want to round in a random direction (up or down).  We choose to round
-       up or down, pseudo-randomly.
+       expressions; but we want some control of what happens in case of ties.  I
+       am concerned that always rounding towards zero might possibly generate a
+       slight ringing, in certain unusual circumstances (it's a kind of bias
+       toward the LPC prediction), so we want to round in a random direction (up
+       or down).  We choose to round up or down, pseudo-randomly.
 
        We'll use (predicted%2) as the source of randomness.  This will be
        sufficiently random for loud signals (varying by more than about 1 or 2
        from sample to sample); and for very quiet signals (magnitude close to 1)
        we'll be exactly coding it anyway so it won't matter.
 
-       Consider the expression:
+       Consider the expression below, which can be considered as an attempt to
+       get the rounding behavior described above:
 
           mantissa = (residual*2 + offset) >> (exponent + 1)
 
-       (and assume >> is the same as division by a power of 2 but rounding down;
-       the C standard coesn't guarantee this behavior but we'll fix that in a
-       different way).
+       (and assume >> is the same as division by a power of 2 but rounding
+       towards -infinity; the C standard coesn't guarantee this behavior but
+       we'll fix that in a different way).
 
         and consider two possibilities for `offset`.
        (a)  offset = (1<<exponent)
@@ -974,29 +1156,33 @@ static inline int least_exponent(int32_t residual,
        negative signed numbers is undefined.
 
        We do this by adding 512 << exponent to "offset".  This becomes 256 when
-       shifting right by (exponent + 1), which will disappear when casting to
-       int8_t.  The 512 also guarantees that (residual2 + offset) is positive
+       we later shift right by (exponent + 1), which will disappear when casting
+       to int8_t.  The 512 also guarantees that (residual2 + offset) is positive
        (since 512 is much greater than 64), and this ensures well-defined
-       rounding behavior.  Note: we will now explicitly make `offset` an int32_t because
-       we don't want 512 << 12 to overflow int is int16_t (super unlikely, I know).
+       rounding behavior.  Note: we will now explicitly make `offset` an int32_t
+       because we don't want 512 << 15 to overflow if int is int16_t (super
+       unlikely, I know).
     */
     int32_t offset = (((int32_t)(512+1)) << exponent) - (predicted&1);
 
-    int local_mantissa = (int)((int8_t)((residual2 + offset) >> (exponent + 1)));
+    int local_mantissa = (int)((int8_t)(((uint32_t)(residual2 + offset)) >> (exponent + 1)));
 
-    assert(local_mantissa >= -65 && local_mantissa <= 64);
+    assert(local_mantissa >= -(mantissa_limit+1) && local_mantissa <= mantissa_limit);
 
-    /* We can't actually represent -65 in 7 bits, but we choose to retain this
-       exponent, in this case, because -65 is as close to -64 (which is
-       representable) as it is to -66 (which is the next closest thing
-       we'd get if we used a one-larger exponent).  */
-    if (local_mantissa == -65)
-      local_mantissa = -64;
+    /*
+       We can't actually represent -(mantissa_limit+1) in the number of bits
+       we're using for the mantissa, but we choose to retain this exponent, in
+       this case, because -(mantissa_limit+1) is as close to -mantissa_limit as
+       it is to -(mantissa_limit+2) which is what we'd be able to use if we used
+       a one-larger exponent.  */
+    if (local_mantissa == -(mantissa_limit+1))
+      local_mantissa = -mantissa_limit;
     /*  The following could happen if we really wanted the mantissa to be
-        exactly 63.5, and `predicted` was even so we rounded up.  It would only
-        happen in case of ties, so we lose no accuracy by doing this. */
-    if (local_mantissa == 64)
-      local_mantissa = 63;
+        exactly mantissa_limit-0.5, and `predicted` was even so we rounded up.
+        This would only happen in case of ties, so we lose no accuracy by doing
+        this. */
+    if (local_mantissa == mantissa_limit)
+      local_mantissa = mantissa_limit-1;
 
     int32_t next_signal_value =
         ((int32_t)predicted) + (((int32_t)local_mantissa) << exponent);
@@ -1006,11 +1192,12 @@ static inline int least_exponent(int32_t residual,
          Checking that the error is in the expected range.  */
       int16_t error = (int16_t)(next_signal_value - (predicted + residual));
       if (error < 0) error = -error;
-      if (local_mantissa > -64) {
+      if (local_mantissa > -mantissa_limit) {
         assert(error <= (1 << exponent) >> 1);
       } else {
-        /** If local_mantissa is -64, the desired mantissa might have been -65,
-            which is twice as large, so we need to make the assert different. */
+        /** If local_mantissa is -mantissa_limit, the desired mantissa might have been
+            -(mantissa_limit+1), meaning the error is twice as large as it could
+            normally be, so we need to make the assert different. */
         assert(error <= (1 << exponent));
       }
     }
@@ -1071,7 +1258,7 @@ void lilcom_compute_lpc(int lpc_order,
         shifted copies of lpc->autocorr.  */
     int max_exponent = lpc->max_exponent;
     assert(max_exponent >= AUTOCORR_LEFT_SHIFT &&
-           (lpc->autocorr[0]) >> (max_exponent - 1) == 1);
+           (((uint64_t)(lpc->autocorr[0])) >> (max_exponent - 1) == 1));
     if (max_exponent > LPC_EST_LEFT_SHIFT) {
       /* shift right (the normal case).  We do it by division, because
          technically the result of shifting a negative number right
@@ -1085,7 +1272,7 @@ void lilcom_compute_lpc(int lpc_order,
       for (int i = 0; i <= lpc_order; i++)
         autocorr[i] = (int32_t)(lpc->autocorr[i] << left_shift);
     }
-    assert((autocorr[0] >> (LPC_EST_LEFT_SHIFT - 1)) == 1);
+    assert((((uint64_t)autocorr[0]) >> (LPC_EST_LEFT_SHIFT - 1)) == 1);
     for (int i = 1; i <= lpc_order; i++) {  /* TODO: remove this loop. */
       assert(lilcom_abs(autocorr[i]) <= autocorr[0]);
     }
@@ -1136,8 +1323,9 @@ void lilcom_compute_lpc(int lpc_order,
         magnitude as an integer is <= 2^LPC_EST_LEFT_SHIFT.  */
 
     /**  Original code: "float c = 1 - ki * ki;"  Note: ki*ki is nonnegative,
-         so shifting right is well defined. */
-    int64_t c = (((int64_t)1) << LPC_EST_LEFT_SHIFT) - ((ki*ki) >> LPC_EST_LEFT_SHIFT);
+         so shifting right corresponds to division. */
+    int64_t c = (((int64_t)1) << LPC_EST_LEFT_SHIFT) -
+            (((uint64_t)(ki*ki)) >> LPC_EST_LEFT_SHIFT);
 
     /** c is the factor by which the residual has been reduced; mathematically
         it is always >= 0, but here it must be > 0 because of our smoothing of
@@ -1148,13 +1336,13 @@ void lilcom_compute_lpc(int lpc_order,
 
     /** The original code did: E *= c;
         Note: the product is int64_t because c is int64_t, which is important
-        to avoid overflow.  Also note: it's only well-defined to right-shift
+        to avoid overflow.  Also note: unsigned right-shift only corresponds to division
         because the result (still an energy E) is nonnegative; in fact,
         E is guaranteed to be positive here because we smoothed the
         0th autocorrelation coefficient (search for variable names containing
         EXTRA_VARIANCE)
     */
-    E = (int32_t)((E * c) >> LPC_EST_LEFT_SHIFT);
+    E = (int32_t)(((uint64_t)(E * c)) >> LPC_EST_LEFT_SHIFT);
     /**
         If E < = 0, it means that something has gone wrong.  We've never
         actually encountered this case, but we want to make sure the algorithm
@@ -1197,8 +1385,9 @@ void lilcom_compute_lpc(int lpc_order,
      assert that E <= autocorr[0] because even if the data is totally
      uncorrelated, we should never be increasing the predicted error vs. having
      no LPC at all.  But I account for the possibility that in pathological
-     cases, rounding errors might make this untrue.  */
-  assert(E > 0 && E <= (autocorr[0] + (autocorr[0] >> 10)));
+     cases, rounding errors might make this untrue.
+  */
+  assert(E > 0 && E <= (autocorr[0] + (((uint64_t)autocorr[0]) >> 10)));
 
 
   /**
@@ -1213,6 +1402,9 @@ void lilcom_compute_lpc(int lpc_order,
   return;
 
 panic:
+#ifndef NDEBUG
+  fprintf(stderr, "Lilcom: warning: panic code reached.\n");
+#endif
   lpc->lpc_coeffs[0] = (1 << LPC_APPLY_LEFT_SHIFT);
   for (int i = 0; i < lpc_order; i++)
     lpc->lpc_coeffs[0] = 0;
@@ -1237,7 +1429,7 @@ static inline int16_t lilcom_compute_predicted_value(
     struct CompressionState *state,
     int64_t t) {
   uint32_t lpc_index =
-      ((uint32_t)(t >> LOG_AUTOCORR_BLOCK_SIZE)) % LPC_ROLLING_BUFFER_SIZE;
+      ((uint32_t)(((uint64_t)t) >> LOG_AUTOCORR_BLOCK_SIZE)) % LPC_ROLLING_BUFFER_SIZE;
   struct LpcComputation *lpc = &(state->lpc_computations[lpc_index]);
 
   int lpc_order = state->lpc_order;
@@ -1251,11 +1443,18 @@ static inline int16_t lilcom_compute_predicted_value(
 
 
   /**
-     The initial value of the sum can be thought of a being
-     (in this fixed-point representation),
-       - 0.5 (in our fixed point representation), so that when we
-         eventually round down it has the effect of rounding-to-the-closest,
+     sum1 and sum2 correspond to two terms in the LPC-prediction calculation,
+     which we break into two for pipelining reasons.  They are stored as
+     unsigned to ensure that overflow behavior is architecture-independent
+     (search for `wildly` below for more information).
+
+     The initial value of sum1 can be thought of a being:
+
+       - 0.5 (converted to this fixed-point representation), which
+         is to ensure we `round-to-closest` rather than round down;
+
          plus ..
+
        - A big number (2^16) that is designed to keep the sum positive, so that
          when, later, we right shift, the behavior is well defined.  Later we'll
          remove this by having it overflow.  It's important that this
@@ -1264,11 +1463,9 @@ static inline int16_t lilcom_compute_predicted_value(
          LILCOM_APPLY_LEFT_SHIFT must be less than 31, to avoid overflowing
          int32_t.
   */
-  int32_t sum = (1 << (LPC_APPLY_LEFT_SHIFT - 1)) +
-      (1 << (LPC_APPLY_LEFT_SHIFT + 16)),
-      sum2 = 0;  /** Break into two sums for pipelining reasons (an
-                  * optimization)  */
-
+  uint32_t sum1 = (1 << (LPC_APPLY_LEFT_SHIFT - 1)) +
+                  (1 << (LPC_APPLY_LEFT_SHIFT + 16)),
+      sum2 = 0;
 
   /** The following is an optimization of a simple loop for i = 0 .. lpc_order -
       1.  It may access a one-past-the-end element if lpc_order is odd, but
@@ -1277,18 +1474,57 @@ static inline int16_t lilcom_compute_predicted_value(
   int i;
   const int32_t *lpc_coeffs = &(lpc->lpc_coeffs[0]);
   for (i = 0; i < lpc_order; i += 2) {
-    sum += lpc_coeffs[i] * decompressed_signal_t[-1-i];
-    sum2 += lpc_coeffs[i+1] * decompressed_signal_t[-2-i];
+    /* Cast them to uint32_t before multiplying, to avoid a crash when
+       the compiler option -ftrapv is used. */
+    sum1 += (uint32_t)lpc_coeffs[i] * (uint32_t)decompressed_signal_t[-1-i];
+    sum2 += (uint32_t)lpc_coeffs[i+1] * (uint32_t)decompressed_signal_t[-2-i];
   }
 
-
   /** The lpc_coeffs were stored times 2^LPC_APPLY_LEFT_SHIFT.  Divide by this
-      to get the integer prediction.  The following corresponds to division by
-      2^LPC_APPLY_LEFT_SHIFT as long as 'sum' is positive, which will be as long
-      as the predicted value is not "wildly out of range" (defined below).
-      Importantly, the expression below gives platform-independent results
-      thanks to casting to unsigned int before doing the right shift. */
-  int32_t predicted = (int32_t)(((uint32_t)(sum + sum2)) >> LPC_APPLY_LEFT_SHIFT);
+      to get the integer prediction `predicted`.  We do the shift in
+      uint32_t to make sure it's well defined.
+
+      Define the `true` predicted value as:
+
+    true_predicted =
+     (sum_{i=0}^{lpc_order-1}  lpc_coeffs[i] * decompressed_signal_t[-1-i]) / 2^LPC_APPLY_LEFT_SHIFT
+      computed exactly as a mathematical expression.
+
+      If true_predicted is in the range [-(1<<16), 1<<16] (which is
+      twice the range of signed int16_t), then we can show that
+      the expression for `predicted` below is the same as
+      (int(true_predicted) + 1<<16), where int() rounds to
+      the closest integer but towards +infinty in case of ties.
+
+      If true_predicted is out of that range, that does not always hold, and we
+      say that this expression `does what it does`.  I.e. we don't worry
+      about the accuracy of the prediction in this highly-pathological
+      case, but just make sure that all expressions are well defined so
+      it's all full deterministic (very important for this algorithm).
+  */
+  int32_t predicted = (int32_t)((sum1 + sum2) >> LPC_APPLY_LEFT_SHIFT);
+
+#ifdef LILCOM_TEST
+  if (1) {  /* This block tests the logic in the comment above "predicted". */
+    int64_t true_predicted = 0;
+    for (i = 0; i < lpc_order; i ++)
+      true_predicted += lpc_coeffs[i] * decompressed_signal_t[-1-i];
+    /* Note we haven't yet divided by 2^LPC_APPLY_LEFT_SHIFT. */
+    if (true_predicted >= -(1<<(16+LPC_APPLY_LEFT_SHIFT)) &&
+        true_predicted <= (1<<(16+LPC_APPLY_LEFT_SHIFT))) {
+      /* The following will ensure true_predicted is nonnegative
+         so that right shift is well defined.. */
+      true_predicted += (1<<(16+LPC_APPLY_LEFT_SHIFT));
+      /* The following is like adding 0.5, which will ensure
+         rounding to the closest integer (but up in case of
+         ties). */
+      true_predicted += (1<<(LPC_APPLY_LEFT_SHIFT - 1));
+      true_predicted >>= LPC_APPLY_LEFT_SHIFT;
+      assert(predicted == true_predicted);
+    }
+  }
+#endif
+
 
   /** Caution: at this point, `predicted` contains the predicted value
       plus 2^16 = 65536.  Recall that we initialized the sum
@@ -1297,16 +1533,7 @@ static inline int16_t lilcom_compute_predicted_value(
   /** Now we deal with the case where the predicted value was outside
       the range [-32768,32764].  Right now `predicted` has 65536 added
       to it so we need to account for that when making the comparisons.
-      The offset 65536 naturally disappears when casting to int16_t.
-
-      Define a "wildly out of range" predicted value as one that was
-      so far outside the range [-32768,32767] that it generated overflow
-      in the int32_t expressions above.  In these cases the sign of
-      the returned value below may not be "correct", if by "correct"
-      we mean the sign it would have had without overflow.
-
-      We just define the expected behavior, in those highly pathological
-      cases, to be "whatever the following code does".
+      The offset 65536 will naturally disappear when casting to int16_t.
   */
 
   /** The following if-statement is a one-shot way of testing "is the variable
@@ -1316,6 +1543,9 @@ static inline int16_t lilcom_compute_predicted_value(
       we need to do some truncation to avoid predicting a value not
       representable as int16_t (allowing the prediction to wrap around would
       degrade fidelity).
+      The above condition is equivalent to (predicted-32768) being in
+      [0..65535], which is what we test first because it makes the fast path
+      faster if there is just one conditional.
    */
   if (((predicted - 32768) & ~(int32_t)65535) != 0) {
     if (predicted > 32767 + 65536)
@@ -1375,7 +1605,7 @@ void lilcom_update_autocorrelation_and_lpc(
   /** The expressions below are defined because the args to '%' are unsigned;
       modulus for negative args is implementation-defined according to the C
       standard.  */
-  uint32_t lpc_index = ((uint32_t)(t >> LOG_AUTOCORR_BLOCK_SIZE)) % LPC_ROLLING_BUFFER_SIZE,
+  uint32_t lpc_index = ((uint32_t)(((uint64_t)t) >> LOG_AUTOCORR_BLOCK_SIZE)) % LPC_ROLLING_BUFFER_SIZE,
       prev_lpc_index = (lpc_index + LPC_ROLLING_BUFFER_SIZE - 1) % LPC_ROLLING_BUFFER_SIZE;
 
   struct LpcComputation *this_lpc = &(state->lpc_computations[lpc_index]);
@@ -1456,7 +1686,7 @@ static inline int lilcom_compress_for_time_internal(
     int min_allowed_exponent,
     struct CompressionState *state) {
   assert(t > 0 && min_codable_exponent >= -1 &&
-         min_codable_exponent <= 11 &&
+         min_codable_exponent <= 15 &&
          (min_allowed_exponent == min_codable_exponent ||
           min_allowed_exponent == min_codable_exponent + 1) &&
          min_allowed_exponent >= 0);
@@ -1479,13 +1709,13 @@ static inline int lilcom_compress_for_time_internal(
       not fit in int16. */
   int32_t residual = ((int32_t)observed_value) - ((int32_t)predicted_value);
 
-  int mantissa,
+  int mantissa_limit = state->mantissa_limit, mantissa,
       exponent = least_exponent(
           residual, predicted_value,
-          min_allowed_exponent, &mantissa,
+          min_allowed_exponent, mantissa_limit, &mantissa,
           &(state->decompressed_signal[MAX_LPC_ORDER+(t&(SIGNAL_BUFFER_SIZE-1))]));
 
-  assert(exponent <= 11);
+  assert(exponent <= 15);
 
   int exponent_delta = exponent - min_codable_exponent;
   assert(exponent_delta >= 0);
@@ -1493,9 +1723,8 @@ static inline int lilcom_compress_for_time_internal(
   if (exponent_delta <= 1) {
     /** Success; we can represent this.  This is (hopefully) the normal code
         path. */
-    assert(mantissa >= -64 && mantissa < 64);
-    state->compressed_code[t*state->compressed_code_stride] =
-        (int8_t)((mantissa << 1) + exponent_delta);
+    assert(mantissa >= -mantissa_limit && mantissa < mantissa_limit);
+    write_compressed_code(t, (int8_t)((mantissa << 1) + exponent_delta), state);
     state->exponents[t & (EXPONENT_BUFFER_SIZE - 1)] = exponent;
     return exponent;
   } else {
@@ -1513,10 +1742,13 @@ static inline int lilcom_compress_for_time_internal(
   contains an exponent and a mantissa for t == -1, which gives us a good
   starting point).
 
-    @param [in] min_exponent  A number in the range [0, 11]; the caller
+    @param [in] min_exponent  A number in the range [0, 15]; the caller
                   requires the exponent for time t = 0 to be >= min_exponent.
                   (Normally 0, but may get called with values >0 if
                   called from backtracking code.)
+    @param [in] mantissa_limit  This is 1 << (bits_per_sample - 2), e.g.
+                  64 if bits_per_sample is 8.  Will be one of
+                  [4,8,16,32,64].
     @param [in,out] state  Stores shared state and the input and output
                   sequences.  The primary output is to
                   state->compressed_code[0], but the 4-byte header is also
@@ -1526,13 +1758,12 @@ static inline int lilcom_compress_for_time_internal(
 void lilcom_compress_for_time_zero(
     int min_exponent,
     struct CompressionState *state) {
-  int c_stride = state->compressed_code_stride;
   int header_stride = state->compressed_code_stride;
   int8_t *header = state->compressed_code -
       (LILCOM_HEADER_BYTES * header_stride);
 
   int16_t first_signal_value = state->input_signal[0];
-  assert(min_exponent >= 0 && min_exponent <= 12);
+  assert(min_exponent >= 0 && min_exponent <= 15);
   /** m1 refers to -1 (sample-index minus one). */
   int sample_m1_min_exponent =
       LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(0, min_exponent);
@@ -1546,6 +1777,7 @@ void lilcom_compress_for_time_zero(
       exponent_m1 = least_exponent(residual_m1,
                                    predicted_m1,
                                    sample_m1_min_exponent,
+                                   64, /** Note,mantissa_limit not used here! */
                                    &mantissa_m1, &signal_m1);
   {  /** Set the exponent and mantissa for t == -1 in the header. */
     assert(exponent_m1 >= 0);
@@ -1577,6 +1809,7 @@ void lilcom_compress_for_time_zero(
       exponent_0 = least_exponent(residual_0,
                                   predicted_0,
                                   min_exponent,
+                                  state->mantissa_limit,
                                   &mantissa_0,
                                   &(state->decompressed_signal[MAX_LPC_ORDER + 0]));
   int exponent_bit = exponent_0 - min_codable_exponent0;
@@ -1586,10 +1819,9 @@ void lilcom_compress_for_time_zero(
       be sufficiently large for sample 0; that's how we can guarantee
       delta_exponent <= 2.  */
   assert(exponent_bit >= 0 && exponent_bit <= 1 &&
-         mantissa_0 >= -64 && mantissa_0 <= 63);
+         mantissa_0 >= -state->mantissa_limit && mantissa_0 < state->mantissa_limit);
 
-  state->compressed_code[0 * c_stride] =
-      (int8_t)((mantissa_0 << 1) + exponent_bit);
+  write_compressed_code(0, (int8_t)((mantissa_0 << 1) + exponent_bit), state);
 
   for (int i = 0; i < MAX_LPC_ORDER; i++) {
     /** All samples prior to t=0 are treated as having zero value for purposes of
@@ -1637,7 +1869,8 @@ void lilcom_compress_for_time_backtracking(
 
     if (prev_exponent < prev_exponent_floor) {
       /** We need to revisit the exponent for sample t-1. */
-      lilcom_compress_for_time_backtracking(t - 1, prev_exponent_floor, state);
+      lilcom_compress_for_time_backtracking(t - 1, prev_exponent_floor,
+                                            state);
       prev_exponent = state->exponents[(t-1)&(EXPONENT_BUFFER_SIZE-1)];
       assert(prev_exponent >= prev_exponent_floor);
     }
@@ -1657,7 +1890,6 @@ void lilcom_compress_for_time_backtracking(
          happen, as if previous samples are coded differently the LPC prediction
          would change.].  We can deal with this case via recursion.  */
       exponent = -exponent;
-      /* fprintf(stderr, "Hit unusual code path\n"); */
       assert(exponent > min_codable_exponent + 1 && exponent > min_exponent);
       lilcom_compress_for_time_backtracking(t, exponent, state);
     }
@@ -1708,8 +1940,11 @@ static inline void lilcom_init_compression(
     int64_t num_samples,
     const int16_t *input, int input_stride,
     int8_t *output, int output_stride,
-    int lpc_order, int conversion_exponent,
+    int lpc_order, int bits_per_sample,
+    int conversion_exponent,
     struct CompressionState *state) {
+  state->bits_per_sample = bits_per_sample;
+  state->mantissa_limit = 1 << (bits_per_sample - 2);
   state->lpc_order = lpc_order;
 
   lilcom_init_lpc(&(state->lpc_computations[0]), lpc_order);
@@ -1736,8 +1971,13 @@ static inline void lilcom_init_compression(
 
   lilcom_header_set_conversion_exponent(output, output_stride,
                                         conversion_exponent);
-  lilcom_header_set_lpc_order(output, output_stride,
-                              state->lpc_order);
+  lilcom_header_set_user_configs(output, output_stride,
+                                 lpc_order, bits_per_sample,
+                                 num_samples % 2);
+  /* TODO: Remove the following. */
+  assert(lilcom_header_get_lpc_order(output, output_stride) == lpc_order &&
+         lilcom_header_get_bits_per_sample(output, output_stride) == bits_per_sample &&
+         lilcom_header_get_num_samples_parity(output, output_stride) == num_samples % 2);
 
   /** The remaining parts of the header will be initialized in
       lilcom_compress_for_time_zero`. */
@@ -1745,29 +1985,87 @@ static inline void lilcom_init_compression(
   lilcom_compress_for_time_zero(min_exponent, state);
 }
 
+/*  See documentation in lilcom.h.  */
+int64_t lilcom_get_num_bytes(int64_t num_samples,
+                             int bits_per_sample) {
+  if (!(num_samples > 0 && bits_per_sample >= 4 &&
+        bits_per_sample <= 8))
+    return -1;
+  else
+    return 4 + (bits_per_sample * num_samples  +  7) / 8;
+}
+
+
 
 /*  See documentation in lilcom.h  */
-int lilcom_compress(int64_t num_samples,
-                    const int16_t *input, int input_stride,
-                    int8_t *output, int output_stride,
-                    int lpc_order, int conversion_exponent) {
+int lilcom_compress(
+    const int16_t *input, int64_t num_samples, int input_stride,
+    int8_t *output, int64_t num_bytes, int output_stride,
+    int lpc_order, int bits_per_sample, int conversion_exponent) {
   if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
       lpc_order < 0 || lpc_order > MAX_LPC_ORDER ||
-      conversion_exponent < -127 || conversion_exponent > 128) {
+      bits_per_sample < 4 || bits_per_sample > 8 ||
+      conversion_exponent < -127 || conversion_exponent > 128 ||
+      num_bytes != lilcom_get_num_bytes(num_samples, bits_per_sample))
     return 1;  /* error */
-  }
+
   struct CompressionState state;
   lilcom_init_compression(num_samples, input, input_stride,
                           output, output_stride, lpc_order,
-                          conversion_exponent, &state);
+                          bits_per_sample, conversion_exponent,
+                          &state);
 
   for (int64_t t = 1; t < num_samples; t++)
     lilcom_compress_for_time(t, &state);
 
-  assert(fprintf(stderr, "Backtracked %f%% of the time\n",
-                 ((state.num_backtracks * 100.0) / num_samples)) || 1);
+  /** We write the staging blocks with a delay, so there will be at least
+      one to flush out and possibly two. */
+  int64_t start_t = 0;
+  if (num_samples > STAGING_BLOCK_SIZE) {
+    start_t = (num_samples - STAGING_BLOCK_SIZE) & ~(STAGING_BLOCK_SIZE-1);
+  }
+  while (start_t < num_samples) {
+    int64_t end_t = start_t + STAGING_BLOCK_SIZE;
+    if (end_t > num_samples)
+      end_t = num_samples;
+    commit_staging_block(start_t, end_t, &state);
+    start_t = end_t;
+  }
+#ifndef NDEBUG
+  fprintf(stderr, "Backtracked %f%% of the time\n",
+          ((state.num_backtracks * 100.0) / num_samples));
+#endif
 
   return 0;
+}
+
+
+/**  This function extracts a signed mantissa from an integer compressed code
+
+       @param [in] code  The lowest-order `bits_per_sample` bits of `code`
+                     are the compressed code, which is the lowest-order
+                     `bits_per_sample` bits of (exponent_bit | (mantissa << 1)).
+                     Thus, the bits numbered 1 through bits_per_sample - 1
+                     of code are to be interpreted as a 2s-complement
+                     integer with `bits_per_sample - 1` bits in it.
+                     The higher-order bits of `code` are undefined and may
+                     have any value.
+
+       @param [in] bits_per_sample  The bits per sample of our code in [4..8].
+
+    @return  Returns the mantissa.
+*/
+static inline int extract_mantissa(int code, int bits_per_sample) {
+  /*
+     The first term in the outer-level 'or' is all the `bits_per_sample-1` of
+     the mantissa, which will be correct for positive mantissa but for
+     negative mantissa we need all the higher-order-than-bits_per_sample bits
+     to be set as well.  That's what the second term in the or is for.  The
+     big number is 2^31 - 1, which means that we duplicate that bit (think of
+     it as the sign bit), at its current position and at all positions to its
+     left.  */
+  return ((((unsigned int)code) >> 1) & ((1<<(bits_per_sample - 1)) - 1)) |
+      ((((unsigned int)code) & (1<<(bits_per_sample-1)))*2147483647);
 }
 
 
@@ -1778,13 +2076,17 @@ int lilcom_compress(int64_t num_samples,
 
       @param [in] t    The current time index, cast to int; we actually
                      only need its lowest-order bit.
-      @param [in] input_code  The int8_t code for the sample that
-                      we are about to decompress.
+      @param [in] bits_per_sample  The number of bits per sample,
+                     in [4..8].
       @param [in] lpc_order  The order of the LPC computation,
                      a number in [0..LPC_MAX_ORDER] obtained from
                      the header.
       @param [in] lpc_coeffs  The LPC coefficients, multiplied
                      by 2^23 and represented as integers.
+      @param [in] input_code  The code for the sample that
+                      we are about to decompress.  Its lower-order
+                      `bits_per_sample` bits correspond to the code;
+                      its higher-order bit values are undefined.
       @param [in,out] output_sample  A pointer to the output sample
                      for time t.  CAUTION: this function assumes that
                      `output_sample` this is a pointer to an array with stride 1
@@ -1805,9 +2107,10 @@ int lilcom_compress(int64_t num_samples,
  */
 static inline int lilcom_decompress_one_sample(
     int64_t t,
-    int8_t input_code,
+    int bits_per_sample,
     int lpc_order,
     const int32_t *lpc_coeffs,
+    int input_code,
     int16_t *output_sample,
     int *exponent) {
 
@@ -1816,12 +2119,14 @@ static inline int lilcom_decompress_one_sample(
   { /** This block computes the predicted value.  For explanation please
         look for similar statements in `lilcom_compute_predicted_value()`,
         which is well documented. */
-    int32_t sum = (1 << (LPC_APPLY_LEFT_SHIFT - 1)) +
-        (1 << (LPC_APPLY_LEFT_SHIFT + 16));
-    int i;
-    for (i = 0; i < lpc_order; i++)
-      sum += lpc_coeffs[i] * output_sample[-1-i];
-    int32_t predicted = (int32_t)(((uint32_t)sum) >> LPC_APPLY_LEFT_SHIFT);
+    uint32_t sum1 = (1 << (LPC_APPLY_LEFT_SHIFT - 1)) +
+        (1 << (LPC_APPLY_LEFT_SHIFT + 16)), sum2 = 0;
+
+    for (int i = 0; i < lpc_order; i += 2) {
+      sum1 += (uint32_t)lpc_coeffs[i] * (uint32_t)output_sample[-1-i];
+      sum2 += (uint32_t)lpc_coeffs[i+1] * (uint32_t)output_sample[-2-i];
+    }
+    int32_t predicted = (int32_t)((sum1 + sum2) >> LPC_APPLY_LEFT_SHIFT);
     if (((predicted - 32768) & ~65535) != 0) {
       if (predicted > 32767 + 65536)
         predicted = 65536 + 32767;
@@ -1832,10 +2137,13 @@ static inline int lilcom_decompress_one_sample(
     predicted_sample = (int16_t)predicted;
   }
 
-  if (((unsigned int)*exponent) > 11) {
-    /** If `exponent` is not in the range [0,11], something is wrong.
+  if (((unsigned int)*exponent) > 15) {
+    /** If `exponent` is not in the range [0,15], something is wrong.
         We return 1 on failure.  */
-    printf("Bad exponent!\n");  // TEMP
+#ifndef NDEBUG
+    fprintf(stderr, "Decompression failed, bad exponent %d at t=%d\n",
+            (int)*exponent, (int)t);
+#endif
     return 1;
   }
 
@@ -1850,7 +2158,7 @@ static inline int lilcom_decompress_one_sample(
    */
   int exponent_bit = (input_code & 1),
       min_codable_exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, *exponent),
-      mantissa = (input_code & ~((int8_t)1)) / 2;
+      mantissa = extract_mantissa(input_code, bits_per_sample);
   *exponent = min_codable_exponent + exponent_bit;
 
   assert(*exponent >= 0);
@@ -1860,6 +2168,10 @@ static inline int lilcom_decompress_one_sample(
   if (((new_sample + 32768) & ~(int32_t)65535) != 0) {
     /** If `new_sample` is outside the range [-32768 .. 32767], it
         is an error; we should not be generating such samples. */
+#ifndef NDEBUG
+    fprintf(stderr, "lilcom: decompression failure (corruption?): new_sample = %d\n",
+            (int)new_sample);
+#endif
     return 1;
   }
   output_sample[0] = new_sample;
@@ -1871,6 +2183,9 @@ static inline int lilcom_decompress_one_sample(
 /*
   This function attempts to obtain the first sample (the one for t = 0).
     @param [in] header   Pointer to the beginning of the header.
+    @param [in] code_0   The compressed code value for time t=0 are in
+                        the lower-order `bits_per_sample` bits of this;
+                        the remaining bits are undefined.
     @paran [in] input_stride  Stride between elements of `header`
                         (naturally, past the header there are real samples,
                         with the same stride).
@@ -1882,7 +2197,7 @@ static inline int lilcom_decompress_one_sample(
              input).
  */
 static inline int lilcom_decompress_time_zero(
-    const int8_t *header, int input_stride,
+    const int8_t *header, int code_0, int input_stride, int bits_per_sample,
     int16_t *output, int *exponent) {
   int exponent_m1 = lilcom_header_get_exponent_m1(header, input_stride),
       mantissa_m1 = lilcom_header_get_mantissa_m1(header, input_stride);
@@ -1890,11 +2205,13 @@ static inline int lilcom_decompress_time_zero(
       input.  We already checked the exponent range in
      `lilcom_header_plausible`.  */
   assert(mantissa_m1 >= -64 && mantissa_m1 < 64 &&
-         exponent_m1 >= 0 && exponent_m1 <= 11);
+         exponent_m1 >= 0 && exponent_m1 <= 15);
   int32_t sample_m1 = mantissa_m1 << exponent_m1;
-  int8_t code_0 = header[input_stride * LILCOM_HEADER_BYTES];
-  int exponent_bit = (code_0 & 1),
-      mantissa = (code_0 & ~(int8_t)1) / 2;
+
+  int32_t
+      exponent_bit = (code_0 & 1),
+      mantissa = extract_mantissa(code_0, bits_per_sample);
+
   *exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(0, exponent_m1) + exponent_bit;
   int32_t sample_0 = sample_m1 + (mantissa << *exponent);
   if (((sample_0 + 32768) & ~(int32_t)65535) != 0) {
@@ -1907,28 +2224,112 @@ static inline int lilcom_decompress_time_zero(
 
 
 
-int lilcom_decompress(int64_t num_samples,
-                      const int8_t *input, int input_stride,
-                      int16_t *output, int output_stride,
+int64_t lilcom_get_num_samples(const int8_t *input,
+                               int64_t input_length,
+                               int input_stride) {
+  if (input_length <= 5 || input_stride == 0 ||
+      !lilcom_header_plausible(input, input_stride))
+    return -1;  /** Error */
+  int bits_per_sample = lilcom_header_get_bits_per_sample(input, input_stride),
+      parity = lilcom_header_get_num_samples_parity(input, input_stride);
+  /* num_samples is set below to the maximum number of samples that could be
+     encoded by `input_length` bytes.  There may be some ambiguity because we
+     had to round up to a multiple of 8 bits when compressing, (i.e. the
+     original number of samples might have been one less), so we use 'parity' to
+     disambiguate.
+  */
+  int64_t num_samples = ((input_length - 4) * 8) / bits_per_sample;
+
+  if (num_samples % 2 != parity)
+    num_samples--;
+  return num_samples;
+}
+
+/**
+   This is a function used in lilcom_decompress, which we have broken out here
+   for clarity but we strongly anticipate will be inlined.  It gets the next
+   compressed code (this is necessary because if bits_per_sample != 8, it's
+   not trivial to just look up the codes.
+   This funnction is assumed to be called in order for t=0, t=1, and so on.)
+
+      @param [in]      bits_per_sample  The bits per sample, in [4..8].
+      @param [in,out]  leftover_bits   This is a value that the user should initialize
+                        to 0 before calling this for the first time.  It will
+                        get new input bytes added into its higher bits and
+                        they will get shifted off by bits_per_sample bits
+                        at a time as we consume sample.
+      @param [in,out]  num_bits  This is a value that the user should initialize
+                        to 0 before calling this for the first time.  It is
+                        the number of bits currently in `leftover_bits`.  It will increase
+                        8 at a time and decrease bits_per_sample bits at a time.
+      @param [in,out] cur_input  Pointer to a pointer to the current input
+                        byte.  This function will add input_stride to the pointer
+                        each time we consume a byte.
+      @param [in]  input_stride  The stride of the compressed code (would normally
+                        be 1.)
+      @return     Returns a number whose lower-order `bits_per_sample` bits
+                  correspond to the next compressed sample.  (The bits with
+                  higher order than that are undefined and may have any value)
+ */
+static inline int lilcom_get_next_compressed_code(
+    int bits_per_sample, unsigned int *leftover_bits, int *num_bits,
+    const int8_t **cur_input, int input_stride) {
+  if (*num_bits < bits_per_sample) {
+    /** We need more bits.  Put them above (i.e. higher-order-than) any bits we
+        have currently. */
+    *leftover_bits |= (((int)((unsigned char)(**cur_input))) << *num_bits);
+    *cur_input += input_stride;
+    *num_bits += 8;
+  }
+  /** Now we know that *num_bits >= bits_per_sample, because bits_per_sample
+      is in [4..8] and we never let num_bits become negative. */
+  int ans = *leftover_bits;
+  *leftover_bits >>= bits_per_sample;
+  *num_bits -= bits_per_sample;
+  /** As documented above, the higher-order bits of ans are actually
+   * undefined. */
+  return ans;
+}
+
+
+int lilcom_decompress(const int8_t *input, int64_t num_bytes, int input_stride,
+                      int16_t *output, int64_t num_samples, int output_stride,
                       int *conversion_exponent){
   if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
-      !lilcom_header_plausible(input, input_stride))
+      !lilcom_header_plausible(input, input_stride) ||
+      num_samples != lilcom_get_num_samples(input, num_bytes, input_stride)) {
+#ifndef NDEBUG
+    fprintf(stderr,
+            "lilcom: Warning: bad header, num-bytes=%d, num-samples=%d, input-stride=%d\n",
+            (int)num_bytes, (int)num_samples, (int)input_stride);
+#endif
     return 1;  /** Error */
+  }
 
-  int lpc_order = lilcom_header_get_lpc_order(input, input_stride);
+  int lpc_order = lilcom_header_get_lpc_order(input, input_stride),
+      bits_per_sample = lilcom_header_get_bits_per_sample(input, input_stride);
+
   *conversion_exponent = lilcom_header_get_conversion_exponent(
       input, input_stride);
 
+  /** cur_input will always point to the next byte to be extracted
+      from the stream. */
+  const int8_t *cur_input = input + (input_stride * LILCOM_HEADER_BYTES);
+
+  int num_bits = 0;
+  unsigned int leftover_bits = 0;
+
+  int code_0 = lilcom_get_next_compressed_code(
+      bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
   int exponent;
-  if (lilcom_decompress_time_zero(input, input_stride,
-                                  &(output[0]),
-                                  &exponent))
+  if (lilcom_decompress_time_zero(input, code_0, input_stride, bits_per_sample,
+                                  &(output[0]), &exponent)) {
+#ifndef NDEBUG
+    fprintf(stderr, "lilcom: decompressing: error uncmopressing time zero "
+            "(Maybe not lilcom-compressed data?)\n");
+#endif
     return 1;  /** Error */
-
-  /** This is called input 4 because (if stride == 1)
-      it's 4 bytes past input. */
-  const int8_t *input4  = input + (input_stride * LILCOM_HEADER_BYTES);
-
+  }
   struct LpcComputation lpc;
   lilcom_init_lpc(&lpc, lpc_order);
   /** The following is necessary because of some loop unrolling we do while
@@ -1949,12 +2350,19 @@ int lilcom_decompress(int64_t num_samples,
   output_buffer[MAX_LPC_ORDER] = output[0];
   int t;
   for (t = 1; t < AUTOCORR_BLOCK_SIZE && t < num_samples; t++) {
-    if (lilcom_decompress_one_sample(t, input4[t * input_stride],
-                                     lpc_order, lpc.lpc_coeffs,
-                                     &(output_buffer[MAX_LPC_ORDER + t]),
-                                     &exponent))
-      return 1;  /** Error */
+    int code = lilcom_get_next_compressed_code(
+        bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
 
+    if (lilcom_decompress_one_sample(t, bits_per_sample, lpc_order,
+                                     lpc.lpc_coeffs, code,
+                                     &(output_buffer[MAX_LPC_ORDER + t]),
+                                     &exponent)) {
+#ifndef NDEBUG
+      fprintf(stderr, "lilcom: decompression failure for t=%d\n",
+              (int)t);
+#endif
+      return 1;  /** Error */
+    }
     output[t * output_stride] = output_buffer[MAX_LPC_ORDER + t];
   }
   if (t >= num_samples)
@@ -1995,13 +2403,20 @@ int lilcom_decompress(int64_t num_samples,
       }
       int64_t local_max_t = (t + AUTOCORR_BLOCK_SIZE < num_samples ?
                              t + AUTOCORR_BLOCK_SIZE : num_samples);
-      for (; t < local_max_t; t++)
-        if (lilcom_decompress_one_sample(t,
-                                         input4[t * input_stride],
-                                         lpc_order, lpc.lpc_coeffs,
-                                         output + t,
-                                         &exponent))
+      for (; t < local_max_t; t++) {
+        int code = lilcom_get_next_compressed_code(
+            bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
+        if (lilcom_decompress_one_sample(
+                t, bits_per_sample, lpc_order,
+                lpc.lpc_coeffs, code,
+                output + t, &exponent)) {
+#ifndef NDEBUG
+          fprintf(stderr, "lilcom: decompression failure for t=%d\n",
+                  (int)t);
+#endif
           return 1;  /** Error */
+        }
+      }
     }
     return 0;  /** Success */
   } else {
@@ -2042,11 +2457,19 @@ int lilcom_decompress(int64_t num_samples,
       int64_t local_max_t = (t + AUTOCORR_BLOCK_SIZE < num_samples ?
                              t + AUTOCORR_BLOCK_SIZE : num_samples);
       for (; t < local_max_t; t++) {
-        if (lilcom_decompress_one_sample(t, input4[t * input_stride],
-                                         lpc_order, lpc.lpc_coeffs,
-                                         output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1)),
-                                         &exponent))
+        int code = lilcom_get_next_compressed_code(
+            bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
+
+        if (lilcom_decompress_one_sample(
+                t, bits_per_sample, lpc_order, lpc.lpc_coeffs, code,
+                output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1)),
+                &exponent)) {
+#ifndef NDEBUG
+          fprintf(stderr, "lilcom: decompression failure for t=%d\n",
+                  (int)t);
+#endif
           return 1;  /** Error */
+        }
 
         output[t * output_stride] =
             output_buffer[MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1))];
@@ -2063,12 +2486,12 @@ int lilcom_decompress(int64_t num_samples,
    optimization levels we cannot always rely on this behavior so officially
    the behavior with inputs with NaN's is undefined.
 
+      @param [in] input            The input array
       @param [in] num_samples      The number of elements in the array.
-      @param [in] sinput                The input array
       @param [in] stride           The stride between array elements;
                                  usually 1.
  */
-float max_abs_float_value(int64_t num_samples, const float *input, int stride) {
+float max_abs_float_value(const float *input, int64_t num_samples, int stride) {
   int64_t t;
 
   float max_abs_value = 0.0;
@@ -2172,7 +2595,6 @@ int compute_conversion_exponent(float max_abs_value) {
   frexpf(max_abs_value, &i);
   i += 1;
 
-
   /**
      The range of base-2 exponents allowed for single-precision floating point
      numbers is [-126..127].  If we get to close to the edges of this range, we
@@ -2197,7 +2619,10 @@ int compute_conversion_exponent(float max_abs_value) {
 
   if (i == 1000 || i == -1000) {
     /** This point should never be reached. */
-    fprintf(stderr, "Warning: something went wrong while finding the exponent\n");
+#ifndef NDEBUG
+    fprintf(stderr, "lilcom: warning: something went wrong while "
+            "finding the exponent: i=%d\n", i);
+#endif
     return -256;
   }
 
@@ -2208,24 +2633,31 @@ int compute_conversion_exponent(float max_abs_value) {
   return i;
 }
 
-int lilcom_compress_float(int64_t num_samples,
-                          const float *input, int input_stride,
-                          int8_t *output, int output_stride,
-                          int lpc_order, int16_t *temp_space) {
-  assert(num_samples > 0);
+int lilcom_compress_float(
+    const float *input, int64_t num_samples, int input_stride,
+    int8_t *output, int64_t num_bytes, int output_stride,
+    int lpc_order, int bits_per_sample, int16_t *temp_space) {
+
+  if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
+      lpc_order < 0 || lpc_order > MAX_LPC_ORDER ||
+      bits_per_sample < 4 || bits_per_sample > 8 ||
+      num_bytes != lilcom_get_num_bytes(num_samples, bits_per_sample))
+    return 1;  /* error */
+
   if (temp_space == NULL) {
     /* Allocate temp array and recurse. */
     int16_t *temp_array = malloc(sizeof(int16_t) * num_samples);
     if (temp_array == NULL)
       return 2;  /* Special error code for this situation. */
-    int ans = lilcom_compress_float(num_samples, input, input_stride,
-                                    output, output_stride,
-                                    lpc_order, temp_array);
+    int ans = lilcom_compress_float(input, num_samples, input_stride,
+                                    output, num_samples, output_stride,
+                                    lpc_order, bits_per_sample,
+                                    temp_array);
     free(temp_array);
     return ans;
   }
 
-  float max_abs_value = max_abs_float_value(num_samples, input, input_stride);
+  float max_abs_value = max_abs_float_value(input, num_samples, input_stride);
   if (max_abs_value - max_abs_value != 0)
     return 1;  /* Inf's or Nan's detected */
   int conversion_exponent = compute_conversion_exponent(max_abs_value);
@@ -2280,19 +2712,22 @@ int lilcom_compress_float(int64_t num_samples,
     }
   }
 
-  int ret = lilcom_compress(num_samples, temp_space, 1,
-                            output, output_stride,
-                            lpc_order, conversion_exponent);
+  int ret = lilcom_compress(temp_space, num_samples, 1,
+                            output, num_bytes, output_stride,
+                            lpc_order, bits_per_sample,
+                            conversion_exponent);
   return ret;  /* 0 for success, 1 for failure, e.g. if lpc_order out of
                   range. */
 }
 
 
-int lilcom_decompress_float(int64_t num_samples,
-                            const int8_t *input, int input_stride,
-                            float *output, int output_stride) {
-  /* We re-use the output as the temporary int16_t array,
-   */
+int lilcom_decompress_float(
+    const int8_t *input, int64_t num_bytes, int input_stride,
+    float *output, int64_t num_samples, int output_stride) {
+  if (num_bytes < 5 || input_stride == 0 || output_stride == 0 ||
+      num_samples != lilcom_get_num_samples(input, num_bytes, input_stride))
+    return 1;  /* Error */
+  /* Note: we re-use the output as the temporary int16_t array */
   int16_t *temp_array = (int16_t*)output;
   int temp_array_stride;
   if (output_stride == 1) {
@@ -2301,13 +2736,13 @@ int lilcom_decompress_float(int64_t num_samples,
     temp_array_stride = output_stride * (sizeof(float) / sizeof(int16_t));
   }
   int conversion_exponent;
-  int ans = lilcom_decompress(num_samples, input, input_stride,
-                              temp_array, temp_array_stride,
+  int ans = lilcom_decompress(input, num_bytes, input_stride,
+                              temp_array, num_samples, temp_array_stride,
                               &conversion_exponent);
   if (ans != 0)
     return ans;  /* the only other possible value is 1, actually. */
 
-  assert(conversion_exponent >= -127 && conversion_exponent <= 128);  /* TODO: Remove this. */
+  assert(conversion_exponent >= -127 && conversion_exponent <= 128);
 
   int adjusted_exponent = conversion_exponent - 15;
 
@@ -2340,7 +2775,6 @@ int lilcom_decompress_float(int64_t num_samples,
 }
 
 
-
 #ifdef LILCOM_TEST
 
 #include <math.h>
@@ -2350,7 +2784,14 @@ int lilcom_decompress_float(int64_t num_samples,
     various relationships between the #defined constants are satisfied.
 */
 static inline int lilcom_check_constants() {
-  assert(EXPONENT_BUFFER_SIZE > 24);
+  /* At some point we use 1 << (LPC_APPLY_LEFT_SHIFT + 16) as an int32 and we
+     want to preclude overflow. */
+  assert(LPC_APPLY_LEFT_SHIFT + 16 < 31);
+  assert(STAGING_BLOCK_SIZE > 2*MAX_POSSIBLE_EXPONENT);
+  assert((STAGING_BLOCK_SIZE & (STAGING_BLOCK_SIZE - 1)) == 0);
+  assert(NUM_STAGING_BLOCKS >= 3);
+  assert((NUM_STAGING_BLOCKS & (NUM_STAGING_BLOCKS-1)) == 0);
+  assert(EXPONENT_BUFFER_SIZE > 2*MAX_POSSIBLE_EXPONENT);
   assert((LPC_ROLLING_BUFFER_SIZE - 1) * AUTOCORR_BLOCK_SIZE > 24);
   assert(MAX_LPC_ORDER >> LPC_ORDER_BITS == 0);
   assert(MAX_LPC_ORDER % 2 == 0);
@@ -2384,6 +2825,7 @@ static inline int lilcom_check_constants() {
   assert(SIGNAL_BUFFER_SIZE % AUTOCORR_BLOCK_SIZE == 0);
   assert((SIGNAL_BUFFER_SIZE & (SIGNAL_BUFFER_SIZE - 1)) == 0);  /* Power of 2. */
   assert(SIGNAL_BUFFER_SIZE > AUTOCORR_BLOCK_SIZE + EXPONENT_BUFFER_SIZE + MAX_LPC_ORDER);
+
   return 1;
 }
 
@@ -2401,9 +2843,9 @@ float lilcom_compute_snr(int64_t num_samples,
   }
   /** return the answer in decibels.  */
   if (signal_sumsq == 0.0 && noise_sumsq == 0.0)
-    return 10.0 * log10(0.0); /* log(0) = -inf. */
+    return -10.0 * log10(0.0); /* log(0) = -inf. */
   else
-    return 10.0 * log10((noise_sumsq * 1.0) / signal_sumsq);
+    return -10.0 * log10((noise_sumsq * 1.0) / signal_sumsq);
 }
 
 /**
@@ -2425,6 +2867,21 @@ float lilcom_compute_snr_float(int64_t num_samples,
     return 10.0 * log10((noise_sumsq * 1.0) / signal_sumsq);
 }
 
+void lilcom_test_extract_mantissa() {
+  for (int bits_per_sample = 4; bits_per_sample <= 8; bits_per_sample++) {
+    for (int mantissa = -(1<<(bits_per_sample-2));
+         mantissa < (1<<(bits_per_sample-2)); mantissa++) {
+      for (int exponent_bit = 0; exponent_bit < 1; exponent_bit++) {
+        for (int random = -3; random <= 3; random++) {
+          int code = (((mantissa << 1) + exponent_bit) & ((1<<bits_per_sample)-1)) +
+              (random << bits_per_sample);
+          assert(extract_mantissa(code, bits_per_sample) == mantissa &&
+                 (code&1) == exponent_bit);
+        }
+      }
+    }
+  }
+}
 
 void lilcom_test_compress_sine() {
   int16_t buffer[1000];
@@ -2432,76 +2889,124 @@ void lilcom_test_compress_sine() {
   for (int i = 0; i < 1000; i++)
     buffer[i] = 700 * sin(i * 0.01);
 
-  int8_t compressed[1004];
-  int exponent = -15, exponent2;
-  lilcom_compress(1000, buffer, 1, compressed, 1,
-                  lpc_order, exponent);
-  int16_t decompressed[1000];
-  if (lilcom_decompress(1000, compressed, 1, decompressed, 1, &exponent2) != 0) {
-    fprintf(stderr, "Decompression failed\n");
+  for (int bits_per_sample = 8; bits_per_sample >= 4; bits_per_sample--) {
+    printf("Bits per sample = %d\n", bits_per_sample);
+    int exponent = -15, exponent2;
+    int64_t num_bytes = lilcom_get_num_bytes(1000, bits_per_sample);
+    int8_t *compressed = (int8_t*)malloc(num_bytes);
+    lilcom_compress(buffer, 1000, 1,
+                    compressed, num_bytes, 1,
+                    lpc_order, bits_per_sample, exponent);
+    int sum = 0;
+    for (int32_t i = 0; i < 1004; i++)
+      sum += compressed[i];
+    printf("hash = %d\n", sum);
+    int16_t decompressed[1000];
+    if (lilcom_decompress(compressed, num_bytes, 1,
+                          decompressed, 1000, 1,
+                          &exponent2) != 0) {
+      fprintf(stderr, "Decompression failed\n");
+    }
+    assert(exponent2 == exponent);
+    fprintf(stderr, "Bits-per-sample=%d, sine snr (dB) = %f\n",
+            bits_per_sample,
+            lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
+    free(compressed);
   }
-  assert(exponent2 == exponent);
-  fprintf(stderr, "Sine snr (dB) = %f%%\n", lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
 }
 
 
 void lilcom_test_compress_maximal() {
   /** this is mostly to check for overflow when computing autocorrelation. */
 
-  for (int lpc_order = 0; lpc_order <= MAX_LPC_ORDER; lpc_order++) {
-    for (int n = 0; n < 2; n++) {
-      int16_t buffer[4096];
-      if (n == 0) {
-        for (int i = 0; i < 4096; i++) {
-          if (i < 3000 || i % 100 < 50)
-            buffer[i] = -32768;
-          else
-            buffer[i] = 32767;
+  for (int bits_per_sample = 4; bits_per_sample <= 8; bits_per_sample++) {
+    for (int lpc_order = 0; lpc_order <= MAX_LPC_ORDER; lpc_order++) {
+      if (lpc_order > 4 && lpc_order % 2 == 1)
+        continue;
+      for (int n = 0; n < 2; n++) {
+        int16_t buffer[4096];
+        int64_t num_samples = 4096;
+        int stride = 1 + (bits_per_sample % 2);
+        num_samples /= stride;
+
+        if (n == 0) {
+          for (int i = 0; i < num_samples; i++) {
+            if (i < 3000 || i % 100 < 50)
+              buffer[i*stride] = -32768;
+            else
+              buffer[i*stride] = 32767;
+          }
+        } else {
+          for (int i = 0; i < num_samples; i++) {
+            if (i < 3000 || i % 100 < 50)
+              buffer[i*stride] = 32767;
+            else
+              buffer[i*stride] = -32768;
+          }
         }
-      } else {
-        for (int i = 0; i < 4096; i++) {
-          if (i < 3000 || i % 100 < 50)
-            buffer[i] = 32767;
-          else
-            buffer[i] = -32768;
+
+        /* Stride is either 1 or 2. */
+        int byte_stride = 1 + (bits_per_sample + lpc_order) % 2;
+
+        int64_t num_bytes = lilcom_get_num_bytes(num_samples, bits_per_sample);
+        printf("num_samples=%d, bits_per_sample=%d, num_bytes = %d\n",
+               (int)num_samples, bits_per_sample, (int)num_bytes);
+        int8_t *compressed = (int8_t*)malloc(num_bytes * byte_stride);
+        int exponent = -15, exponent2;
+        lilcom_compress(buffer, num_samples, stride,
+                        compressed, num_bytes, byte_stride,
+                        lpc_order, bits_per_sample, exponent);
+        int decompressed_stride = 1 + (bits_per_sample % 3);
+        int16_t *decompressed = (int16_t*)malloc(num_samples * decompressed_stride *
+                                                 sizeof(int16_t));
+        if (lilcom_decompress(compressed, num_bytes, byte_stride,
+                              decompressed, num_samples, decompressed_stride,
+                              &exponent2) != 0) {
+          fprintf(stderr, "Decompression failed\n");
         }
+        assert(exponent2 == exponent);
+        fprintf(stderr, "Minimal snr (dB) = %f\n",
+                lilcom_compute_snr(num_samples, buffer, stride,
+                                   decompressed, decompressed_stride));
+        free(compressed);
+        free(decompressed);
       }
-
-
-
-      int8_t compressed[4100];
-      int exponent = -15, exponent2;
-      lilcom_compress(4096, buffer, 1, compressed, 1,
-                      lpc_order, exponent);
-      int16_t decompressed[4096];
-      if (lilcom_decompress(4096, compressed, 1, decompressed, 1, &exponent2) != 0) {
-        fprintf(stderr, "Decompression failed\n");
-      }
-      assert(exponent2 == exponent);
-      fprintf(stderr, "Minimal snr (dB) = %f%%\n",
-              lilcom_compute_snr(4096, buffer, 1, decompressed, 1));
     }
   }
 }
 
 
 void lilcom_test_compress_sine_overflow() {
-  int16_t buffer[1000];
-  int lpc_order = 10;
-  for (int i = 0; i < 1000; i++)
-    buffer[i] = 65535 * sin(i * 0.01);
+  for (int bits_per_sample = 4;
+       bits_per_sample <= 8; bits_per_sample += 2) {
+    int64_t num_samples = 1001 + bits_per_sample;
+    int16_t *buffer = (int16_t*)malloc(num_samples * sizeof(int16_t));
+    int lpc_order = 10;
+    for (int i = 0; i < num_samples; i++)
+      buffer[i] = 65535 * sin(i * 0.01);
 
-  int exponent = -15, exponent2;
-  int8_t compressed[1004];
-  lilcom_compress(1000, buffer, 1, compressed, 1,
-                  lpc_order, exponent);
-  int16_t decompressed[1000];
-  if (lilcom_decompress(1000, compressed, 1, decompressed, 1, &exponent2) != 0) {
-    fprintf(stderr, "Decompression failed\n");
+    int exponent = -15, exponent2;
+    int64_t num_bytes = lilcom_get_num_bytes(num_samples, bits_per_sample);
+    int8_t *compressed = (int8_t*)malloc(num_bytes);
+    lilcom_compress(buffer, num_samples, 1,
+                    compressed, num_bytes, 1,
+                    lpc_order, bits_per_sample, exponent);
+    int16_t *decompressed = (int16_t*) malloc(num_samples * sizeof(int16_t));
+    if (lilcom_decompress(compressed, num_bytes, 1,
+                          decompressed, num_samples, 1,
+                          &exponent2) != 0) {
+      fprintf(stderr, "Decompression failed\n");
+    }
+    assert(exponent2 == exponent);
+    fprintf(stderr, "Sine-overflow snr (dB) at bps=%d is %f\n",
+            bits_per_sample,
+            lilcom_compute_snr(num_samples , buffer, 1, decompressed, 1));
+    free(buffer);
+    free(compressed);
+    free(decompressed);
   }
-  assert(exponent2 == exponent);
-  fprintf(stderr, "Sine-overflow snr (dB) = %f%%\n", lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
 }
+
 
 /**
    Note on SNR's.  A absolute (and not-tight) limit on how negative the SNR
@@ -2525,49 +3030,62 @@ void lilcom_test_compress_sine_overflow() {
 
 void lilcom_test_compress_float() {
   float buffer[1000];
+
   int lpc_order = 5;
 
-  for (int exponent = -140; exponent <= 131; exponent++) {
-    /* Note: 130 and 131 are special cases, for NaN and FLT_MAX.. */
-    double scale = pow(2.0, exponent); /* Caution: scale may be inf. */
-    if (exponent == 130)
-      scale = scale - scale;  /* NaN. */
+  for (int bits_per_sample = 4; bits_per_sample <= 8; bits_per_sample++) {
+    int stride = 1 + (bits_per_sample % 3);
+    int num_samples = 1000 / stride;
+    for (int exponent = -140; exponent <= 131; exponent++) {
+      /* Note: 130 and 131 are special cases, for NaN and FLT_MAX.. */
+      double scale = pow(2.0, exponent); /* Caution: scale may be inf. */
+      if (exponent == 130)
+        scale = scale - scale;  /* NaN. */
 
-    for (int i = 0; i < 1000; i++) {
-      buffer[i] = 0.5 * sin(i * 0.01) + 0.2 * sin(i * 0.1) + 0.1 * sin(i * 0.25);
-      buffer[i] *= scale;
-    }
+      for (int i = 0; i < num_samples; i++) {
+        buffer[i*stride] = 0.5 * sin(i * 0.01) + 0.2 * sin(i * 0.1) + 0.1 * sin(i * 0.25);
+        buffer[i*stride] *= scale;
+      }
 
-    if (exponent == 131) {
-      /* Replace infinities with FLT_MAX. */
-      for (int i = 0; i < 1000; i++) {
-        if (buffer[i] - buffer[i] != 0) {
-          buffer[i] = (buffer[i] > 0 ? FLT_MAX : -FLT_MAX);
+      if (exponent == 131) {
+        /* Replace infinities with FLT_MAX. */
+        for (int i = 0; i < num_samples; i++) {
+          if (buffer[i*stride] - buffer[i*stride] != 0) {
+            buffer[i*stride] = (buffer[i*stride] > 0 ? FLT_MAX : -FLT_MAX);
+          }
         }
       }
-    }
 
-    int8_t compressed[1004];
-    int16_t temp_space[500];
-    int ret = lilcom_compress_float(500, buffer, 2, compressed, 2,
-                                    lpc_order, temp_space);
-    if (ret) {
-      fprintf(stderr, "float compression failed for exponent = %d (this may be expected), max abs float value = %f\n",
-              exponent,  max_abs_float_value(500, buffer, 2));
-      continue;
-    }
+      int64_t num_bytes = lilcom_get_num_bytes(num_samples, bits_per_sample);
+      int byte_stride = 1 + (bits_per_sample + lilcom_abs(exponent)) % 3;
+      int8_t *compressed = (int8_t*)malloc(num_bytes * byte_stride);
+      int16_t temp_space[num_samples];
+      int ret = lilcom_compress_float(buffer, num_samples, stride,
+                                      compressed, num_bytes, byte_stride,
+                                      lpc_order, bits_per_sample,
+                                      temp_space);
+      if (ret) {
+        fprintf(stderr, "float compression failed for exponent = %d (this may be expected), max abs float value = %f\n",
+                exponent,  max_abs_float_value(buffer, num_samples, stride));
+        free(compressed);
+        continue;
+      }
 
-    float decompressed[500];
-    if (lilcom_decompress_float(500, compressed, 2, decompressed, 1) != 0) {
-      fprintf(stderr, "Decompression failed.  This is not expected if compression worked.\n");
-      exit(1);
-    }
+      float decompressed[num_samples];
+      if (lilcom_decompress_float(compressed, num_bytes, byte_stride,
+                                  decompressed, num_samples, 1) != 0) {
+        fprintf(stderr, "Decompression failed.  This is not expected if compression worked.\n");
+        exit(1);
+      }
 
-    fprintf(stderr, "For data-generation exponent=%d, {input,output} max-abs-float-value={%f,%f}, floating-point 3-sine snr = %f%%\n",
-            exponent,
-            max_abs_float_value(500, buffer, 2),
-            max_abs_float_value(500, decompressed, 1),
-            lilcom_compute_snr_float(500, buffer, 2, decompressed, 1));
+      fprintf(stderr, "For data-generation exponent=%d, bits-per-sample=%d, {input,output} max-abs-float-value={%f,%f}, floating-point 3-sine snr = %fdB\n",
+              exponent, bits_per_sample,
+              max_abs_float_value(buffer, num_samples, stride),
+              max_abs_float_value(decompressed, num_samples, 1),
+              lilcom_compute_snr_float(num_samples, buffer, stride,
+                                       decompressed, 1));
+      free(compressed);
+    }
   }
 }
 
@@ -2620,39 +3138,40 @@ void lilcom_test_get_max_abs_float_value() {
     array[i] = 0.0;
 
   array[50] = -100.0;
-  assert(max_abs_float_value(10, array, 10) == lilcom_abs(array[50]));
+  assert(max_abs_float_value(array, 10, 10) == lilcom_abs(array[50]));
 
   array[50] = pow(2.0, 129);  /* should generate infinity. */
 
-  assert(max_abs_float_value(100, array, 1) == lilcom_abs(array[50]));
+  assert(max_abs_float_value(array, 100, 1) == lilcom_abs(array[50]));
 
   array[50] = array[50] - array[50];  /* should generate nan. */
 
   /** The following checks that the return value is NaN. */
-  float ans = max_abs_float_value(100, array, 1);
+  float ans = max_abs_float_value(array, 100, 1);
   assert(ans != ans);  /* Check for NaN. */
 
   /** Positions near the end are special, need to test separately. */
   array[97] = array[50];
   array[50] = 0.0;
-  ans = max_abs_float_value(99, array, 1);
+  ans = max_abs_float_value(array, 99, 1);
   assert(ans != ans);  /* Check for NaN. */
   array[97] = 0.0;
 
   array[50] = 5;
   array[51] = -6;
 
-  assert(max_abs_float_value(100, array, 1) == lilcom_abs(array[51]));
+  assert(max_abs_float_value(array, 100, 1) == lilcom_abs(array[51]));
 
   array[99] = 500.0;
   array[100] = 1000.0;  /* not part of the real array. */
 
-  assert(max_abs_float_value(100, array, 1) == lilcom_abs(array[99]));
+  assert(max_abs_float_value(array, 100, 1) == lilcom_abs(array[99]));
 }
 
 
 int main() {
   lilcom_check_constants();
+  lilcom_test_extract_mantissa();
   lilcom_test_compress_sine();
   lilcom_test_compress_maximal();
   lilcom_test_compress_sine_overflow();

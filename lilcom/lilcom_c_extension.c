@@ -1,8 +1,6 @@
-// Needed definitions and includes for python C interface
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include "unistd.h"  /* For malloc and free */
-
 #include "numpy/arrayobject.h"
 
 /* The core library */
@@ -31,6 +29,7 @@
                     for its dimension and stride information
    @param [in] lpc_order   User-specified number in [0..15], higher means slower
                     but less lossy compression.
+   @param [in] bits_per_sample  User-specified number in [4..8]
    @param [in] conversion_exponent   User specified number that affects what
                     happens when we convert to float.  Will normally be 0.
 
@@ -38,12 +37,12 @@
              in lilcom_compress and 2 if there was a dimension mismatch detected
              by this function.
 */
-int compress_int16_internal(int num_axes, int axis,
-                            const int16_t *input_data,
-                            int8_t *output_data,
-                            PyObject *input, PyObject *output,
-                            int lpc_order,
-                            int conversion_exponent) {
+static int compress_int16_internal(int num_axes, int axis,
+                                   const int16_t *input_data,
+                                   int8_t *output_data,
+                                   PyObject *input, PyObject *output,
+                                   int lpc_order, int bits_per_sample,
+                                   int conversion_exponent) {
   assert(axis >= 0 && axis < num_axes);
   int dim = PyArray_DIM(input, axis),
       input_stride = PyArray_STRIDE(input, axis) / sizeof(int16_t),
@@ -55,7 +54,8 @@ int compress_int16_internal(int num_axes, int axis,
     for (int i = 0; i < dim; i++) {
       int ret = compress_int16_internal(num_axes, axis + 1, input_data,
                                         output_data, input, output,
-                                        lpc_order, conversion_exponent);
+                                        lpc_order, bits_per_sample,
+                                        conversion_exponent);
       if (ret != 0)
         return ret;  /** Some kind of failure */
       input_data += input_stride;
@@ -63,11 +63,12 @@ int compress_int16_internal(int num_axes, int axis,
     }
   } else {
     /** The last axis-- the time axis. */
-    if (PyArray_DIM(output, axis) != dim + 4)
-      return 2;
-    int ret = lilcom_compress(dim, input_data, input_stride,
-                              output_data, output_stride,
-                              lpc_order, conversion_exponent);
+    int output_dim = PyArray_DIM(output, axis);
+
+    int ret = lilcom_compress(input_data, dim, input_stride,
+                              output_data, output_dim, output_stride,
+                              lpc_order, bits_per_sample,
+                              conversion_exponent);
     if (ret != 0)
       return ret;  /** Failure, e.g. invalid lpc_order, dim or exponent. */
   }
@@ -90,6 +91,7 @@ int compress_int16_internal(int num_axes, int axis,
             the last dimension is greater by 4 (for the header).
        lpc_order:  A user-specifiable number in the range [0..15];
             higher values are slower but less lossy.
+       bits_per_sample:  User-specified number in [4..8]
        conversion_exponent: A user-specifiable number in the range
             [-127..128].  The same value will be returned by `decompress_int16`.
             You won't normally want to modify the default.  It affects what
@@ -107,12 +109,13 @@ int compress_int16_internal(int num_axes, int axis,
      """
  */
 
-static PyObject *compress_int16(PyObject *self, PyObject * args, PyObject * keywds)
+static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject * keywds)
 {
-  PyObject *input; // The input signal, passed as a numpy array.
-  PyObject *output; // The output signal, passed as a numpy array.
-  int lpc_order; // LPC Order defined in the core function (more information -> lilcom.h)
-  int conversion_exponent; // Conversion Exponent defined in the core function (more information -> lilcom.h)
+  PyObject *input; /* The input signal, passed as a numpy array. */
+  PyObject *output; /* The output signal, passed as a numpy array. */
+  int lpc_order = 4,
+      bits_per_sample = 8,
+      conversion_exponent = 0;
 
   /* Reading and information - extracting for input data
      From the python function there are two numpy arrays and an intger (optional) LPC_order
@@ -120,31 +123,32 @@ static PyObject *compress_int16(PyObject *self, PyObject * args, PyObject * keyw
      objects.
   */
   static char *kwlist[] = {"input", "output",
-                           "lpc_order", "conversion_exponent", NULL}; //definition of keywords received in the function call from python
-  // Parsing Arguments: All input arguments are obligatory. Default assignment left for python wrapper.
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OOii", kwlist,
+                           "lpc_order","bits_per_sample",
+                           "conversion_exponent", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|iii", kwlist,
                                    &input, &output,
-                                   &lpc_order, &conversion_exponent))
+                                   &lpc_order, &bits_per_sample,
+                                   &conversion_exponent))
     goto error_return;
 
   const int16_t *input_data = (const int16_t*)PyArray_DATA(input);
   int8_t *output_data = (int8_t*) PyArray_DATA(output);
+  if (!input_data || !output_data)
+    goto error_return;
 
-
-  // Initializing shape related variables
-  int num_axes = PyArray_NDIM(input); // Get the number of dimensions
+  int num_axes = PyArray_NDIM(input);
   if (PyArray_NDIM(output) != num_axes)
     goto error_return;
 
 
-  // Calles the internal function which recursively calles it self until it's ready for compression
   int ret = compress_int16_internal(num_axes, 0,
                                     input_data, output_data,
                                     input, output, lpc_order,
+                                    bits_per_sample,
                                     conversion_exponent);
-  return Py_BuildValue("i", ret);
+  return PyLong_FromLong(ret);
 error_return:
-  return Py_BuildValue("i", 3);
+  return PyLong_FromLong(3);
 }
 
 
@@ -176,29 +180,30 @@ error_return:
                1001  if a failure was encountered in the
                      core lilcom_decompress code (would typically mean
                      corrupted or invalid data)
-               1002  if a problem such as a dimension mismatch was
-                     noticed in this function
+               1002  If the input and output dimensions (for the non-time
+                     axis) did not match
                1003  if a mismatch was noticed in the conversion
                      exponents from different sequences (which would
                      probably indicate that this matrix was originally
                      compressed from a float matrix.)
 */
-int decompress_int16_internal(int num_axes, int axis,
-                              const int8_t *input_data,
-                              int16_t *output_data,
-                              PyObject *input, PyObject *output) {
+static int decompress_int16_internal(int num_axes, int axis,
+                                     const int8_t *input_data,
+                                     int16_t *output_data,
+                                     PyObject *input, PyObject *output) {
   assert(axis >= 0 && axis < num_axes);
 
   int conversion_exponent = -1;
 
-  int dim = PyArray_DIM(input, axis),
+  int input_dim = PyArray_DIM(input, axis),
+      output_dim =  PyArray_DIM(output, axis),
       input_stride = PyArray_STRIDE(input, axis) / sizeof(int8_t),
       output_stride = PyArray_STRIDE(output, axis) / sizeof(int16_t);
 
   if (axis < num_axes - 1) {  /** Not the time axis. */
-    if (PyArray_DIM(output, axis) != dim)
-      return 2;
-    for (int i = 0; i < dim; i++) {
+    if (output_dim != input_dim)
+      return 1002;
+    for (int i = 0; i < input_dim; i++) {
       int ret = decompress_int16_internal(num_axes, axis + 1, input_data,
                                           output_data, input, output);
       if (ret >= 1000)
@@ -213,11 +218,9 @@ int decompress_int16_internal(int num_axes, int axis,
     return conversion_exponent;
   } else {
     /** The last axis-- the time axis. */
-    if (PyArray_DIM(output, axis) != dim - 4)
-      return 1002;
     int conversion_exponent;
-    int ret = lilcom_decompress(dim - 4, input_data, input_stride,
-                                output_data, output_stride,
+    int ret = lilcom_decompress(input_data, input_dim, input_stride,
+                                output_data, output_dim, output_stride,
                                 &conversion_exponent);
     if (ret != 0)
       return 1001;  /** Failure in decompression, e.g. corrupted data */
@@ -267,10 +270,9 @@ int decompress_int16_internal(int num_axes, int axis,
                      was noticed in this function.
      """
  */
-static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keywds)
-{
-  PyObject *input; // The input signal, passed as a numpy array.
-  PyObject *output; // The output signal, passed as a numpy array.
+static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keywds) {
+  PyObject *input; /* The input signal, passed as a numpy array. */
+  PyObject *output; /* The output signal, passed as a numpy array. */
 
   /* Reading and information - extracting for input data
      From the python function there are two numpy arrays and an intger (optional) LPC_order
@@ -278,7 +280,6 @@ static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keyw
      objects.
   */
   static char *kwlist[] = {"input", "output", NULL};
-  // Parsing Arguments
 
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist,
                                    &input, &output))
@@ -287,19 +288,19 @@ static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keyw
 
   const int8_t *input_data = (const int8_t*)PyArray_DATA(input);
   int16_t *output_data = (int16_t*) PyArray_DATA(output);
+  if (!input_data || !output_data)
+    goto error_return;
 
-
-  // Initializing shape related variables
-  int num_axes = PyArray_NDIM(input); // Get the number of dimensions
+  int num_axes = PyArray_NDIM(input);
   if (PyArray_NDIM(output) != num_axes)
     goto error_return;
 
   int ret = decompress_int16_internal(num_axes, 0,
                                       input_data, output_data,
                                       input, output);
-  return Py_BuildValue("i", ret);
+  return PyLong_FromLong(ret);
 error_return:
-  return Py_BuildValue("i", 3);
+  return PyLong_FromLong(3);
 }
 
 
@@ -325,7 +326,7 @@ error_return:
    @param [in] lpc_order   User-specified number in [0..15], higher means slower
                     but less lossy compression.
    @param [in] temp_space  Either NULL, or a pointer to an int16_t array with
-                    at least input.shape[-1] elements.  (Note: using python
+                    at least output.shape[-1] elements.  (Note: using python
                     syntax there.)
 
    @return   Returns 0 on success.  On failure, returns error codes 1, 2 or 3 if
@@ -335,23 +336,26 @@ error_return:
              any of the sequences.  This should only happen if infinities and
              NaN's are encountered.
 */
-int compress_float_internal(int num_axes, int axis,
-                            const float *input_data,
-                            int8_t *output_data,
-                            PyObject *input, PyObject *output,
-                            int lpc_order, int16_t *temp_space) {
+static int compress_float_internal(int num_axes, int axis,
+                                   const float *input_data,
+                                   int8_t *output_data,
+                                   PyObject *input, PyObject *output,
+                                   int lpc_order, int bits_per_sample,
+                                   int16_t *temp_space) {
   assert(axis >= 0 && axis < num_axes);
-  int dim = PyArray_DIM(input, axis),
+  int input_dim = PyArray_DIM(input, axis),
+      output_dim = PyArray_DIM(output, axis),
       input_stride = PyArray_STRIDE(input, axis) / sizeof(float),
       output_stride = PyArray_STRIDE(output, axis) / sizeof(int8_t);
 
   if (axis < num_axes - 1) {  /** Not the time axis. */
-    if (PyArray_DIM(output, axis) != dim)
+    if (output_dim != input_dim)
       return 4;
-    for (int i = 0; i < dim; i++) {
+    for (int i = 0; i < input_dim; i++) {
       int ret = compress_float_internal(num_axes, axis + 1, input_data,
                                         output_data, input, output,
-                                        lpc_order, temp_space);
+                                        lpc_order, bits_per_sample,
+                                        temp_space);
       if (ret != 0)
         return ret;  /** Some kind of failure */
       input_data += input_stride;
@@ -359,11 +363,10 @@ int compress_float_internal(int num_axes, int axis,
     }
   } else {
     /** The last axis-- the time axis. */
-    if (PyArray_DIM(output, axis) != dim + 4)
-      return 4;
-    int ret = lilcom_compress_float(dim, input_data, input_stride,
-                                    output_data, output_stride,
-                                    lpc_order, temp_space);
+    int ret = lilcom_compress_float(input_data, input_dim, input_stride,
+                                    output_data, output_dim, output_stride,
+                                    lpc_order, bits_per_sample,
+                                    temp_space);
     if (ret != 0)
       return ret;  /** Failure, e.g. invalid lpc_order, dim or exponent. */
   }
@@ -403,9 +406,10 @@ int compress_float_internal(int num_axes, int axis,
  */
 static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keywds)
 {
-  PyObject *input; // The input signal, passed as a numpy array.
-  PyObject *output; // The output signal, passed as a numpy array.
-  int lpc_order = 5; // LPC Order defined in the core function (more information -> lilcom.h)
+  PyObject *input; /* The input signal, passed as a numpy array. */
+  PyObject *output; /* The output signal, passed as a numpy array. */
+  int lpc_order = 4,
+      bits_per_sample = 8;
   int16_t *temp_space = NULL;
 
   /* Reading and information - extracting for input data
@@ -414,41 +418,133 @@ static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keyw
      objects.
   */
   static char *kwlist[] = {"input", "output",
-                           "lpc_order", NULL}; //definition of keywords received in the function call from python
-  // Parsing Arguments
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|i", kwlist,
-                                   &input, &output,
-                                   &lpc_order))
+                           "lpc_order", "bits_per_sample", NULL};
+
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|ii", kwlist,
+                                   &input, &output, &lpc_order,
+                                   &bits_per_sample))
     goto error_return;
 
   const float *input_data = (const float*)PyArray_DATA(input);
   int8_t *output_data = (int8_t*) PyArray_DATA(output);
+  if (!input_data || !output_data)
+    goto error_return;
 
-
-
-  // Initializing shape related variables
-  int num_axes = PyArray_NDIM(input); // Get the number of dimensions
+  int num_axes = PyArray_NDIM(input);
   if (PyArray_NDIM(output) != num_axes)
     goto error_return;
 
   int sequence_length = PyArray_DIM(input, num_axes - 1);
   temp_space = malloc(sizeof(int16_t) * sequence_length);
   if (temp_space == NULL)
-    return Py_BuildValue("i", 3);  /* Error code meaning: failed to allocate memory. */
-
+    return PyLong_FromLong(3);  /* Return error-code 3 which means: failed to
+                                 * allocate memory. */
 
   int ret = compress_float_internal(num_axes, 0,
                                     input_data, output_data,
                                     input, output, lpc_order,
-                                    temp_space);
+                                    bits_per_sample, temp_space);
   free(temp_space);
-  return Py_BuildValue("i", ret);
+  return PyLong_FromLong(ret);
 error_return:
   if (temp_space != NULL)
     free(temp_space);
-  return Py_BuildValue("i", 5);
+  return PyLong_FromLong(5);
 }
 
+
+/**
+   The following will document this function as if it were a native
+   Python function.
+
+    def get_num_bytes(num_samples, bits_per_sample):
+      """
+
+      Args:
+       num_samples: an integer > 0.
+       bits_per_sample: an integer in [4..8].
+      Returns:
+       Returns the number of bytes that lilcom would use to compress
+       a sequence with this num_samples and this bits_per_sample,
+       or -1 if an error was encountered.
+      """
+ */
+static PyObject *get_num_bytes(PyObject *self, PyObject * args, PyObject * keywds) {
+  int num_samples, bits_per_sample;
+
+  static char *kwlist[] = {"num_samples", "bits_per_sample", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "ii", kwlist,
+                                   &num_samples, &bits_per_sample))
+    goto error_return;
+
+  int64_t num_bytes = lilcom_get_num_bytes(num_samples, bits_per_sample);
+  return PyLong_FromLong(num_bytes);
+error_return:
+  return PyLong_FromLong(-1);
+
+}
+
+
+/**
+   The following will document this function as if it were a native
+   Python function.
+
+    def get_time_axis_info(input):
+      """
+      Returns information which can be used to determine the shape that this
+      array will have when decompressed by lilcom.  It can work out which axis
+      is the time axis from the header information, essentially by trying
+      each axis in turn and seeing if it could be the header; properties
+      of the header ensure that two axes can't simultaneously satisfy this
+      condition.
+
+      Args:
+       input:  A NumPy array of np.int8 that is the result of
+               compressing data with lilcom (see compress() in
+               lilcom_interface.py).
+
+      Returns:
+        On success, returns a tuple (time_axis, num_samples) where time_axis >=
+        0 is the axis that corresponds to the time axis and num_samples is the
+        length of the original data on that axis.
+        On failure (e.g. this data was not a lilcom-compressed array),
+        returns None.
+      """
+ */
+static PyObject *get_time_axis_info(
+    PyObject *self, PyObject * args, PyObject *keywds) {
+  PyObject *input; /* The compressed data, as a NumPy array of int8 */
+
+  static char *kwlist[] = { "input", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "O", kwlist,
+                                   &input))
+    goto error_return;
+
+  const int8_t *input_data = (const int8_t*)PyArray_DATA(input);
+  if (!input_data) goto error_return;
+  int num_axes = PyArray_NDIM(input);
+  int time_axis = -1;
+  int64_t num_samples = 0;
+  for (int axis = 0; axis < num_axes; axis++) {
+    int dim = PyArray_DIM(input, axis),
+        stride = PyArray_STRIDE(input, axis);
+    int64_t uncompressed_dim  = lilcom_get_num_samples(input_data, dim, stride);
+    if (uncompressed_dim != -1) {
+      assert(time_axis < 0 && "There appear to be two time axes; "
+             "this shouldn't be possible.");
+      num_samples = uncompressed_dim;
+      time_axis = axis;
+    }
+  }
+  if (time_axis < 0)
+    goto error_return;
+  return PyTuple_Pack(2,
+                      PyLong_FromLong(time_axis),
+                      PyLong_FromLong(num_samples));
+error_return:
+  Py_RETURN_NONE;
+
+}
 
 
 /**
@@ -478,14 +574,15 @@ int decompress_float_internal(int num_axes, int axis,
                               float *output_data,
                               PyObject *input, PyObject *output) {
   assert(axis >= 0 && axis < num_axes);
-  int dim = PyArray_DIM(input, axis),
+  int input_dim = PyArray_DIM(input, axis),
+      output_dim = PyArray_DIM(output, axis),
       input_stride = PyArray_STRIDE(input, axis) / sizeof(int8_t),
       output_stride = PyArray_STRIDE(output, axis) / sizeof(float);
 
   if (axis < num_axes - 1) {  /** Not the time axis. */
-    if (PyArray_DIM(output, axis) != dim)
+    if (input_dim != output_dim)
       return 2;
-    for (int i = 0; i < dim; i++) {
+    for (int i = 0; i < input_dim; i++) {
       int ret = decompress_float_internal(num_axes, axis + 1, input_data,
                                           output_data, input, output);
       if (ret != 0)
@@ -496,10 +593,8 @@ int decompress_float_internal(int num_axes, int axis,
     return 0;  /** Success */
   } else {
     /** The last axis-- the time axis. */
-    if (PyArray_DIM(output, axis) != dim - 4)
-      return 2;
-    int ret = lilcom_decompress_float(dim - 4, input_data, input_stride,
-                                output_data, output_stride);
+    int ret = lilcom_decompress_float(input_data, input_dim, input_stride,
+                                      output_data, output_dim, output_stride);
     return ret;
   }
 }
@@ -535,20 +630,20 @@ int decompress_float_internal(int num_axes, int axis,
 */
 static PyObject *decompress_float(PyObject *self, PyObject *args, PyObject *keywds)
 {
-  PyObject *input; // The input signal, passed as a numpy array.
-  PyObject *output; // The output signal, passed as a numpy array.
+  PyObject *input; /* The input signal, passed as a numpy array. */
+  PyObject *output; /* The output signal, passed as a numpy array. */
 
   static char *kwlist[] = {"input", "output", NULL};
-  // Parsing Arguments
+
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist,
                                    &input, &output))
     goto error_return;
 
   const int8_t *input_data = (const int8_t*)PyArray_DATA(input);
   float *output_data = (float*) PyArray_DATA(output);
+  if (!input_data || !output_data) goto error_return;
 
-  // Initializing shape related variables
-  int num_axes = PyArray_NDIM(input); // Get the number of dimensions
+  int num_axes = PyArray_NDIM(input);
   if (PyArray_NDIM(output) != num_axes)
     goto error_return;
 
@@ -556,16 +651,24 @@ static PyObject *decompress_float(PyObject *self, PyObject *args, PyObject *keyw
                                       input_data, output_data,
                                       input, output);
 
-  return Py_BuildValue("i", ret);
+  return PyLong_FromLong(ret);
 error_return:
-  return Py_BuildValue("i", 3);
+  return PyLong_FromLong(3);
 }
 
 static PyMethodDef LilcomMethods[] = {
-  { "compress_int16", (PyCFunction)compress_int16, METH_VARARGS | METH_KEYWORDS, "Lossily compresses samples of int16 sequence data (e.g. audio data) int8_t."},
-  { "compress_float", (PyCFunction)compress_float, METH_VARARGS | METH_KEYWORDS, "Lossily compresses samples of float sequence data (e.g. audio data) int8_t."},
-  { "decompress_int16", (PyCFunction)decompress_int16, METH_VARARGS | METH_KEYWORDS, "Decompresses a compressed signal to int16"  },
-  { "decompress_float", (PyCFunction)decompress_float, METH_VARARGS | METH_KEYWORDS, "Decompresses a compressed signal to float16"  },
+  { "compress_int16", (PyCFunction)compress_int16, METH_VARARGS | METH_KEYWORDS,
+    "Lossily compresses samples of int16 sequence data (e.g. audio data) int8_t."},
+  { "compress_float", (PyCFunction)compress_float, METH_VARARGS | METH_KEYWORDS,
+    "Lossily compresses samples of float sequence data (e.g. audio data) int8_t."},
+  { "decompress_int16", (PyCFunction)decompress_int16, METH_VARARGS | METH_KEYWORDS,
+    "Decompresses a compressed signal to int16"  },
+  { "decompress_float", (PyCFunction)decompress_float, METH_VARARGS | METH_KEYWORDS,
+    "Decompresses a compressed signal to float16"  },
+  { "get_num_bytes", (PyCFunction)get_num_bytes, METH_VARARGS | METH_KEYWORDS,
+    "Returns the number of bytes needed to compress a sequence" },
+  { "get_time_axis_info", (PyCFunction)get_time_axis_info, METH_VARARGS | METH_KEYWORDS,
+    "Returns the number of bytes needed to compress a sequence" },
   { NULL, NULL, 0, NULL }
 };
 
