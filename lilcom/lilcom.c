@@ -1474,8 +1474,10 @@ static inline int16_t lilcom_compute_predicted_value(
   int i;
   const int32_t *lpc_coeffs = &(lpc->lpc_coeffs[0]);
   for (i = 0; i < lpc_order; i += 2) {
-    sum1 += lpc_coeffs[i] * decompressed_signal_t[-1-i];
-    sum2 += lpc_coeffs[i+1] * decompressed_signal_t[-2-i];
+    /* Cast them to uint32_t before multiplying, to avoid a crash when
+       the compiler option -ftrapv is used. */
+    sum1 += (uint32_t)lpc_coeffs[i] * (uint32_t)decompressed_signal_t[-1-i];
+    sum2 += (uint32_t)lpc_coeffs[i+1] * (uint32_t)decompressed_signal_t[-2-i];
   }
 
   /** The lpc_coeffs were stored times 2^LPC_APPLY_LEFT_SHIFT.  Divide by this
@@ -2121,8 +2123,8 @@ static inline int lilcom_decompress_one_sample(
         (1 << (LPC_APPLY_LEFT_SHIFT + 16)), sum2 = 0;
 
     for (int i = 0; i < lpc_order; i += 2) {
-      sum1 += lpc_coeffs[i] * output_sample[-1-i];
-      sum2 += lpc_coeffs[i+1] * output_sample[-2-i];
+      sum1 += (uint32_t)lpc_coeffs[i] * (uint32_t)output_sample[-1-i];
+      sum2 += (uint32_t)lpc_coeffs[i+1] * (uint32_t)output_sample[-2-i];
     }
     int32_t predicted = (int32_t)((sum1 + sum2) >> LPC_APPLY_LEFT_SHIFT);
     if (((predicted - 32768) & ~65535) != 0) {

@@ -326,7 +326,7 @@ error_return:
    @param [in] lpc_order   User-specified number in [0..15], higher means slower
                     but less lossy compression.
    @param [in] temp_space  Either NULL, or a pointer to an int16_t array with
-                    at least input.shape[-1] elements.  (Note: using python
+                    at least output.shape[-1] elements.  (Note: using python
                     syntax there.)
 
    @return   Returns 0 on success.  On failure, returns error codes 1, 2 or 3 if
@@ -437,8 +437,8 @@ static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keyw
   int sequence_length = PyArray_DIM(input, num_axes - 1);
   temp_space = malloc(sizeof(int16_t) * sequence_length);
   if (temp_space == NULL)
-    return PyLong_FromLong(3);  /* Error code meaning: failed to allocate memory. */
-
+    return PyLong_FromLong(3);  /* Return error-code 3 which means: failed to
+                                 * allocate memory. */
 
   int ret = compress_float_internal(num_axes, 0,
                                     input_data, output_data,
@@ -686,5 +686,3 @@ PyMODINIT_FUNC PyInit_lilcom_c_extension(void)
     import_array();
     return PyModule_Create(&lilcom);
 }
-
-
