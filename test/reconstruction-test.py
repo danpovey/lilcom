@@ -48,7 +48,7 @@ def PSNR(originalArray, reconstructedArray):
     return psnr
 
 
-def evaulate(filename=None, audioArray=None, algorithm="lilcom",
+def evaluate(filename=None, audioArray=None, algorithm="lilcom",
              additionalParam=None):
     """ This function does an evaluation on the given audio array, with
             the requested algorithm and additional parameters. As a result
@@ -70,7 +70,26 @@ def evaulate(filename=None, audioArray=None, algorithm="lilcom",
        Returns:
            ///////// COMPLETE
     """
+    global settings
     returnvValue = dict.fromkeys(["bitrate", "psnr", "hashKey"])
+
+    """
+    In case of empty input audio array it loads the array. The audio array is
+        required for evaluation subroutine call 'PSNR'
+    """
+    if audioArray is None:
+        if settings["sampleRate"] != 0:
+            audioArray = waveRead(filename, settings["sampleRate"])
+
+    # Evaluation Procedure for lilcom
+    if algorithm == "lilcom":
+        pass
+    # Evaluation Procedure for MP3
+    elif algorithm == "MP3":
+        pass
+    # Evaluation for additional compression library
+    else:
+        pass
 
 
 def waveRead(filename, sampleRate=None):
@@ -88,18 +107,71 @@ def waveRead(filename, sampleRate=None):
        Returns:
            a Numpy array of the given audio file.
     """
+    global settings
     pass
 
 
 # Parsing input arguments
 parser = argparse.ArgumentParser(description="Lilcom reconstruction test \
             module")
-parser.add_argument("--dataset-dir", "-d",
+parser.add_argument("--dataset", "-d",
                     help="The directory of test dataset")
-parser.add_argument("--sample-rate", "-s",
+parser.add_argument("--samplerate", "-s",
                     help="Number of samplings in a unit time for each audio")
-parser.add_argument("--release-log", "-l",
+parser.add_argument("--releaselog", "-l",
                     help="The name of the log file")
-parser.add_argument("--release-df", "-c",
+parser.add_argument("--releasedf", "-c",
                     help="The name of the csv file including results")
-parser.parse_args()
+args = parser.parse_args()
+
+# Global values for settings
+settings = dict.fromkeys(["dataset-dir", "sample-rate", "release-log",
+                         "release-df"])
+
+if args.dataset:
+    settings["dataset-dir"] = args.dataset
+else:
+    settings["dataset-dir"] = "None"
+
+if args.samplerate:
+    settings["sample-rate"] = int(args.samplerate)
+else:
+    settings["sample-rate"] = 0
+
+if args.releasedf:
+    settings["release-df"] = args.releasedf
+else:
+    settings["release-df"] = None
+
+if (args.releaselog):
+    settings["release-log"] = args.releaselog
+else:
+    settings["release-log"] = None
+
+
+evaulators = [
+    {
+        "algorithm": "lilcom",
+        "additionalParam": 4
+    },
+    {
+        "algorithm": "MP3",
+        "additionalParam": "320k"
+    },
+    {
+        "algorithm": "MP3",
+        "additionalParam": "256k"
+    },
+    {
+        "algorithm": "MP3",
+        "additionalParam": "224k"
+    },
+    {
+        "algorithm": "MP3",
+        "additionalParam": "192k"
+    },
+    {
+        "algorithm": "MP3",
+        "additionalParam": "160k"
+    }
+]
