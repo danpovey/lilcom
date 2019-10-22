@@ -29,9 +29,12 @@ extension_mod = Extension("lilcom.lilcom_c_extension",
                                    "lilcom/lilcom.c"],
                           # Actually it turns out that the optimization level
                           # and debugging code makes very little difference to
-                          # the speed.
+                          # the speed, so we're using options designed to
+                          # catch errors.  -ftrapv detects overflow in
+                          # signed integer arithmetic (which technically
+                          # leads to undefined behavior).
                           #extra_compile_args=["-DNDEBUG -O3"],
-                          extra_compile_args=["-g -Wall -ftrapv"],
+                          extra_compile_args=["-g", "-Wall", "-ftrapv"],
                           include_dirs=[numpy.get_include()])
 
 setup(

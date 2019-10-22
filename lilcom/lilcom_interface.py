@@ -282,5 +282,3 @@ def decompress(input, out=None, dtype=None):
       if out.dtype != np.float32:
          out[:] = temp_out[:]
       return out_pre_swapping_axes
-
-
