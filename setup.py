@@ -41,10 +41,10 @@ setup(
     name = "lilcom",
     python_requires='>=3.5',
     version = "0.0.0",
-    author = "Daniel Povey, Soroush Zargar, Mahsa Yarmohammadi",
+    author = "Daniel Povey, Soroush Zargar, Mahsa Yarmohammadi, Jian Wu",
     author_email = "dpovey@gmail.com",
     description = ("Small compression utility for sequence data in NumPy"),
-    license = "BSD",
+    license = "MIT",
     keywords = "compression numpy",
     packages=['lilcom'],
     url = "https://github.com/danpovey/lilcom",
@@ -52,9 +52,9 @@ setup(
     long_description=read('README.md'),
     long_description_content_type="text/markdown",
     classifiers=[
-        "Development Status :: 1 - Planning",
+        "Development Status :: 3 - Alpha",
         "Topic :: Utilities",
-        "License :: OSI Approved :: BSD License",
+        "License :: OSI Approved :: MIT License",
     ],
 )
 
