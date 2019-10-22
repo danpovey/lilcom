@@ -16,6 +16,7 @@ AudioFormats = ["lilcom",
                 "mp3_192",
                 "mp3_160"]
 
+bits_per_sample = 6
 MP3BitRates = [320, 256, 224, 192, 160]
 
 dataSetDirectory = "./audio-samples/temp"
@@ -86,7 +87,8 @@ def evaluateLilcom(audioArray, lpc = 4):
     outputArray = np.ndarray(outputShape, np.int8)
     reconstructedArray = np.ndarray(audioArray.shape, np.int16)
 
-    lilcom.compress(audioArray, out=outputArray, lpc_order = lpc, axis = 0)
+    lilcom.compress(audioArray, out=outputArray, lpc_order = lpc,
+                    bits_per_sample = bits_per_sample, axis = 0)
     reconstructedArray = lilcom.decompress(outputArray, axis = 0, dtype=audioArray.dtype)
 
     psnr = PSNR(audioArray, reconstructedArray)

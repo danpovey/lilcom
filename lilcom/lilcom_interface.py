@@ -79,7 +79,7 @@ def get_decompressed_shape(input):
       raise ValueError("Input of shape {} does not seem to be a lilcom-compressed "
                        "array.".format(input.shape))
    (time_axis, num_samples) = ret
-   shape = list(shape)
+   shape = list(input.shape)
    shape[time_axis] = num_samples
    return (tuple(shape), time_axis)
 
@@ -166,6 +166,7 @@ def compress(input, axis, lpc_order=4, bits_per_sample=8,
       input = input.astype(np.float32)
 
    out_pre_swapping_axes = out
+   num_axes = len(input.shape)
    if axis != -1 and axis != num_axes - 1:
       # Make sure that the last axis of `input` and `out` are the time axis;
       # this is assumed by the c-level code for convenience.
@@ -251,8 +252,8 @@ def decompress(input, out=None, dtype=None):
 
    # Deal with non-default values of `axis` by making sure the time axis is the
    # last one, which is what the "C" code requires.
-   num_axes = len(input.shape)
    out_pre_swapping_axes = out
+   num_axes = len(out_shape)
    if axis != -1 and axis != num_axes - 1:
       input = input.swapaxes(axis, -1)
       out = out.swapaxes(axis, -1)

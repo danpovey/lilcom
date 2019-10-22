@@ -538,7 +538,8 @@ static PyObject *get_time_axis_info(
   }
   if (time_axis < 0)
     goto error_return;
-  return PyTuple_Pack(PyLong_FromLong(time_axis),
+  return PyTuple_Pack(2,
+                      PyLong_FromLong(time_axis),
                       PyLong_FromLong(num_samples));
 error_return:
   Py_RETURN_NONE;
