@@ -65,6 +65,7 @@ def logger(logmod="initialization", reportList=None):
     global settings
 
     text = ""
+    headerLine = ""
     if logmod == "initialization":
         text = "Reconstruction Test called for lilcom... \n"
         text += "The report is on the dataset placed at: " + \
@@ -76,7 +77,7 @@ def logger(logmod="initialization", reportList=None):
             text += str(settings["sample-rate"])
 
         global evaulators
-        headerLine = ""
+
         headerLine += "filename" + "\t"
         for evaluator in evaulators:
             headerLine += \
@@ -95,11 +96,37 @@ def logger(logmod="initialization", reportList=None):
         text += "\n"
         text += headerLine
 
+    if logmod == "result":
+        if reportList is None:
+            return
+        """
+            Elements are each a dictionary of "evaluator" and "result"
+        """
+        text += reportList[0] + "\t"
+        for element in reportList[1:]:
+            elementResult = element["result"]
+            text += str(elementResult["bitrate"])
+            text += "\t"
+            text += str(elementResult["psnr"])
+            text += "\t"
+            text += str(elementResult["hash"])
+            text += "\t"
+
     print(text)
 
     # Checks for output logfile settings
     if settings["release-log"] is not None:
         settings["release-log"].write(text)
+        settings["release-log"].write("\n")
+
+    if settings["release-df"]:
+        if logmod == "initialization":
+            settings["release-df"].write(headerLine.replace("\t", ","))
+            settings["release-df"].write("\n")
+        else:
+            settings["release-df"].write(text.replace("\t", ","))
+            settings["release-df"].write("\n")
+    return
 
 
 def evaluate(filename=None, audioArray=None, algorithm="lilcom",
@@ -125,7 +152,10 @@ def evaluate(filename=None, audioArray=None, algorithm="lilcom",
            ///////// COMPLETE
     """
     global settings
-    returnValue = dict.fromkeys(["bitrate", "psnr", "hashKey"])
+    returnValue = dict.fromkeys(["bitrate", "psnr", "hash"])
+    returnValue["bitrate"] = 0
+    returnValue["psnr"] = 0
+    returnValue["hash"] = 0
 
     """
     In case of empty input audio array it loads the array. The audio array is
@@ -201,6 +231,8 @@ else:
 
 if args.releasedf:
     settings["release-df"] = args.releasedf
+    csvOpener = open(settings["release-df"], "w+")
+    settings["release-df"] = csvOpener
 else:
     settings["release-df"] = None
 
@@ -255,7 +287,7 @@ logger(logmod="initialization")
 for file in fileList:
     audioArray = waveRead(file, settings["sample-rate"])
 
-    fileEvaluationResultList = []
+    fileEvaluationResultList = [file]
     for evaluator in evaulators:
         evaluationResult = evaluate(file, audioArray,
                                     evaluator["algorithm"],
@@ -263,7 +295,7 @@ for file in fileList:
         fileEvaluationResultList.append({"evaluator": evaluator,
                                         "result": evaluationResult})
 
-    print(fileEvaluationResultList)
+    logger("result", fileEvaluationResultList)
     # In case that pandas report is enabled then the line is added
     #   to the csv report
 
