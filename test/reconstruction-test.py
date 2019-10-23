@@ -10,6 +10,8 @@ import numpy as np
 import lilcom
 # For mathematic calculus, Built-in
 import math
+# For listing directories and os related tasks, Built-in
+import os
 
 
 def PSNR(originalArray, reconstructedArray):
@@ -46,6 +48,60 @@ def PSNR(originalArray, reconstructedArray):
     return psnr
 
 
+def logger(logmod="initialization", reportList=None):
+    """ This function prints out the log given the initialization mode or
+            the result of test on a single file. As a result it prints out
+            the result on screen and in case that additional reports are
+            requested it prints them out too.
+
+       Args:
+        logmod: There are two possible values, first is ``initialization''
+            which is for the first line of the report. Also the other mode is
+            the report mode in which an additional result list will be needed
+            to be printed out.
+        reportList: A list of dictionaries returned by the code, which is the
+            evaluation result on one file.
+    """
+    global settings
+
+    text = ""
+    if logmod == "initialization":
+        text = "Reconstruction Test called for lilcom... \n"
+        text += "The report is on the dataset placed at: " + \
+                settings["dataset-dir"] + "\n"
+        text += "The sample-rate is set to "
+        if settings["sample-rate"] == 0:
+            text += "the default sample rate of dataset"
+        else:
+            text += str(settings["sample-rate"])
+
+        global evaulators
+        headerLine = ""
+        headerLine += "filename" + "\t"
+        for evaluator in evaulators:
+            headerLine += \
+                evaluator["algorithm"] + str(evaluator["additionalParam"]) + \
+                "-bitrate"
+            headerLine += "\t"
+            headerLine += \
+                evaluator["algorithm"] + str(evaluator["additionalParam"]) + \
+                "-psnr"
+            headerLine += "\t"
+            headerLine += \
+                evaluator["algorithm"] + str(evaluator["additionalParam"]) + \
+                "-hash"
+            headerLine += "\t"
+
+        text += "\n"
+        text += headerLine
+
+    print(text)
+
+    # Checks for output logfile settings
+    if settings["release-log"] is not None:
+        settings["release-log"].write(text)
+
+
 def evaluate(filename=None, audioArray=None, algorithm="lilcom",
              additionalParam=None):
     """ This function does an evaluation on the given audio array, with
@@ -69,16 +125,17 @@ def evaluate(filename=None, audioArray=None, algorithm="lilcom",
            ///////// COMPLETE
     """
     global settings
-    returnvValue = dict.fromkeys(["bitrate", "psnr", "hashKey"])
+    returnValue = dict.fromkeys(["bitrate", "psnr", "hashKey"])
 
     """
     In case of empty input audio array it loads the array. The audio array is
         required for evaluation subroutine call 'PSNR'
     """
     if audioArray is None:
-        if settings["sampleRate"] != 0:
-            audioArray = waveRead(filename, settings["sampleRate"])
+        if settings["sample-rate"] != 0:
+            audioArray = waveRead(filename, settings["sample-rate"])
 
+    reconstructedArray = None
     # Evaluation Procedure for lilcom
     if algorithm == "lilcom":
         pass
@@ -88,6 +145,8 @@ def evaluate(filename=None, audioArray=None, algorithm="lilcom",
     # Evaluation for additional compression library
     else:
         pass
+
+    return returnValue
 
 
 def waveRead(filename, sampleRate=None):
@@ -106,7 +165,7 @@ def waveRead(filename, sampleRate=None):
            a Numpy array of the given audio file.
     """
     global settings
-    pass
+    return None
 
 
 # Parsing input arguments
@@ -126,10 +185,14 @@ args = parser.parse_args()
 settings = dict.fromkeys(["dataset-dir", "sample-rate", "release-log",
                          "release-df"])
 
+# Assigning system values based on passed arguments
 if args.dataset:
     settings["dataset-dir"] = args.dataset
 else:
-    settings["dataset-dir"] = "None"
+    settings["dataset-dir"] = "./"
+# Removes the / if existing at the end of directory
+if settings["dataset-dir"][-1] == "/":
+    settings["dataset-dir"] = settings["dataset-dir"][:-1]
 
 if args.samplerate:
     settings["sample-rate"] = int(args.samplerate)
@@ -143,6 +206,9 @@ else:
 
 if (args.releaselog):
     settings["release-log"] = args.releaselog
+    fileOpener = open(settings["release-log"], "w+")
+    settings["release-log"] = fileOpener
+
 else:
     settings["release-log"] = None
 
@@ -173,3 +239,33 @@ evaulators = [
         "additionalParam": "160k"
     }
 ]
+
+fileList = [settings["dataset-dir"] + "/" + item
+            for item in os.listdir(settings["dataset-dir"])
+            if ".wav" in item]
+
+# Initial prints
+logger(logmod="initialization")
+# In case that pandas report is enabled then the primary line is added
+#   to the csv report
+
+# In case that log report is enabled then the primary line is added to
+#   the log report
+
+for file in fileList:
+    audioArray = waveRead(file, settings["sample-rate"])
+
+    fileEvaluationResultList = []
+    for evaluator in evaulators:
+        evaluationResult = evaluate(file, audioArray,
+                                    evaluator["algorithm"],
+                                    evaluator["additionalParam"])
+        fileEvaluationResultList.append({"evaluator": evaluator,
+                                        "result": evaluationResult})
+
+    print(fileEvaluationResultList)
+    # In case that pandas report is enabled then the line is added
+    #   to the csv report
+
+    # In case that log report is enabled then the line is added to
+    #   the log report
