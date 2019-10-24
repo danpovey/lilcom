@@ -12,6 +12,8 @@ import lilcom
 import math
 # For listing directories and os related tasks, Built-in
 import os
+# For loading wav audio to numpy array, Dependency
+import scipy.io.wavfile
 
 
 def PSNR(originalArray, reconstructedArray):
@@ -46,6 +48,10 @@ def PSNR(originalArray, reconstructedArray):
         psnr = math.inf
 
     return psnr
+
+
+def hash(array):
+    return 0
 
 
 def logger(logmod="initialization", reportList=None):
@@ -193,11 +199,16 @@ def evaluate(filename=None, audioArray=None, algorithm="lilcom",
     if audioArray is None:
         if settings["sample-rate"] != 0:
             audioArray = waveRead(filename, settings["sample-rate"])
-
+        if settings["sample-rate"] == 0:  # DOOOOO STH
+            audioArray = waveRead(filename, settings["sample-rate"])
     reconstructedArray = None
     # Evaluation Procedure for lilcom
     if algorithm == "lilcom":
-        pass
+        reconstructedArray = lilcomReconstruct(audioArray,
+                                               lpcOrder=additionalParam)
+        returnValue["psnr"] = PSNR(audioArray, reconstructedArray)
+        returnValue["bitrate"] = 8 * settings["sample-rate"]
+        returnValue["hash"] = hash(reconstructedArray)
     # Evaluation Procedure for MP3
     elif algorithm == "MP3":
         pass
@@ -208,7 +219,7 @@ def evaluate(filename=None, audioArray=None, algorithm="lilcom",
     return returnValue
 
 
-def waveRead(filename, sampleRate=None):
+def waveRead(filename, sampleRate=0):
     """ This function reads a wavefile at a desired sample rate and returns
             it in form of a numpy array
 
@@ -223,7 +234,14 @@ def waveRead(filename, sampleRate=None):
        Returns:
            a Numpy array of the given audio file.
     """
-    global settings
+    audioArray = None
+    if sampleRate == 0:
+        sampleRate, audioArray = scipy.io.wavfile.read(filename)
+        settings["sample-rate"] = sampleRate
+        return audioArray
+    if sampleRate != 0:
+        sr, audioArray = scipy.io.wavfile.read(filename)
+        return audioArray
     return None
 
 
