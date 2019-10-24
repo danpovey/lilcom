@@ -278,11 +278,6 @@ fileList = [settings["dataset-dir"] + "/" + item
 
 # Initial prints
 logger(logmod="initialization")
-# In case that pandas report is enabled then the primary line is added
-#   to the csv report
-
-# In case that log report is enabled then the primary line is added to
-#   the log report
 
 for file in fileList:
     audioArray = waveRead(file, settings["sample-rate"])
@@ -296,8 +291,4 @@ for file in fileList:
                                         "result": evaluationResult})
 
     logger("result", fileEvaluationResultList)
-    # In case that pandas report is enabled then the line is added
-    #   to the csv report
 
-    # In case that log report is enabled then the line is added to
-    #   the log report
