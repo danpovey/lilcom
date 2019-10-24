@@ -129,6 +129,35 @@ def logger(logmod="initialization", reportList=None):
     return
 
 
+def lilcomReconstruct(audioArray, lpcOrder):
+    """ This function will reconstruct the given audio array in form of a
+            conescutive compression and decompression procedure.
+
+       Args:
+        audioArray: A numpy array as the audio signal
+        lcpOrder: Same as lcpOrder in the main lilcom functions
+
+       Returns:
+           an Audio array with same size to the array passed as input which
+            is a result of compresion and decompresion
+    """
+    bitPerSample = 6  # Issue make it passed by the operator
+    # bitsPerSample Should be recieved from settings
+    audioArray = audioArray.astype(np.float32)
+    outputShape = list(audioArray.shape)
+
+    outputShape[0] += 4
+    outputShape = tuple(outputShape)
+
+    outputArray = np.ndarray(outputShape, np.int8)
+    reconstructedArray = np.ndarray(audioArray.shape, np.int16)
+
+    c = lilcom.compress(audioArray, lpc_order=lpcOrder,
+                        bits_per_sample=bitPerSample, axis=0)
+    reconstructedArray = lilcom.decompress(c, dtype=audioArray.dtype)
+    return reconstructedArray
+
+
 def evaluate(filename=None, audioArray=None, algorithm="lilcom",
              additionalParam=None):
     """ This function does an evaluation on the given audio array, with
@@ -291,4 +320,3 @@ for file in fileList:
                                         "result": evaluationResult})
 
     logger("result", fileEvaluationResultList)
-
