@@ -220,9 +220,9 @@ if args.dataset:
     settings["dataset-dir"] = args.dataset
 else:
     settings["dataset-dir"] = "./"
-# Removes the / if existing at the end of directory
 if settings["dataset-dir"][-1] == "/":
     settings["dataset-dir"] = settings["dataset-dir"][:-1]
+    # Removes the / if existing at the end of directory
 
 if args.samplerate:
     settings["sample-rate"] = int(args.samplerate)
