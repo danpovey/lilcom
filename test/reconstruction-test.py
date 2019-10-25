@@ -183,7 +183,7 @@ def MP3Reconstruct(filename, bitrate):
     mp3File.export(tmpPath + "/reconst.wav", format="wav")
     sampleRateReconst, audioReconst = \
         scipy.io.wavfile.read(tmpPath + "/reconst.wav")
-
+    os.system("rm -dR " + tmpPath)
     return audioReconst
 
 
