@@ -1,5 +1,5 @@
 """
-Details about the Doument:
+Details about the Doument: ///// COMPLETE
 """
 
 # For parsing passed arguemtns, Built-in
@@ -14,6 +14,8 @@ import math
 import os
 # For loading wav audio to numpy array, Dependency
 import scipy.io.wavfile
+# For downsampling, Dependancy
+import librosa
 
 
 def PSNR(originalArray, reconstructedArray):
@@ -50,8 +52,8 @@ def PSNR(originalArray, reconstructedArray):
     return psnr
 
 
-def hash(array):
-    return 0
+def hash(array):  # //// TO COMPLETE
+    return np.sum(array) % 2**32 - 1
 
 
 def logger(logmod="initialization", reportList=None):
@@ -241,7 +243,14 @@ def waveRead(filename, sampleRate=0):
         return audioArray
     if sampleRate != 0:
         sr, audioArray = scipy.io.wavfile.read(filename)
-        return audioArray
+        if (sampleRate != sr):
+            if audioArray.dtype == np.int16:
+                audioArray = audioArray.astype(np.float32) / 32768
+                downsampledArray = librosa.core.resample(
+                                                audioArray.transpose(),
+                                                sr, sampleRate).transpose()
+
+        return downsampledArray
     return None
 
 
