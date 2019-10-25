@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 """
 Details about the Doument: ///// COMPLETE
 """
@@ -16,6 +17,8 @@ import os
 import scipy.io.wavfile
 # For downsampling, Dependancy
 import librosa
+# For MP3 conversion, Dependancy
+import pydub
 
 
 def PSNR(originalArray, reconstructedArray):
@@ -86,20 +89,20 @@ def logger(logmod="initialization", reportList=None):
 
         global evaulators
 
-        headerLine += "filename" + "\t"
+        headerLine += "filename" + "\t\t\t"
         for evaluator in evaulators:
             headerLine += \
                 evaluator["algorithm"] + str(evaluator["additionalParam"]) + \
                 "-bitrate"
-            headerLine += "\t"
+            headerLine += "\t\t\t"
             headerLine += \
                 evaluator["algorithm"] + str(evaluator["additionalParam"]) + \
                 "-psnr"
-            headerLine += "\t"
+            headerLine += "\t\t\t"
             headerLine += \
                 evaluator["algorithm"] + str(evaluator["additionalParam"]) + \
                 "-hash"
-            headerLine += "\t"
+            headerLine += "\t\t\t"
 
         text += "\n"
         text += headerLine
@@ -110,15 +113,15 @@ def logger(logmod="initialization", reportList=None):
         """
             Elements are each a dictionary of "evaluator" and "result"
         """
-        text += reportList[0] + "\t"
+        text += reportList[0] + "\t\t\t"
         for element in reportList[1:]:
             elementResult = element["result"]
             text += str(elementResult["bitrate"])
-            text += "\t"
+            text += "\t\t\t"
             text += str(elementResult["psnr"])
-            text += "\t"
+            text += "\t\t\t"
             text += str(elementResult["hash"])
-            text += "\t"
+            text += "\t\t\t"
 
     print(text)
 
@@ -129,10 +132,10 @@ def logger(logmod="initialization", reportList=None):
 
     if settings["release-df"]:
         if logmod == "initialization":
-            settings["release-df"].write(headerLine.replace("\t", ","))
+            settings["release-df"].write(headerLine.replace("\t\t\t", ","))
             settings["release-df"].write("\n")
         else:
-            settings["release-df"].write(text.replace("\t", ","))
+            settings["release-df"].write(text.replace("\t\t\t", ","))
             settings["release-df"].write("\n")
     return
 
@@ -164,6 +167,24 @@ def lilcomReconstruct(audioArray, lpcOrder):
                         bits_per_sample=bitPerSample, axis=0)
     reconstructedArray = lilcom.decompress(c, dtype=audioArray.dtype)
     return reconstructedArray
+
+
+def MP3Reconstruct(filename, bitrate):
+    # Creating a temporary path for MP3 and reconstruction File
+    tmpPath = "./ReconstTemp"
+    if tmpPath[2:] in os.listdir("./"):
+        os.system("rm -dR " + tmpPath)
+    os.system("mkdir " + tmpPath)
+    wavFile = pydub.AudioSegment.from_wav(filename)
+    wavFile.export(tmpPath + "/output.mp3", format="mp3", bitrate=bitrate)
+    # print("At bitrate {}, file {} compresses to {} bytes".format(
+    #    bitrate, filename, os.path.getsize(tmpPath + "/output.mp3")))
+    mp3File = pydub.AudioSegment.from_mp3(tmpPath + "/output.mp3")
+    mp3File.export(tmpPath + "/reconst.wav", format="wav")
+    sampleRateReconst, audioReconst = \
+        scipy.io.wavfile.read(tmpPath + "/reconst.wav")
+
+    return audioReconst
 
 
 def evaluate(filename=None, audioArray=None, algorithm="lilcom",
@@ -213,7 +234,11 @@ def evaluate(filename=None, audioArray=None, algorithm="lilcom",
         returnValue["hash"] = hash(reconstructedArray)
     # Evaluation Procedure for MP3
     elif algorithm == "MP3":
-        pass
+        reconstructedArray = MP3Reconstruct(filename,
+                                            bitrate=additionalParam)
+        returnValue["psnr"] = PSNR(audioArray, reconstructedArray)
+        returnValue["bitrate"] = int(additionalParam[:3])*1000
+        returnValue["hash"] = hash(reconstructedArray)
     # Evaluation for additional compression library
     else:
         pass
@@ -250,7 +275,8 @@ def waveRead(filename, sampleRate=0):
                                                 audioArray.transpose(),
                                                 sr, sampleRate).transpose()
 
-        return downsampledArray
+            return downsampledArray
+        return audioArray
     return None
 
 
