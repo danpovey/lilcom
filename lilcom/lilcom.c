@@ -484,20 +484,20 @@ static inline void lilcom_update_autocorrelation(
      So what we get that's extra is the extra terms from edge effects,
      divided by two.
 
-     We only do this if `compute_lpc` is true (i.e., if we
-     ll be re-estimating the LPC coefficients after this block),
-     because if we won't be, what's inside this block is a
-     "don't-care".. we'll just be subtracting it on the next
-     bock.
+     We only do this if `compute_lpc` is true (i.e., if we will be re-estimating
+     the LPC coefficients after this block), because if we won't be, what's
+     inside this block is a "don't-care".. we'll just be subtracting it on the
+     next block.
    */
   if (compute_lpc) {
     /* Note: signal_edge must only be indexed with negative coeffs.  Imagine a
-       symmetric virtual signal (suppose a pointer v, indexed as v[t]) where for
-       t < 0, v[t] := signal_edge[t], and for t >= 0, v[t] := signal_edge[-1-t].
-       [It's symmetric around t=0.5.]
+       symmetric virtual signal v[t], where for t < 0, v[t] := signal_edge[t],
+       and for t >= 0, v[t] := signal_edge[-1-t].  [It's symmetric around
+       t=0.5.]
 
        We are accumulating the LPC coeffs that 'cross the boundary', i.e.
-       involve both t >= 0 and t < 0.  The "i" is the index with t >= 0.
+       involve products of v[t]'s where one index has t < 0 and the other has t
+       >= 0.  The "i" below is the index with t >= 0.
     */
     const int16_t *signal_edge = signal + AUTOCORR_BLOCK_SIZE;
 
