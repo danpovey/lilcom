@@ -4,10 +4,6 @@
 import numpy as np
 import lilcom
 
-def test_num_bytes():
-    assert lilcom.compressed_num_bytes(10, 8) == 14
-    assert lilcom.compressed_num_bytes(10, 4) == 9
-
 
 def test_float():
     for bits_per_sample in [4,6,8]:
@@ -81,7 +77,6 @@ def test_double():
 
 
 def main():
-    test_num_bytes()
     test_int16()
     test_float()
     test_int16_lpc_order()
