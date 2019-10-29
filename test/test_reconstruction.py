@@ -1,6 +1,10 @@
 #!/usr/bin/python3
 """
-Details about the Doument: ///// COMPLETE
+Details about the Doument:
+This script runs a test to compare lilcom's reconstruction accuracy
+    and compare it with known MP3 bitrates. The script accepts additional
+    arguments which by running `./test_reconstruction.py --help` all
+    arguments are documented.
 """
 
 # For parsing passed arguemtns, Built-in
@@ -212,7 +216,7 @@ def evaluate(filename=None, audioArray=None, algorithm="lilcom",
             i.e. For lilcom it contains lpc-order and for MP3 it will have
             chosen bitrate.
        Returns:
-           ///////// COMPLETE
+            A dictionary with three keys; bitrate, psnr and hash.
     """
     global settings
     returnValue = dict.fromkeys(["bitrate", "psnr", "hash"])
