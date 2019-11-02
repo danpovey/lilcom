@@ -64,8 +64,8 @@ def PSNR(originalArray, reconstructedArray):
     return psnr
 
 
-def hash(array):  # //// TO COMPLETE
-    return np.sum(array) % 2**32 - 1
+def hash(array):
+    return int(np.sum(np.abs(array))*2000) % int((2**16) - 1)
 
 
 def logger(logmod="initialization", reportList=None):
@@ -98,20 +98,20 @@ def logger(logmod="initialization", reportList=None):
 
         global evaulators
 
-        headerLine += "filename" + "\t\t\t"
+        headerLine += "filename" + "\t"
         for evaluator in evaulators:
             headerLine += \
                 evaluator["algorithm"] + str(evaluator["additionalParam"]) + \
                 "-bitrate"
-            headerLine += "\t\t\t"
+            headerLine += "\t"
             headerLine += \
                 evaluator["algorithm"] + str(evaluator["additionalParam"]) + \
                 "-psnr"
-            headerLine += "\t\t\t"
+            headerLine += "\t"
             headerLine += \
                 evaluator["algorithm"] + str(evaluator["additionalParam"]) + \
                 "-hash"
-            headerLine += "\t\t\t"
+            headerLine += "\t"
 
         text += "\n"
         text += headerLine
@@ -122,15 +122,15 @@ def logger(logmod="initialization", reportList=None):
         """
             Elements are each a dictionary of "evaluator" and "result"
         """
-        text += reportList[0] + "\t\t\t"
+        text += reportList[0] + "\t"
         for element in reportList[1:]:
             elementResult = element["result"]
             text += str(elementResult["bitrate"])
-            text += "\t\t\t"
-            text += str(elementResult["psnr"])
-            text += "\t\t\t"
+            text += "\t\t"
+            text += '%.2f' % elementResult["psnr"]
+            text += "\t\t"
             text += str(elementResult["hash"])
-            text += "\t\t\t"
+            text += "\t\t"
 
     print(text)
 
@@ -141,10 +141,10 @@ def logger(logmod="initialization", reportList=None):
 
     if settings["release-df"]:
         if logmod == "initialization":
-            settings["release-df"].write(headerLine.replace("\t\t\t", ","))
+            settings["release-df"].write(headerLine.replace("\t", ","))
             settings["release-df"].write("\n")
         else:
-            settings["release-df"].write(text.replace("\t\t\t", ","))
+            settings["release-df"].write(text.replace("\t", ","))
             settings["release-df"].write("\n")
     return
 
@@ -381,7 +381,7 @@ logger(logmod="initialization")
 for file in fileList:
     audioArray = waveRead(file, settings["sample-rate"])
 
-    fileEvaluationResultList = [file]
+    fileEvaluationResultList = [os.path.basename(file)]
     for evaluator in evaulators:
         evaluationResult = evaluate(file, audioArray,
                                     evaluator["algorithm"],
