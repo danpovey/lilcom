@@ -64,7 +64,8 @@ def PSNR(originalArray, reconstructedArray):
     return psnr
 
 
-def conj_optim(cur_coeffs, quad_mat, num_iters=2):
+def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
+               num_iters=2):
     # Note: this modifies cur_coeffs in place.
     #  Uses conjugate gradient method to minimize the function
     #  cur_coeffs^T quad_mat cur_coeffs, subject to the constraint
@@ -93,9 +94,16 @@ def conj_optim(cur_coeffs, quad_mat, num_iters=2):
     A = A.astype(np.float64)
     b = b.astype(np.float64)
 
+
+    if True:
+        Minv = get_autocorr_preconditioner(autocorr_stats)
+    else:
+        Minv = np.eye(autocorr_stats.shape[0] - 1)
+
     r = b - np.dot(A, x)
-    p = r.copy()
-    rsold = np.dot(r,r)
+    z = np.dot(Minv, r)
+    p = z.copy()
+    rsold = np.dot(r,z)
     rs_orig = rsold
     print("Residual0 is {}, objf0 is {}".format(rsold,
                                                 np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b)))
@@ -106,12 +114,13 @@ def conj_optim(cur_coeffs, quad_mat, num_iters=2):
         foo = x + alpha * p
         x += alpha * p
         r -= alpha * Ap;
-        rsnew = np.dot(r,r)
+        z = np.dot(Minv, r)
+        rsnew = np.dot(r, z)
         print("ResidualN is {}, ratio={}, objf={} ".format(rsnew, rsnew / rs_orig,
               (np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b))))
         if rsnew / rs_orig < 1.0e-05:
             break
-        p = r + (p * (rsnew / rsold))
+        p = z + (p * (rsnew / rsold))
         rsold = rsnew
     cur_coeffs[1:] = x
 
@@ -160,10 +169,27 @@ def conj_optim2(cur_coeffs, quad_mat, num_iters=2):
         cur_coeffs[1:]  = approx_x
         return
 
-def update_stats(array, t_start, t_end, quad_mat,
-                 zero_order_term, linear_term, prev_scale):
+
+def get_autocorr_preconditioner(autocorr_stats):
     """
-    Update autocorrelation stats.. scale down previous stats by 0 < prev_scale <= 1.
+    Returns the preconditioner implied by these autocorrelation stats.
+    We're using the inverse of the Toeplitz matrix.
+    """
+    order = autocorr_stats.shape[0] - 1
+    A = np.zeros((order, order))
+    for i in range(order):
+        for j in range(order):
+            A[i,j] = autocorr_stats[abs(i-j)]
+    return np.linalg.inv(A)
+
+
+def update_stats(array, t_start,
+                 t_end, quad_mat,
+                 autocorr_stats,
+                 zero_order_term,
+                 linear_term, prev_scale):
+    """
+    Update autocorrelation and quadratic stats.. scale down previous stats by 0 < prev_scale <= 1.
     The aim is for quad_mat to contain the following, where N == order:
 
        zero_order_term = \sum_{t=N}^{t_end-1} weight(t)
@@ -203,6 +229,41 @@ def update_stats(array, t_start, t_end, quad_mat,
     for t in range(t_start, t_end):
         for i in range(orderp1):
             autocorr[i] += array[t] * array[t-i]
+
+    if True:
+
+        # Update autocorr_stats, our more-permanent version of the autocorr stats.
+        # We need to make sure that these could be the autocorrelation of a plausible
+        # signal, which involves some special changes.
+        autocorr_stats *= prev_scale
+
+
+        if t_start > order: # subtract the `temporary stats` added in the last
+                            # block.
+            for i in range(order):
+                for j in range(i + 1, order):
+                    autocorr_stats[j] -= 0.5 * array[t_start - (j-i)] * array[t_start - 1 - i]
+
+        # Special case at first block.
+        local_t_start = 0 if t_start == order else t_start
+
+        sqrt_scale = math.sqrt(prev_scale)
+        for t in range(local_t_start, t_end):
+            for i in range(orderp1):
+                t_prev = t - i
+                if t_prev < 0:
+                    continue
+                elif t_prev >= t_start:
+                    autocorr_stats[i] += array[t] * array[t_prev]
+                else:
+                    autocorr_stats[i] += array[t] * array[t_prev] * sqrt_scale
+
+        # Add in some temporary stats due to a notional reflection of the signal at time t_end.
+        for i in range(order):
+            for j in range(i + 1, order):
+                autocorr_stats[j] += 0.5 * array[t_end - (j-i)] * array[t_end - 1 - i]
+
+
 
     # Add in the autocorrelation stats to quad_mat
     for i in range(orderp1):
@@ -248,6 +309,7 @@ def test_prediction(array):
 
     quad_mat_check = np.zeros((orderp1, orderp1))
     zero_order_term = 0.0
+    autocorr_stats = np.zeros(orderp1)
     linear_term = 0.0
 
     weight = 0.75
@@ -262,7 +324,8 @@ def test_prediction(array):
         if (t % BLOCK == 0) and t > 0:
             # This block updates quad_mat_check.
             (zero_order_term, linear_term) = update_stats(array, max(order, t-BLOCK), t,
-                                                          quad_mat_check, zero_order_term,
+                                                          quad_mat_check, autocorr_stats,
+                                                          zero_order_term,
                                                           linear_term, weight)
             # quad_mat is symmetric.
             quad_mat = np.zeros((orderp1, orderp1))
@@ -295,7 +358,6 @@ def test_prediction(array):
             else:
                 quad_mat = quad_mat_check.copy()  # Use the weighted one for prediction
 
-
             for i in range(1):
                 half_dcoeff = np.dot(quad_mat, cur_coeff)
                 ## Argument is that in the matrix segment quad_mat[1:,1:], absolute values of autocorr coeffs
@@ -313,7 +375,9 @@ def test_prediction(array):
                 linear_term = 0.0
                 quad_mat -= linear_term * linear_term / zero_order_term
 
-                conj_optim(cur_coeff, quad_mat, order if t == BLOCK or t % (2*BLOCK) == 0 else 2)
+                conj_optim(cur_coeff, quad_mat,
+                           autocorr_stats,
+                           order if t == BLOCK else 2)
                 print("Current residual / unpredicted-residual is (after update): {}".format(
                         np.dot(cur_coeff, np.dot(quad_mat, cur_coeff) / orig_zero_element)))
 
