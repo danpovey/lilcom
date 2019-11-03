@@ -119,7 +119,7 @@ def conj_optim(cur_coeffs, quad_mat, num_iters=2):
 def conj_optim2(cur_coeffs, quad_mat, num_iters=2):
     # This version of conj_optim tests whether we can use a Toeplitz approximation
     # for the quadratic matrix and still get good prediction accuracy.
-
+    # Answer seems to be no.
 
     b = quad_mat[0,1:]
     A = quad_mat[1:,1:]
@@ -160,7 +160,8 @@ def conj_optim2(cur_coeffs, quad_mat, num_iters=2):
         cur_coeffs[1:]  = approx_x
         return
 
-def update_stats(array, t_start, t_end, quad_mat, zero_order_term, linear_term, prev_scale):
+def update_stats(array, t_start, t_end, quad_mat,
+                 zero_order_term, linear_term, prev_scale):
     """
     Update autocorrelation stats.. scale down previous stats by 0 < prev_scale <= 1.
     The aim is for quad_mat to contain the following, where N == order:
@@ -182,7 +183,12 @@ def update_stats(array, t_start, t_end, quad_mat, zero_order_term, linear_term, 
     Within each block we primarily update quad_mat using autocorrelation stats,
     taking advantage of the almosty-Toeplitz sructure but we need to also
     account for edge effects.
+
+    RETURNS (zero_order_term, linear_term)
+
     """
+    orderp1 = quad_mat.shape[0]
+    order = orderp1 - 1
     assert t_start >= order
 
     zero_order_term *= prev_scale
@@ -191,11 +197,9 @@ def update_stats(array, t_start, t_end, quad_mat, zero_order_term, linear_term, 
 
     zero_order_term += t_end - t_start
     linear_term += np.sum(array[t_start:t_end])
-    orderp1 = quad_mat.shape[0]
-    order = orderp1 - 1
     autocorr = np.zeros(orderp1)
-    # Get the autocorrelation stats for which the 'current frame' is within
-    # the current block.  This includes some cross-block terms.
+    # Get the autocorrelation stats for which the later frame in the product is
+    # within the current block.  This includes some cross-block terms.
     for t in range(t_start, t_end):
         for i in range(orderp1):
             autocorr[i] += array[t] * array[t-i]
@@ -205,30 +209,35 @@ def update_stats(array, t_start, t_end, quad_mat, zero_order_term, linear_term, 
         for j in range(orderp1):
             quad_mat[i,j] += autocorr[abs(i-j)]
 
+    #if True:
+    #    # This skips the correction terms.
+    #    return (zero_order_term, linear_term)
+
     # Add in some terms that are really from the autocorrelation of the
     # previous block, and which we had previously subtracted / canceled
     # out when processing it.
     for k in range(order):
         t = t_start + k
-        for i in range(k, order):
-            for j in range(k, order):
-                quad_mat[i,j] += array[t-i]* array[t-j]
+        for i in range(k + 1, orderp1):
+            for j in range(k + 1, orderp1):
+                quad_mat[i,j] += array[t-i] * array[t-j]
 
     # Now subtract some terms that were included in the autocorrelation stats
     # but which we want to cancel out from quad_mat because they come
     # from eq. (1) with t >= t_end.
     for k in range(order):
         t = t_end + k
-        for i in range(k, order):
-            for j in range(k, order):
+        for i in range(k + 1, orderp1):
+            for j in range(k + 1, orderp1):
                 quad_mat[i,j] -= array[t-i] * array[t-j]
+    return (zero_order_term, linear_term)
 
 
 def test_prediction(array):
     # Operate on a linear signal.
     assert(len(array.shape) == 1)
     array = array.astype(np.float64)
-    order = 5
+    order = 16
     orderp1 = order + 1
     T = array.shape[0]
     autocorr = np.zeros(orderp1)
@@ -236,13 +245,25 @@ def test_prediction(array):
     cur_coeff = np.zeros(orderp1)
     cur_coeff[0] = -1
 
-    for t in range(T):
-        print("array[t] = {}".format(array[t]))
-        for i in range(orderp1):
-            if t-i >= 0:
-                autocorr[i] += array[t-i] * array[t]
 
-        if (t % 16 == 0) and t > 0:
+    quad_mat_check = np.zeros((orderp1, orderp1))
+    zero_order_term = 0.0
+    linear_term = 0.0
+
+    weight = 0.75
+    pred_sumsq_tot = 0.0
+    raw_sumsq_tot = 0.0
+    BLOCK = 32
+
+    for t in range(T):
+
+        print("array[t] = {}".format(array[t]))
+
+        if (t % BLOCK == 0) and t > 0:
+            # This block updates quad_mat_check.
+            (zero_order_term, linear_term) = update_stats(array, max(order, t-BLOCK), t,
+                                                          quad_mat_check, zero_order_term,
+                                                          linear_term, weight)
             # quad_mat is symmetric.
             quad_mat = np.zeros((orderp1, orderp1))
             for i in range(orderp1):
@@ -252,17 +273,27 @@ def test_prediction(array):
             if True:
                 # Now modify for end effects.  We subtract from quad_mat any terms that
                 # should not be included because they are at the edges.
+
+                # First, the very beginning of the signal; we give weight zero
+                # to times t=0..order-1.
                 for t1 in range(order):
                     for i in range(t1+1):
                         for j in range(t1+1):
                             quad_mat[i,j] -= array[t1-i] * array[t1-j]
 
-                # CAUTION: t is the time value we have just processed, not the number of
-                # time values we have processed.
-                for t1 in range(t+1, t+order+2):
-                    for i in range(t1-t, orderp1):
-                        for j in range(t1-t, orderp1):
-                            quad_mat[i,j] -= array[t1-i] * array[t1-j]
+                for k in range(order):
+                    this_t = t + k
+                    for i in range(k + 1, orderp1):
+                        for j in range(k + 1, orderp1):
+                            quad_mat[i,j] -= array[this_t-i] * array[this_t-j]
+
+
+            if weight == 1.0:
+                if not np.array_equal(quad_mat, quad_mat_check):
+                    print("Arrays differ: t={}, quad_mat={}, quad_mat_check={}".format(
+                            t, quad_mat, quad_mat_check))
+            else:
+                quad_mat = quad_mat_check.copy()  # Use the weighted one for prediction
 
 
             for i in range(1):
@@ -274,9 +305,43 @@ def test_prediction(array):
                 #cur_coeff -= (1.0 / (orderp1 - 1)) * half_dcoeff / autocorr[0]
                 #cur_coeff[0] = -1  # This has to always stay at -1.
 
-                conj_optim(cur_coeff, quad_mat, order+2)
+
+                offset = linear_term / zero_order_term
+                orig_zero_element = quad_mat[0,0]
+                # subtract the constant-offset from quad_mat.. for prediction we would
+                # include linear_term / zero_order_term as a zeroth-order prediction.
+                linear_term = 0.0
+                quad_mat -= linear_term * linear_term / zero_order_term
+
+                conj_optim(cur_coeff, quad_mat, order if t == BLOCK or t % (2*BLOCK) == 0 else 2)
                 print("Current residual / unpredicted-residual is (after update): {}".format(
-                        np.dot(cur_coeff, np.dot(quad_mat, cur_coeff) / quad_mat[0,0])))
+                        np.dot(cur_coeff, np.dot(quad_mat, cur_coeff) / orig_zero_element)))
+
+            raw_sumsq = 0.0
+            pred_sumsq = 0.0
+            if t+BLOCK > array.shape[0]:
+                continue
+            for t2 in range(t, t+BLOCK):
+                raw_sumsq += array[t2] * array[t2]
+
+                offset = linear_term / zero_order_term
+                pred = 0.0
+                for i in range(order+1):
+                    pred += cur_coeff[i] * (array[t2 - i] - offset)
+                pred_sumsq += pred * pred
+            print("For this block, pred_sumsq / raw_sumsq = {}".format(pred_sumsq / raw_sumsq))
+            if t > BLOCK:
+                pred_sumsq_tot += pred_sumsq
+                raw_sumsq_tot += raw_sumsq
+                print("For blocks till now (t={}),, pred_sumsq_tot / raw_sumsq_tot = {}".format(
+                        t, pred_sumsq_tot / raw_sumsq_tot))
+
+
+        for i in range(orderp1):
+            if t-i >= 0:
+                autocorr[i] += array[t-i] * array[t]
+
+
 
 # Suppose we are minimizing f(x) = 0.5 x^2.   2nd deriv is 1.
 #  x <== x - d/dx f(x)   is:    x <=== x - x = 0.
