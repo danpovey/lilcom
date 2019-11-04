@@ -64,7 +64,7 @@ def PSNR(originalArray, reconstructedArray):
     return psnr
 
 
-def levinson_solve(autocorr, y):
+def toeplitz_solve(autocorr, y):
     """
     Let y be a vector of dimension N and let
     `autocorr` be vector of dimension N representing, conceptually,
@@ -99,59 +99,34 @@ def levinson_solve(autocorr, y):
     N = autocorr.shape[0] - 1
     assert y.shape[0] == N + 1
     x = np.zeros(N+1)
-    a = np.zeros(N+1)
     b = np.zeros(N+1)
-    a_temp = np.zeros(N+1)
     b_temp = np.zeros(N+1)
     r = autocorr
 
-    a[0] = 1.0
     b[0] = 1.0
     epsilon = r[0]
     x[0] = y[0] / epsilon
 
-    # The following is just for testing purposes.
-    A = np.zeros((N+1, N+1))
-    for i in range(N+1):
-        for j in range(N+1):
-            A[i,j] = autocorr[abs(i-j)]
-
     for n in range(1, N+1):
-        # We want that y[:n] = A[:n,:n] * x[:n]
-        maybe_yn = np.dot(A[:n,:n], x[:n])
-        print("Iteration {}: should have {} == {}".format(
-                n, y[:n], maybe_yn))
 
-        # eqn 2.6 for \xi_n and \nu_n
-        xi_n = (-1.0 / epsilon) * sum([r[n-j] * a[j] for j in range(n)])
-        nu_n = (-1.0 / epsilon) * sum([r[j] * b[j-1] for j in range(1, n+1)])
-        print("{} vs {}".format(xi_n, nu_n))
-        #assert xi_n == nu_n # By symmetry.
+        # eqn 2.6 for \nu_n.  We are not evaluating \xi_n because it is
+        # the same.  Be careful with the indexing of b.  Notice in Eq.
+        # (2.3) that the elements of b are in a very strange order,
+        # so you have to interpret (2.6) very carefully.
+        nu_n = (-1.0 / epsilon) * sum([r[j+1] * b[j] for j in range(n)])
 
         # next few lines are Eq. 2.7
-        a_temp[:n] = a[:n]
-        a_temp[1:n+1] += xi_n * b[:n]
         b_temp[0] = 0.0
         b_temp[1:n+1] = b[:n]
-        b_temp[:n] += nu_n * a[:n]
+        b_temp[:n] += nu_n * np.flip(b[:n])
         b[:n+1] = b_temp[:n+1]
-        a[:n+1] = a_temp[:n+1]
-
-        print("{} vs {}".format(a[:n+1], b[:n+1]))
 
         # Eq. 2.8
-        epsilon *= (1.0 - xi_n * nu_n)
-
-        print("Epsilon = {}, R*a = {}, R*b = {}".format(
-                epsilon, np.dot(A[:n+1,:n+1],a[:n+1]), np.dot(A[:n+1,:n+1],b[:n+1])))
+        epsilon *= (1.0 - nu_n * nu_n)
 
         # The following is an unnumbered formula below Eq. 2.9
         lambda_n = y[n] - sum([ r[n-j] * x[j] for j in range(n)])
         x[:n+1] += (lambda_n / epsilon) * b[:n+1]
-
-    maybe_y = np.dot(A, x)
-    print("Iteration [final]: should have {} == {}".format(
-            y, maybe_y))
 
     return x
 
@@ -209,9 +184,10 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
         return
 
     r = b - np.dot(A, x)
-    z = np.dot(Minv, r)
-    z_test = levinson_solve(autocorr_stats[:-1], r)
-    print("z = {}, z_test = {}".format(z, z_test))
+    z = toeplitz_solve(autocorr_stats[:-1], r)
+    if True:
+        z_test = np.dot(Minv, r)
+        print("z = {}, z_test = {}".format(z, z_test))
     p = z.copy()
     rsold = np.dot(r,z)
     rs_orig = rsold
@@ -224,7 +200,8 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
         foo = x + alpha * p
         x += alpha * p
         r -= alpha * Ap;
-        z = np.dot(Minv, r)
+        #z = np.dot(Minv, r)
+        z = toeplitz_solve(autocorr_stats[:-1], r)
         rsnew = np.dot(r, z)
         print("ResidualN is {}, ratio={}, objf={} ".format(rsnew, rsnew / rs_orig,
               (np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b))))
@@ -467,6 +444,7 @@ def test_prediction(array):
     linear_term = 0.0
 
     weight = 0.75
+    num_cg_iters = 3
     pred_sumsq_tot = 0.0
     raw_sumsq_tot = 0.0
     BLOCK = 32
@@ -522,7 +500,7 @@ def test_prediction(array):
                 # Get corrected autocorr-stats as if the signal had our DC offset applied.
                 autocorr_temp = autocorr_stats - ((linear_term/zero_order_term)**2)*autocorr_loading
                 conj_optim(cur_coeff, quad_mat,
-                           autocorr_temp, 3,
+                           autocorr_temp, num_cg_iters,
                            None if t > 5*BLOCK else min(t // 16, order))
                 print("Current residual / unpredicted-residual is (after update): {}".format(
                         np.dot(cur_coeff, np.dot(quad_mat, cur_coeff) / orig_zero_element)))
