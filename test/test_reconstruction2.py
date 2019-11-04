@@ -64,6 +64,100 @@ def PSNR(originalArray, reconstructedArray):
     return psnr
 
 
+def levinson_solve(autocorr, y):
+    """
+    Let y be a vector of dimension N and let
+    `autocorr` be vector of dimension N representing, conceptually,
+    a Toeplitz matrix A(i,j) = autocorr[abs(i-j)].
+
+      This function solves the linear system A x = b, returning x.
+
+    We require for the Toeplitz matrix to satisfy the normal conditions for
+    algorithms on Toeplitz matrices, meaning no singular leading minor may be
+    singular (i.e. not det(A[0:n,0:n])==0 for any n).  This will naturally be
+    satisfied if A is the autocorrelation of a finite nonzero sequence (I
+    believe).
+
+    This function solves for x using the Levinson-Trench-Zohar
+    algorithm/recursion..  I had to look this up... in this case
+    y is an arbitrary vector, so the Levinson-Durbin recursion as normally
+    used in signal processing doesn't apply.
+
+    I am looking at:
+       https://core.ac.uk/download/pdf/4382193.pdf:
+      "Levinson and fast Choleski algorithms for Toeplitz and almost
+      Toeplitz matrices", RLE technical report no. 538 by Bruce R Muscius,
+      Research Laboratory of Electronics, MIT,
+
+    particularly equations 2.4, 2.6, 2.7, 2.8, (unnumbered formula below 2.9),
+    2.10.  There is opportunity for simplification because this Toeplitz matrix
+    is symmetric.
+    """
+
+    # The technical report I am looking at deals with things of dimension (N+1),
+    # so for consistency I am letting N be the dimension minus one.
+    N = autocorr.shape[0] - 1
+    assert y.shape[0] == N + 1
+    x = np.zeros(N+1)
+    a = np.zeros(N+1)
+    b = np.zeros(N+1)
+    a_temp = np.zeros(N+1)
+    b_temp = np.zeros(N+1)
+    r = autocorr
+
+    a[0] = 1.0
+    b[0] = 1.0
+    epsilon = r[0]
+    x[0] = y[0] / epsilon
+
+    # The following is just for testing purposes.
+    A = np.zeros((N+1, N+1))
+    for i in range(N+1):
+        for j in range(N+1):
+            A[i,j] = autocorr[abs(i-j)]
+
+    for n in range(1, N+1):
+        # We want that y[:n] = A[:n,:n] * x[:n]
+        maybe_yn = np.dot(A[:n,:n], x[:n])
+        print("Iteration {}: should have {} == {}".format(
+                n, y[:n], maybe_yn))
+
+        # eqn 2.6 for \xi_n and \nu_n
+        xi_n = (-1.0 / epsilon) * sum([r[n-j] * a[j] for j in range(n)])
+        nu_n = (-1.0 / epsilon) * sum([r[j] * b[j-1] for j in range(1, n+1)])
+        print("{} vs {}".format(xi_n, nu_n))
+        #assert xi_n == nu_n # By symmetry.
+
+        # next few lines are Eq. 2.7
+        a_temp[:n] = a[:n]
+        a_temp[1:n+1] += xi_n * b[:n]
+        b_temp[0] = 0.0
+        b_temp[1:n+1] = b[:n]
+        b_temp[:n] += nu_n * a[:n]
+        b[:n+1] = b_temp[:n+1]
+        a[:n+1] = a_temp[:n+1]
+
+        print("{} vs {}".format(a[:n+1], b[:n+1]))
+
+        # Eq. 2.8
+        epsilon *= (1.0 - xi_n * nu_n)
+
+        print("Epsilon = {}, R*a = {}, R*b = {}".format(
+                epsilon, np.dot(A[:n+1,:n+1],a[:n+1]), np.dot(A[:n+1,:n+1],b[:n+1])))
+
+        # The following is an unnumbered formula below Eq. 2.9
+        lambda_n = y[n] - sum([ r[n-j] * x[j] for j in range(n)])
+        x[:n+1] += (lambda_n / epsilon) * b[:n+1]
+
+    maybe_y = np.dot(A, x)
+    print("Iteration [final]: should have {} == {}".format(
+            y, maybe_y))
+
+    return x
+
+
+
+
 def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
                num_iters=2, order=None):
     # Note: this modifies cur_coeffs in place.
@@ -116,6 +210,8 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
 
     r = b - np.dot(A, x)
     z = np.dot(Minv, r)
+    z_test = levinson_solve(autocorr_stats[:-1], r)
+    print("z = {}, z_test = {}".format(z, z_test))
     p = z.copy()
     rsold = np.dot(r,z)
     rs_orig = rsold
