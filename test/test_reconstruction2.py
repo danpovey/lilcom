@@ -186,6 +186,7 @@ def get_autocorr_preconditioner(autocorr_stats):
 def update_stats(array, t_start,
                  t_end, quad_mat,
                  autocorr_stats,
+                 autocorr_loading,
                  zero_order_term,
                  linear_term, prev_scale):
     """
@@ -291,6 +292,7 @@ def update_stats(array, t_start,
         # This is more optimized; it's O(order^2) vs. O(order^3).  The path from
         # the one above to here is a little complicated but you can verify that
         # they give the same results.
+        # only the upper triangle is set.
         for j in range(order):
             local_sum = 0.0
             for i in range(1, orderp1 - j):
@@ -298,23 +300,30 @@ def update_stats(array, t_start,
                 quad_mat[i,i+j] += local_sum
 
 
+    # Now subtract some terms that were included in the autocorrelation stats
+    # but which we want to cancel out from quad_mat because they come
+    # from eq. (1) with t >= t_end.
+    if False:
+        # The slower but easier-to-understand version.
+        for k in range(order):
+            t = t_end + k
+            for i in range(k + 1, orderp1):
+                for j in range(k + 1, orderp1):
+                    quad_mat[i,j] -= array[t-i] * array[t-j]
+    else:
+        #The optimized version
+        for j in range(order):
+            local_sum = 0.0
+            for i in range(1, orderp1 - j):
+                local_sum += array[t_end-i] * array[t_end-i-j]
+                quad_mat[i,i+j] -= local_sum
 
 
-
-    # Copy upper to lower triangle
+    # Copy upper to lower triangle of quad_mat
     for i in range(orderp1):
         for j in range(i):
             quad_mat[i,j] = quad_mat[j,i]
 
-
-    # Now subtract some terms that were included in the autocorrelation stats
-    # but which we want to cancel out from quad_mat because they come
-    # from eq. (1) with t >= t_end.
-    for k in range(order):
-        t = t_end + k
-        for i in range(k + 1, orderp1):
-            for j in range(k + 1, orderp1):
-                quad_mat[i,j] -= array[t-i] * array[t-j]
     return (zero_order_term, linear_term)
 
 
@@ -334,6 +343,9 @@ def test_prediction(array):
     quad_mat_check = np.zeros((orderp1, orderp1))
     zero_order_term = 0.0
     autocorr_stats = np.zeros(orderp1)
+    autocorr_loading = np.zeros(orderp1)  # says how much we'd have to modify
+                                          # autocorr_stats to account for DC
+                                          # bias.
     linear_term = 0.0
 
     weight = 0.75
@@ -349,6 +361,7 @@ def test_prediction(array):
             # This block updates quad_mat_check.
             (zero_order_term, linear_term) = update_stats(array, max(order, t-BLOCK), t,
                                                           quad_mat_check, autocorr_stats,
+                                                          autocorr_loading,
                                                           zero_order_term,
                                                           linear_term, weight)
             # quad_mat is symmetric.
