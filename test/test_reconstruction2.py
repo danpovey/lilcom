@@ -243,29 +243,115 @@ def get_autocorr_preconditioner(autocorr_stats):
             A[i,j] = autocorr_stats[abs(i-j)]
     return np.linalg.inv(A)
 
+reflection = False
 
+
+def add_prev_block_terms(array, block_start, order, quad_mat):
+    """ Add in some terms to quad_mat that come from products of x(t) within the
+    previous block where the y(t) has t >= block_start.
+    """
+    pass
 
 def init_stats(array, order, block_size):
     """
-    Initializes the stats (quad_mat, autocorr_stats, autocorr_loading, zero_order_term,
-                           linear_term)
-    and returns them as a tuple.  The first block is assumed to start
-"""
-    pass
+    Initializes the stats (quad_mat, autocorr_stats)
+
+    and returns them as a tuple.  The first block is assumed to start at frame zero,
+    but for the quad_mat part of the stats, the first 'order' samples are not
+    included as the 'x' but only as history.
+    """
+    orderp1 = order + 1
+    quad_mat = np.zeros((orderp1, orderp1), dtype=np.float64)
+    autocorr_stats = np.zeros(orderp1, dtype=np.float64)
+    assert block_size > order
+
+
+    # Get autocorrelation stats for the rest of the block except for
+    # t < order
+    autocorr = np.zeros(orderp1, dtype=np.float64)
+    for t in range(order, block_size):
+        for j in range(orderp1):
+            autocorr_stats[j] += array[t] * array[t-j]
+
+    # commit to upper triangle of quad_mat
+    for i in range(orderp1):
+        for j in range(i):
+            quad_mat[i,j] += autocorr_tot[abs(i-j)]
+
+    # The following adds in some extra terms to quad_mat that come from
+    # predicted samples y(t) with t >= order seeing histories with t < order.
+    t_start = order
+    t_end = block_size
+    if not optimize:
+        # Here is the un-optimized code.  Just modify upper triangle for now.
+        for k in range(order):
+            t = t_start + k
+            for i in range(k + 1, orderp1):
+                for j in range(i, orderp1):
+                    quad_mat[i,j] += array[t-i] * array[t-j]
+
+    else:
+        # This is more optimized; it's O(order^2) vs. O(order^3).  The path from
+        # the one above to here is a little complicated but you can verify that
+        # they give the same results.
+        # only the upper triangle is set.
+        for j in range(order):
+            local_sum = 0.0
+            for i in range(1, orderp1 - j):
+                local_sum += array[t_start-i] * array[t_start-i-j]
+                quad_mat[i,i+j] += local_sum
+
+
+    # Now subtract some terms that were included in the autocorrelation stats
+    # but which we want to cancel out from quad_mat because they come
+    # from eq. (1) with t >= t_end.
+    if not optimize:
+        # The slower but easier-to-understand version.
+        for k in range(order):
+            t = t_end + k
+            for i in range(k + 1, orderp1):
+                for j in range(k + 1, orderp1):
+                    quad_mat[i,j] -= array[t-i] * array[t-j]
+    else:
+        #The optimized version
+        for j in range(order):
+            local_sum = 0.0
+            for i in range(1, orderp1 - j):
+                local_sum += array[t_end-i] * array[t_end-i-j]
+                quad_mat[i,i+j] -= local_sum
+
+    # Copy upper to lower triangle of quad_mat
+    for i in range(orderp1):
+        for j in range(i):
+            quad_mat[i,j] = quad_mat[j,i]
+
+
+    # Include in `autocorr_stats` some terms from near the beginning that we
+    # omitted so that they would not be included in quad_mat.
+    for i in range(order):
+        for j in range(i + 1):
+            autocorr_stats[j] += array[i] * array[i-j]
+
+    # Add in some temporary stats to `autocorr_stats` due to a notional
+    # reflection of the signal at time t_end+1/2
+    if reflection:
+        for i in range(order):
+            for j in range(i + 1, order):
+                autocorr_stats[j] += 0.5 * array[t_end - (j-i)] * array[t_end - 1 - i]
+
+
+    return (quad_mat, autocorr_stats)
+
 
 
 def update_stats(array, t_start,
                  t_end, quad_mat,
                  autocorr_stats,
-                 autocorr_loading,
-                 zero_order_term,
-                 linear_term, prev_scale):
+                 prev_scale):
     """
     Update autocorrelation and quadratic stats.. scale down previous stats by 0 < prev_scale <= 1.
     The aim is for quad_mat to contain the following, where N == order:
 
-       zero_order_term = \sum_{t=N}^{t_end-1} weight(t)
-       linear_term = \sum_{t=N}^{t_end-1} weight(t) array[t]
        quad_mat(i,j) = \sum_{t=N}^{t_end-1} weight(t) \sum_{i=0}^N \sum_{j=0}^N array[t-i] array[t-j]  (1)
 
     ... where weight(t) is 1.0 for the current segment starting at t_start, and exponentially
@@ -281,20 +367,13 @@ def update_stats(array, t_start,
     Within each block we primarily update quad_mat using autocorrelation stats,
     taking advantage of the almosty-Toeplitz sructure but we need to also
     account for edge effects.
-
-    RETURNS (zero_order_term, linear_term)
-
     """
     orderp1 = quad_mat.shape[0]
     order = orderp1 - 1
     assert t_start >= order
 
-    zero_order_term *= prev_scale
-    linear_term *= prev_scale
     quad_mat *= prev_scale
 
-    zero_order_term += t_end - t_start
-    linear_term += np.sum(array[t_start:t_end])
 
     autocorr_within_block = np.zeros(orderp1, dtype=np.float64)
     autocorr_cross_block = np.zeros(orderp1, dtype=np.float64)
@@ -315,19 +394,16 @@ def update_stats(array, t_start,
     if True:
 
 
-        reflection = False  # set False to disable reflection of signal at current time.
         if reflection and t_start > order: # subtract the `temporary stats` added in the last
                             # block.
             for i in range(order):
                 for j in range(i + 1, order):
                     autocorr_stats[j] -= 0.5 * array[t_start - (j-i)] * array[t_start - 1 - i]
-                    autocorr_loading[j] -= 0.5
 
         # Update autocorr_stats, our more-permanent version of the autocorr
         # stats.  We need to make sure that these could be the autocorrelation
         # of an actual signal, which involves some special changes.
         autocorr_stats *= prev_scale
-        autocorr_loading *= prev_scale
 
         fast = False
         if fast:
@@ -362,30 +438,18 @@ def update_stats(array, t_start,
                 elif t_prev >= local_t_start:
                     if not fast:
                         autocorr_stats[i] += array[t] * array[t_prev]
-                        autocorr_loading[i] += 1.0
                 else:
                     if not fast:
                         autocorr_stats[i] += array[t] * array[t_prev] * sqrt_scale
-                        autocorr_loading[i] += sqrt_scale
 
-        if fast:
-            # num_samples is the number of new samples we're adding to the autocorrelation
-            # stats
-            num_samples = t_end - local_t_start
 
-            for i in range(orderp1):
-                num_cross_block_terms = i
-                autocorr_loading[i] += num_samples - num_cross_block_terms
-                if local_t_start != 0:
-                    autocorr_loading[i] += sqrt_scale * num_cross_block_terms
 
-        # Add in some temporary stats due to a notional reflection of the signal at time t_end.
+
+        # Add in some temporary stats due to a notional reflection of the signal at time t_end+1/2
         if reflection:
             for i in range(order):
                 for j in range(i + 1, order):
                     autocorr_stats[j] += 0.5 * array[t_end - (j-i)] * array[t_end - 1 - i]
-                    autocorr_loading[j] += 0.5
-
 
 
     # Add in the autocorrelation stats to quad_mat
@@ -394,10 +458,6 @@ def update_stats(array, t_start,
         for j in range(orderp1):
             quad_mat[i,j] += autocorr_tot[abs(i-j)]
 
-
-    #if True:
-    #    # This skips the correction terms.
-    #    return (zero_order_term, linear_term)
 
     # Add in some terms that are really from the autocorrelation of the
     # previous block, and which we had previously subtracted / canceled
@@ -468,7 +528,7 @@ def update_stats(array, t_start,
         print("tstart,end={},{}; After subtracting before-the-beginning terms, smallest eig of quad_mat is: {}".format(
                 t_start, t_end, w.min()))
 
-    return (zero_order_term, linear_term)
+
 
 
 def test_prediction(array):
@@ -485,16 +545,10 @@ def test_prediction(array):
 
 
     quad_mat_stats = np.zeros((orderp1, orderp1), dtype=np.float64)
-    zero_order_term = 0.0
     autocorr_stats = np.zeros(orderp1)
-    autocorr_loading = np.zeros(orderp1)  # says how much we'd have to modify
-                                          # autocorr_stats to account for DC
-                                          # bias.
-    linear_term = 0.0
 
     weight = 0.5
     num_cg_iters = 3
-    use_linear_offset = False
     pred_sumsq_tot = 0.0
     raw_sumsq_tot = 0.0
     BLOCK = 64
@@ -502,14 +556,12 @@ def test_prediction(array):
 
     for t in range(T):
 
-
         if (t % BLOCK == 0) and t > 0:
             # This block updates quad_mat_stats.
-            (zero_order_term, linear_term) = update_stats(array, max(order, t-BLOCK), t,
-                                                          quad_mat_stats, autocorr_stats,
-                                                          autocorr_loading,
-                                                          zero_order_term,
-                                                          linear_term, weight)
+            update_stats(array, max(order, t-BLOCK), t,
+                         quad_mat_stats, autocorr_stats,
+                         weight)
+
             # quad_mat is symmetric.
             quad_mat = np.zeros((orderp1, orderp1))
             for i in range(orderp1):
@@ -543,16 +595,10 @@ def test_prediction(array):
 
             if True:
                 orig_zero_element = quad_mat[0,0]
-                # subtract the constant-offset from quad_mat.. for prediction we would
-                # include linear_term / zero_order_term as a zeroth-order prediction.
-                if not use_linear_offset:
-                    linear_term = 0.0
-                quad_mat -= linear_term * linear_term / zero_order_term
 
                 # Get corrected autocorr-stats as if the signal had our DC offset applied.
-                autocorr_temp = autocorr_stats - ((linear_term/zero_order_term)**2)*autocorr_loading
                 conj_optim(cur_coeff, quad_mat,
-                           autocorr_temp, num_cg_iters,
+                           autocorr_stats, num_cg_iters,
                            None if t > 5*BLOCK else min(t // 16, order))
                 print("Current residual / unpredicted-residual is (after update): {}".format(
                         np.dot(cur_coeff, np.dot(quad_mat, cur_coeff)) / orig_zero_element))
@@ -565,10 +611,9 @@ def test_prediction(array):
             for t2 in range(t, t+BLOCK):
                 raw_sumsq += array[t2] * array[t2]
 
-                offset = linear_term / zero_order_term
                 pred = 0.0
                 for i in range(order+1):
-                    pred += cur_coeff[i] * (array[t2 - i] - offset)
+                    pred += cur_coeff[i] * array[t2 - i]
                 pred_sumsq += pred * pred
             print("For this block, pred_sumsq / raw_sumsq = {}".format(pred_sumsq / raw_sumsq))
             if t > BLOCK:
