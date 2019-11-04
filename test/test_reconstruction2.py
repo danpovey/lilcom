@@ -286,15 +286,20 @@ def update_stats(array, t_start,
             for i in range(k + 1, orderp1):
                 for j in range(i, orderp1):
                     quad_mat[i,j] += array[t-i] * array[t-j]
+
     else:
-        # This is more optimized.
-        for i in range(1, orderp1):
-            for j in range(i, orderp1):
-                local_sum = 0.0
-                for k in range(min(i,j)):
-                    t = t_start + k
-                    local_sum += array[t-i] * array[t-j]
-                quad_mat[i,j] += local_sum
+        # This is more optimized; it's O(order^2) vs. O(order^3).  The path from
+        # the one above to here is a little complicated but you can verify that
+        # they give the same results.
+        for j in range(order):
+            local_sum = 0.0
+            for i in range(1, orderp1 - j):
+                local_sum += array[t_start-i] * array[t_start-i-j]
+                quad_mat[i,i+j] += local_sum
+
+
+
+
 
     # Copy upper to lower triangle
     for i in range(orderp1):
