@@ -125,50 +125,6 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
     cur_coeffs[1:] = x
 
 
-def conj_optim2(cur_coeffs, quad_mat, num_iters=2):
-    # This version of conj_optim tests whether we can use a Toeplitz approximation
-    # for the quadratic matrix and still get good prediction accuracy.
-    # Answer seems to be no.
-
-    b = quad_mat[0,1:]
-    A = quad_mat[1:,1:]
-
-    orderp1 = quad_mat.shape[0]
-    approx_autocorr = np.zeros(orderp1)
-    count = np.zeros(orderp1)
-    for i in range(orderp1):
-        for j in range(i, orderp1):
-            index = j - i
-            count[index] += 1
-            approx_autocorr[index] += quad_mat[i,j]
-    approx_autocorr /= count
-    approx_quad_mat = np.zeros((orderp1, orderp1))
-    for i in range(orderp1):
-        for j in range(orderp1):
-            approx_quad_mat[i,j] = approx_autocorr[abs(i-j)]
-
-
-    approx_b = approx_quad_mat[0,1:]
-    approx_A = approx_quad_mat[1:,1:]
-
-    w, v = np.linalg.eig(A)
-    print("Eigs of A are {}".format(w))
-    w, v = np.linalg.eig(approx_A)
-    print("Eigs of approx-A are {}".format(w))
-
-
-    ## we are solving Ax = b.  Trivial solution is: x = A^{-1} b
-    x = cur_coeffs[1:]
-
-    if True:
-        exact_x = np.dot(np.linalg.inv(A), b)
-        approx_x = np.dot(np.linalg.inv(approx_A), approx_b)
-        print("Exact objf is {}".format(np.dot(np.dot(A,exact_x),exact_x) - 2.0 * np.dot(exact_x,b)))
-        print("Approx objf is {}".format(np.dot(np.dot(A,approx_x),approx_x) - 2.0 * np.dot(approx_x,b)))
-
-        cur_coeffs[1:]  = approx_x
-        return
-
 
 def get_autocorr_preconditioner(autocorr_stats):
     """
@@ -291,11 +247,24 @@ def update_stats(array, t_start,
                 elif t_prev >= local_t_start:
                     if not fast:
                         autocorr_stats[i] += array[t] * array[t_prev]
-                    autocorr_loading[i] += 1.0
+                        autocorr_loading[i] += 1.0
                 else:
                     if not fast:
                         autocorr_stats[i] += array[t] * array[t_prev] * sqrt_scale
-                    autocorr_loading[i] += sqrt_scale
+                        autocorr_loading[i] += sqrt_scale
+
+        if fast:
+            # num_samples is the number of new samples we're adding to the autocorrelation
+            # stats
+            num_samples = t_end - local_t_start
+
+            for i in range(orderp1):
+                num_cross_block_terms = i
+                autocorr_loading[i] += num_samples - num_cross_block_terms
+                if local_t_start != 0:
+                    autocorr_loading[i] += sqrt_scale * num_cross_block_terms
+
+        print("Autocorr loading stats are {}".format(autocorr_loading))
 
         # Add in some temporary stats due to a notional reflection of the signal at time t_end.
         if reflection:
@@ -304,7 +273,6 @@ def update_stats(array, t_start,
                     autocorr_stats[j] += 0.5 * array[t_end - (j-i)] * array[t_end - 1 - i]
                     autocorr_loading[j] += 0.5
 
-        print("Autocorr stats are {}".format(autocorr_stats))
 
 
     # Add in the autocorrelation stats to quad_mat
