@@ -65,7 +65,7 @@ def PSNR(originalArray, reconstructedArray):
 
 
 def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
-               num_iters=2):
+               num_iters=2, order=None):
     # Note: this modifies cur_coeffs in place.
     #  Uses conjugate gradient method to minimize the function
     #  cur_coeffs^T quad_mat cur_coeffs, subject to the constraint
@@ -74,6 +74,13 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
     #  then we can say we are minimizing
     #   objf = x^T A x  - 2 x b
     #  dobjf/dx = 2Ax - 2b = 0, so we are solving Ax = b.
+
+    if order is None:
+        order = quad_mat.shape[0] - 1
+    if order != quad_mat.shape[0] - 1:
+        conj_optim(cur_coeffs[0:order+1], quad_mat[0:order+1, 0:order+1],
+                   autocorr_stats[0:order+1], num_iters)
+        return
 
     b = quad_mat[0,1:]
     A = quad_mat[1:,1:]
@@ -96,9 +103,16 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
 
 
     if True:
+        # use preconditioner
         Minv = get_autocorr_preconditioner(autocorr_stats)
     else:
         Minv = np.eye(autocorr_stats.shape[0] - 1)
+
+    if False:
+        # This block would use autocorrelation-based LPC.
+        x = np.dot(Minv, b)
+        cur_coeffs[1:] = x
+        return
 
     r = b - np.dot(A, x)
     z = np.dot(Minv, r)
@@ -264,8 +278,6 @@ def update_stats(array, t_start,
                 if local_t_start != 0:
                     autocorr_loading[i] += sqrt_scale * num_cross_block_terms
 
-        print("Autocorr loading stats are {}".format(autocorr_loading))
-
         # Add in some temporary stats due to a notional reflection of the signal at time t_end.
         if reflection:
             for i in range(order):
@@ -341,7 +353,7 @@ def test_prediction(array):
     # Operate on a linear signal.
     assert(len(array.shape) == 1)
     array = array.astype(np.float64)
-    order = 16
+    order = 25
     orderp1 = order + 1
     T = array.shape[0]
     autocorr = np.zeros(orderp1)
@@ -414,7 +426,8 @@ def test_prediction(array):
                 # Get corrected autocorr-stats as if the signal had our DC offset applied.
                 autocorr_temp = autocorr_stats - ((linear_term/zero_order_term)**2)*autocorr_loading
                 conj_optim(cur_coeff, quad_mat,
-                           autocorr_temp, 3)
+                           autocorr_temp, 3,
+                           None if t > 5*BLOCK else min(t // 16, order))
                 print("Current residual / unpredicted-residual is (after update): {}".format(
                         np.dot(cur_coeff, np.dot(quad_mat, cur_coeff) / orig_zero_element)))
 
@@ -422,6 +435,7 @@ def test_prediction(array):
             pred_sumsq = 0.0
             if t+BLOCK > array.shape[0]:
                 continue
+            # The rest is diagnostics: see how prediction compares with raw sumsq.
             for t2 in range(t, t+BLOCK):
                 raw_sumsq += array[t2] * array[t2]
 
