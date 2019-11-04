@@ -277,11 +277,30 @@ def update_stats(array, t_start,
     # Add in some terms that are really from the autocorrelation of the
     # previous block, and which we had previously subtracted / canceled
     # out when processing it.
-    for k in range(order):
-        t = t_start + k
-        for i in range(k + 1, orderp1):
-            for j in range(k + 1, orderp1):
-                quad_mat[i,j] += array[t-i] * array[t-j]
+
+
+    if False:
+        # Here is the un-optimized code.  Just modify upper triangle for now.
+        for k in range(order):
+            t = t_start + k
+            for i in range(k + 1, orderp1):
+                for j in range(i, orderp1):
+                    quad_mat[i,j] += array[t-i] * array[t-j]
+    else:
+        # This is more optimized.
+        for i in range(1, orderp1):
+            for j in range(i, orderp1):
+                local_sum = 0.0
+                for k in range(min(i,j)):
+                    t = t_start + k
+                    local_sum += array[t-i] * array[t-j]
+                quad_mat[i,j] += local_sum
+
+    # Copy upper to lower triangle
+    for i in range(orderp1):
+        for j in range(i):
+            quad_mat[i,j] = quad_mat[j,i]
+
 
     # Now subtract some terms that were included in the autocorrelation stats
     # but which we want to cancel out from quad_mat because they come
@@ -358,16 +377,7 @@ def test_prediction(array):
             else:
                 quad_mat = quad_mat_check.copy()  # Use the weighted one for prediction
 
-            for i in range(1):
-                half_dcoeff = np.dot(quad_mat, cur_coeff)
-                ## Argument is that in the matrix segment quad_mat[1:,1:], absolute values of autocorr coeffs
-                ## are bounded by autocorr[0] and we can show that the largest eigenvalue is at most
-                ## autocorr[0] * n.
-                ## note: largest eigenvalue of Hessian of objf is bounded by 2 * autocorr[0].
-                #cur_coeff -= (1.0 / (orderp1 - 1)) * half_dcoeff / autocorr[0]
-                #cur_coeff[0] = -1  # This has to always stay at -1.
-
-
+            if True:
                 offset = linear_term / zero_order_term
                 orig_zero_element = quad_mat[0,0]
                 # subtract the constant-offset from quad_mat.. for prediction we would
@@ -376,8 +386,7 @@ def test_prediction(array):
                 quad_mat -= linear_term * linear_term / zero_order_term
 
                 conj_optim(cur_coeff, quad_mat,
-                           autocorr_stats,
-                           order if t == BLOCK else 2)
+                           autocorr_stats, 3)
                 print("Current residual / unpredicted-residual is (after update): {}".format(
                         np.dot(cur_coeff, np.dot(quad_mat, cur_coeff) / orig_zero_element)))
 
