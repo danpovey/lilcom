@@ -224,21 +224,31 @@ def update_stats(array, t_start,
 
     zero_order_term += t_end - t_start
     linear_term += np.sum(array[t_start:t_end])
-    autocorr = np.zeros(orderp1)
+
+    autocorr_within_block = np.zeros(orderp1)
+    autocorr_cross_block = np.zeros(orderp1)
+
     # Get the autocorrelation stats for which the later frame in the product is
-    # within the current block.  This includes some cross-block terms.
-    for t in range(t_start, t_end):
+    # within the current block.  This includes some cross-block terms, which
+    # we need to treat separately.
+
+    for i in range(order):
+        for j in range(i + 1):
+            autocorr_within_block[j] += array[t_start + i] * array[t_start + i - j]
+        for j in range(i + 1, orderp1):
+            autocorr_cross_block[j] += array[t_start + i] * array[t_start + i - j]
+
+    for t in range(t_start + order, t_end):
         for i in range(orderp1):
-            autocorr[i] += array[t] * array[t-i]
+            autocorr_within_block[i] += array[t] * array[t-i]
 
     if True:
 
-        # Update autocorr_stats, our more-permanent version of the autocorr stats.
-        # We need to make sure that these could be the autocorrelation of a plausible
-        # signal, which involves some special changes.
+        # Update autocorr_stats, our more-permanent version of the autocorr
+        # stats.  We need to make sure that these could be the autocorrelation
+        # of an actual signal, which involves some special changes.
         autocorr_stats *= prev_scale
         autocorr_loading *= prev_scale
-
 
         reflection = True  # set False to disable reflection of signal at current time.
         if reflection and t_start > order: # subtract the `temporary stats` added in the last
@@ -247,6 +257,27 @@ def update_stats(array, t_start,
                 for j in range(i + 1, order):
                     autocorr_stats[j] -= 0.5 * array[t_start - (j-i)] * array[t_start - 1 - i]
                     autocorr_loading[j] -= 0.5
+
+        fast = True
+        if fast:
+            if t_start == order:
+                # Special case: the first block.  We need to include autocorrelation terms
+                # involving pairs of t values with 0 <= t < order, which we excluded
+                # from the computation above by setting t_start == order rather than 0.
+                for i in range(order):
+                    for j in range(i+1):
+                        autocorr_stats[j] += array[i] * array[i-j]
+                # both the cross_block and within_block terms are actually within
+                # the first 'real' block, if we let the 'real' block start from 0 instead
+                # of 'order', so include them as usual.
+                autocorr_stats += autocorr_cross_block
+                autocorr_stats += autocorr_within_block
+            else:
+                # We view the signal itself as decaying with sqrt(prev_scale); the
+                # autocorrelation stats decay with the square of that since they
+                # are products of signals.
+                autocorr_stats += autocorr_cross_block * math.sqrt(prev_scale)
+                autocorr_stats += autocorr_within_block
 
         # Special case at first block.
         local_t_start = 0 if t_start == order else t_start
@@ -257,11 +288,13 @@ def update_stats(array, t_start,
                 t_prev = t - i
                 if t_prev < 0:
                     continue
-                elif t_prev >= t_start:
-                    autocorr_stats[i] += array[t] * array[t_prev]
+                elif t_prev >= local_t_start:
+                    if not fast:
+                        autocorr_stats[i] += array[t] * array[t_prev]
                     autocorr_loading[i] += 1.0
                 else:
-                    autocorr_stats[i] += array[t] * array[t_prev] * sqrt_scale
+                    if not fast:
+                        autocorr_stats[i] += array[t] * array[t_prev] * sqrt_scale
                     autocorr_loading[i] += sqrt_scale
 
         # Add in some temporary stats due to a notional reflection of the signal at time t_end.
@@ -271,11 +304,14 @@ def update_stats(array, t_start,
                     autocorr_stats[j] += 0.5 * array[t_end - (j-i)] * array[t_end - 1 - i]
                     autocorr_loading[j] += 0.5
 
+        print("Autocorr stats are {}".format(autocorr_stats))
+
 
     # Add in the autocorrelation stats to quad_mat
+    autocorr_tot = autocorr_within_block + autocorr_cross_block
     for i in range(orderp1):
         for j in range(orderp1):
-            quad_mat[i,j] += autocorr[abs(i-j)]
+            quad_mat[i,j] += autocorr_tot[abs(i-j)]
 
     #if True:
     #    # This skips the correction terms.
@@ -283,8 +319,8 @@ def update_stats(array, t_start,
 
     # Add in some terms that are really from the autocorrelation of the
     # previous block, and which we had previously subtracted / canceled
-    # out when processing it.
-
+    # out when processing it.  (If this is the first block, we'll have
+    # t_start == order and those will be fresh terms that we do want.)
 
     if False:
         # Here is the un-optimized code.  Just modify upper triangle for now.
