@@ -237,13 +237,16 @@ def update_stats(array, t_start,
         # We need to make sure that these could be the autocorrelation of a plausible
         # signal, which involves some special changes.
         autocorr_stats *= prev_scale
+        autocorr_loading *= prev_scale
 
 
-        if t_start > order: # subtract the `temporary stats` added in the last
+        reflection = True  # set False to disable reflection of signal at current time.
+        if reflection and t_start > order: # subtract the `temporary stats` added in the last
                             # block.
             for i in range(order):
                 for j in range(i + 1, order):
                     autocorr_stats[j] -= 0.5 * array[t_start - (j-i)] * array[t_start - 1 - i]
+                    autocorr_loading[j] -= 0.5
 
         # Special case at first block.
         local_t_start = 0 if t_start == order else t_start
@@ -256,14 +259,17 @@ def update_stats(array, t_start,
                     continue
                 elif t_prev >= t_start:
                     autocorr_stats[i] += array[t] * array[t_prev]
+                    autocorr_loading[i] += 1.0
                 else:
                     autocorr_stats[i] += array[t] * array[t_prev] * sqrt_scale
+                    autocorr_loading[i] += sqrt_scale
 
         # Add in some temporary stats due to a notional reflection of the signal at time t_end.
-        for i in range(order):
-            for j in range(i + 1, order):
-                autocorr_stats[j] += 0.5 * array[t_end - (j-i)] * array[t_end - 1 - i]
-
+        if reflection:
+            for i in range(order):
+                for j in range(i + 1, order):
+                    autocorr_stats[j] += 0.5 * array[t_end - (j-i)] * array[t_end - 1 - i]
+                    autocorr_loading[j] += 0.5
 
 
     # Add in the autocorrelation stats to quad_mat
@@ -340,7 +346,7 @@ def test_prediction(array):
     cur_coeff[0] = -1
 
 
-    quad_mat_check = np.zeros((orderp1, orderp1))
+    quad_mat_stats = np.zeros((orderp1, orderp1))
     zero_order_term = 0.0
     autocorr_stats = np.zeros(orderp1)
     autocorr_loading = np.zeros(orderp1)  # says how much we'd have to modify
@@ -358,9 +364,9 @@ def test_prediction(array):
         print("array[t] = {}".format(array[t]))
 
         if (t % BLOCK == 0) and t > 0:
-            # This block updates quad_mat_check.
+            # This block updates quad_mat_stats.
             (zero_order_term, linear_term) = update_stats(array, max(order, t-BLOCK), t,
-                                                          quad_mat_check, autocorr_stats,
+                                                          quad_mat_stats, autocorr_stats,
                                                           autocorr_loading,
                                                           zero_order_term,
                                                           linear_term, weight)
@@ -389,22 +395,22 @@ def test_prediction(array):
 
 
             if weight == 1.0:
-                if not np.array_equal(quad_mat, quad_mat_check):
-                    print("Arrays differ: t={}, quad_mat={}, quad_mat_check={}".format(
-                            t, quad_mat, quad_mat_check))
+                if not np.array_equal(quad_mat, quad_mat_stats):
+                    print("Arrays differ: t={}, quad_mat={}, quad_mat_stats={}".format(
+                            t, quad_mat, quad_mat_stats))
             else:
-                quad_mat = quad_mat_check.copy()  # Use the weighted one for prediction
+                quad_mat = quad_mat_stats.copy()  # Use the weighted one for prediction
 
             if True:
-                offset = linear_term / zero_order_term
                 orig_zero_element = quad_mat[0,0]
                 # subtract the constant-offset from quad_mat.. for prediction we would
                 # include linear_term / zero_order_term as a zeroth-order prediction.
-                linear_term = 0.0
                 quad_mat -= linear_term * linear_term / zero_order_term
 
+                # Get corrected autocorr-stats as if the signal had our DC offset applied.
+                autocorr_temp = autocorr_stats - ((linear_term/zero_order_term)**2)*autocorr_loading
                 conj_optim(cur_coeff, quad_mat,
-                           autocorr_stats, 3)
+                           autocorr_temp, 3)
                 print("Current residual / unpredicted-residual is (after update): {}".format(
                         np.dot(cur_coeff, np.dot(quad_mat, cur_coeff) / orig_zero_element)))
 
