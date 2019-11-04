@@ -26,7 +26,7 @@ def read(fname):
 
 extension_mod = Extension("lilcom.lilcom_c_extension",
                           sources=["lilcom/lilcom_c_extension.c",
-                                   "lilcom/lilcom.c"],
+                                   "lilcom/lilcom.cc"],
                           # Actually it turns out that the optimization level
                           # and debugging code makes very little difference to
                           # the speed, so we're using options designed to
@@ -43,7 +43,7 @@ setup(
     version = "0.1.0",
     author = "Daniel Povey, Soroush Zargar, Mahsa Yarmohammadi, Jian Wu",
     author_email = "dpovey@gmail.com",
-    description = ("Small compression utility for sequence data in NumPy"),
+    description = ("Lossy-compression utility for sequence data in NumPy"),
     license = "MIT",
     keywords = "compression numpy",
     packages=['lilcom'],
@@ -54,7 +54,8 @@ setup(
     install_requires=['numpy'],
     classifiers=[
         "Development Status :: 3 - Alpha",
-        "Topic :: Utilities",
+        "Programming Language :: Python :: 3",
+        "Topic :: System :: Archiving :: Compression",
         "License :: OSI Approved :: MIT License",
     ],
 )

@@ -431,7 +431,7 @@ def update_stats(array, t_start,
     # of an actual signal, which involves some special changes.
     autocorr_stats *= prev_scale
 
-    fast = False
+    fast = True
     assert t_start > order  # first block would be handled in init_stats
     if fast:
         # We view the signal itself as decaying with sqrt(prev_scale); the
