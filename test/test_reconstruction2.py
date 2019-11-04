@@ -431,36 +431,23 @@ def update_stats(array, t_start,
     # of an actual signal, which involves some special changes.
     autocorr_stats *= prev_scale
 
-    fast = True
+    fast = False
+    assert t_start > order  # first block would be handled in init_stats
     if fast:
-        if t_start == order:
-            # Special case: the first block.  We need to include autocorrelation terms
-            # involving pairs of t values with 0 <= t < order, which we excluded
-            # from the computation above by setting t_start == order rather than 0.
-            for i in range(order):
-                for j in range(i+1):
-                    autocorr_stats[j] += array[i] * array[i-j]
-            # both the cross_block and within_block terms are actually within
-            # the first 'real' block, if we let the 'real' block start from 0 instead
-            # of 'order', so include them as usual.
-            autocorr_stats += autocorr_cross_block
-            autocorr_stats += autocorr_within_block
-        else:
-            # We view the signal itself as decaying with sqrt(prev_scale); the
-            # autocorrelation stats decay with the square of that since they
-            # are products of signals.
-            autocorr_stats += autocorr_cross_block * math.sqrt(prev_scale)
-            autocorr_stats += autocorr_within_block
+        # We view the signal itself as decaying with sqrt(prev_scale); the
+        # autocorrelation stats decay with the square of that since they
+        # are products of signals.
+        autocorr_stats += autocorr_cross_block * math.sqrt(prev_scale)
+        autocorr_stats += autocorr_within_block
     else:
         # Special case at first block.
-        local_t_start = 0 if t_start == order else t_start
         sqrt_scale = math.sqrt(prev_scale)
-        for t in range(local_t_start, t_end):
+        for t in range(t_start, t_end):
             for i in range(orderp1):
                 t_prev = t - i
                 if t_prev < 0:
                     continue
-                elif t_prev >= local_t_start:
+                elif t_prev >= t_start:
                     autocorr_stats[i] += array[t] * array[t_prev]
                 else:
                     autocorr_stats[i] += array[t] * array[t_prev] * sqrt_scale
@@ -538,19 +525,8 @@ def test_prediction(array):
             optimize = False
             # This block updates quad_mat_stats.
             if t == BLOCK:
-                if False:
-                    quad_mat_stats = np.zeros((orderp1, orderp1), dtype=np.float64)
-                    autocorr_stats = np.zeros(orderp1)
-                    update_stats(array, order, BLOCK,
-                                 quad_mat_stats, autocorr_stats,
-                                 weight)
-                else:
-                    (quad_mat_stats, autocorr_stats) = init_stats(array, order, BLOCK,
-                                                                  optimize)
-                print("autocorr_stats = {}, quad_mat_stats = {}".format(autocorr_stats,
-                                                                        quad_mat_stats))
-
-
+                (quad_mat_stats, autocorr_stats) = init_stats(array, order, BLOCK,
+                                                              optimize)
             else:
                 update_stats(array, max(order, t-BLOCK), t,
                              quad_mat_stats, autocorr_stats,
@@ -561,7 +537,6 @@ def test_prediction(array):
                 quad_mat = quad_mat_stats.copy()
                 orig_zero_element = quad_mat[0,0]
 
-                # Get corrected autocorr-stats as if the signal had our DC offset applied.
                 conj_optim(cur_coeff, quad_mat,
                            autocorr_stats, num_cg_iters,
                            None if t > 5*BLOCK else min(t // 16, order))
