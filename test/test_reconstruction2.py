@@ -123,6 +123,7 @@ def toeplitz_solve(autocorr, y):
 
         # Eq. 2.8
         epsilon *= (1.0 - nu_n * nu_n)
+        assert abs(nu_n) < 1.0
 
         # The following is an unnumbered formula below Eq. 2.9
         lambda_n = y[n] - sum([ r[n-j] * x[j] for j in range(n)])
@@ -151,12 +152,22 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
                    autocorr_stats[0:order+1], num_iters)
         return
 
+    smoothing = 1.0e-08
+    if smoothing != 0.0:
+        dim = quad_mat.shape[0]
+        quad_mat = quad_mat + np.eye(dim, dtype=np.float64) * (smoothing * (1.0e-05 + quad_mat.trace()))
+        autocorr_stats = autocorr_stats.copy()
+        autocorr_stats[0] += smoothing * (autocorr_stats[0] + 1.0e-05)
+
+
     b = quad_mat[0,1:]
     A = quad_mat[1:,1:]
 
     w, v = np.linalg.eig(A)
-    print("Eigs of A are {}".format(w))
-
+    if not w.min() > 0.0:
+        w2, v = np.linalg.eig(quad_mat)
+        print("Error: eigs are not positive: A={}, eigs={}, quad-mat-eigs={}".format(A, w, w2))
+        exit(1)
 
     ## we are solving Ax = b.  Trivial solution is: x = A^{-1} b
     x = cur_coeffs[1:]
@@ -174,6 +185,10 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
     if True:
         # use preconditioner
         Minv = get_autocorr_preconditioner(autocorr_stats)
+        w, v = np.linalg.eig(Minv)
+        if not w.min() > 0.0:
+            print("Eigs of Minv are {}".format(w))
+            sys.exit(1)
     else:
         Minv = np.eye(autocorr_stats.shape[0] - 1)
 
@@ -185,9 +200,11 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
 
     r = b - np.dot(A, x)
     z = toeplitz_solve(autocorr_stats[:-1], r)
-    if True:
+    assert np.dot(z, r) >= 0.0
+    if False:
         z_test = np.dot(Minv, r)
         print("z = {}, z_test = {}".format(z, z_test))
+
     p = z.copy()
     rsold = np.dot(r,z)
     rs_orig = rsold
@@ -203,6 +220,7 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
         #z = np.dot(Minv, r)
         z = toeplitz_solve(autocorr_stats[:-1], r)
         rsnew = np.dot(r, z)
+        assert(rsnew >= 0.0)
         print("ResidualN is {}, ratio={}, objf={} ".format(rsnew, rsnew / rs_orig,
               (np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b))))
         if rsnew / rs_orig < 1.0e-05:
@@ -224,6 +242,16 @@ def get_autocorr_preconditioner(autocorr_stats):
         for j in range(order):
             A[i,j] = autocorr_stats[abs(i-j)]
     return np.linalg.inv(A)
+
+
+
+def init_stats(array, order, block_size):
+    """
+    Initializes the stats (quad_mat, autocorr_stats, autocorr_loading, zero_order_term,
+                           linear_term)
+    and returns them as a tuple.  The first block is assumed to start
+"""
+    pass
 
 
 def update_stats(array, t_start,
@@ -268,13 +296,12 @@ def update_stats(array, t_start,
     zero_order_term += t_end - t_start
     linear_term += np.sum(array[t_start:t_end])
 
-    autocorr_within_block = np.zeros(orderp1)
-    autocorr_cross_block = np.zeros(orderp1)
+    autocorr_within_block = np.zeros(orderp1, dtype=np.float64)
+    autocorr_cross_block = np.zeros(orderp1, dtype=np.float64)
 
     # Get the autocorrelation stats for which the later frame in the product is
     # within the current block.  This includes some cross-block terms, which
     # we need to treat separately.
-
     for i in range(order):
         for j in range(i + 1):
             autocorr_within_block[j] += array[t_start + i] * array[t_start + i - j]
@@ -287,13 +314,8 @@ def update_stats(array, t_start,
 
     if True:
 
-        # Update autocorr_stats, our more-permanent version of the autocorr
-        # stats.  We need to make sure that these could be the autocorrelation
-        # of an actual signal, which involves some special changes.
-        autocorr_stats *= prev_scale
-        autocorr_loading *= prev_scale
 
-        reflection = True  # set False to disable reflection of signal at current time.
+        reflection = False  # set False to disable reflection of signal at current time.
         if reflection and t_start > order: # subtract the `temporary stats` added in the last
                             # block.
             for i in range(order):
@@ -301,7 +323,13 @@ def update_stats(array, t_start,
                     autocorr_stats[j] -= 0.5 * array[t_start - (j-i)] * array[t_start - 1 - i]
                     autocorr_loading[j] -= 0.5
 
-        fast = True
+        # Update autocorr_stats, our more-permanent version of the autocorr
+        # stats.  We need to make sure that these could be the autocorrelation
+        # of an actual signal, which involves some special changes.
+        autocorr_stats *= prev_scale
+        autocorr_loading *= prev_scale
+
+        fast = False
         if fast:
             if t_start == order:
                 # Special case: the first block.  We need to include autocorrelation terms
@@ -366,6 +394,7 @@ def update_stats(array, t_start,
         for j in range(orderp1):
             quad_mat[i,j] += autocorr_tot[abs(i-j)]
 
+
     #if True:
     #    # This skips the correction terms.
     #    return (zero_order_term, linear_term)
@@ -375,7 +404,10 @@ def update_stats(array, t_start,
     # out when processing it.  (If this is the first block, we'll have
     # t_start == order and those will be fresh terms that we do want.)
 
-    if False:
+
+    optimize = False
+
+    if not optimize:
         # Here is the un-optimized code.  Just modify upper triangle for now.
         for k in range(order):
             t = t_start + k
@@ -395,10 +427,21 @@ def update_stats(array, t_start,
                 quad_mat[i,i+j] += local_sum
 
 
+    if False:  # test code
+        # Copy upper to lower triangle of quad_mat
+        for i in range(orderp1):
+            for j in range(i):
+                quad_mat[i,j] = quad_mat[j,i]
+
+        w, v = np.linalg.eig(quad_mat)
+        print("tstart,end={},{}; After adding past-the-end terms, smallest eig of quad_mat is: {}".format(
+                t_start, t_end, w.min()))
+
+
     # Now subtract some terms that were included in the autocorrelation stats
     # but which we want to cancel out from quad_mat because they come
     # from eq. (1) with t >= t_end.
-    if False:
+    if not optimize:
         # The slower but easier-to-understand version.
         for k in range(order):
             t = t_end + k
@@ -419,6 +462,12 @@ def update_stats(array, t_start,
         for j in range(i):
             quad_mat[i,j] = quad_mat[j,i]
 
+
+    if False: # test code
+        w, v = np.linalg.eig(quad_mat)
+        print("tstart,end={},{}; After subtracting before-the-beginning terms, smallest eig of quad_mat is: {}".format(
+                t_start, t_end, w.min()))
+
     return (zero_order_term, linear_term)
 
 
@@ -435,7 +484,7 @@ def test_prediction(array):
     cur_coeff[0] = -1
 
 
-    quad_mat_stats = np.zeros((orderp1, orderp1))
+    quad_mat_stats = np.zeros((orderp1, orderp1), dtype=np.float64)
     zero_order_term = 0.0
     autocorr_stats = np.zeros(orderp1)
     autocorr_loading = np.zeros(orderp1)  # says how much we'd have to modify
@@ -443,15 +492,16 @@ def test_prediction(array):
                                           # bias.
     linear_term = 0.0
 
-    weight = 0.75
+    weight = 0.5
     num_cg_iters = 3
+    use_linear_offset = False
     pred_sumsq_tot = 0.0
     raw_sumsq_tot = 0.0
-    BLOCK = 32
+    BLOCK = 64
+    assert(BLOCK >= 2 * order)
 
     for t in range(T):
 
-        print("array[t] = {}".format(array[t]))
 
         if (t % BLOCK == 0) and t > 0:
             # This block updates quad_mat_stats.
@@ -495,6 +545,8 @@ def test_prediction(array):
                 orig_zero_element = quad_mat[0,0]
                 # subtract the constant-offset from quad_mat.. for prediction we would
                 # include linear_term / zero_order_term as a zeroth-order prediction.
+                if not use_linear_offset:
+                    linear_term = 0.0
                 quad_mat -= linear_term * linear_term / zero_order_term
 
                 # Get corrected autocorr-stats as if the signal had our DC offset applied.
@@ -503,7 +555,7 @@ def test_prediction(array):
                            autocorr_temp, num_cg_iters,
                            None if t > 5*BLOCK else min(t // 16, order))
                 print("Current residual / unpredicted-residual is (after update): {}".format(
-                        np.dot(cur_coeff, np.dot(quad_mat, cur_coeff) / orig_zero_element)))
+                        np.dot(cur_coeff, np.dot(quad_mat, cur_coeff)) / orig_zero_element))
 
             raw_sumsq = 0.0
             pred_sumsq = 0.0
@@ -866,3 +918,4 @@ for file in fileList:
                                         "result": evaluationResult})
 
     logger("result", fileEvaluationResultList)
+
