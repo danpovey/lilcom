@@ -38,7 +38,7 @@ extern "C" {
 /**
    Number of bytes in the header
 */
-#define LILCOM_HEADER_BYTES 4
+#define LILCOM_HEADER_BYTES 5
 
 
 /*  These document the minimum and maximum allowed number of bits per
@@ -2556,7 +2556,7 @@ ssize_t lilcom_get_num_bytes(ssize_t num_samples,
         bits_per_sample <= LILCOM_MAX_BPS))
     return -1;
   else
-    return 4 + (bits_per_sample * num_samples  +  7) / 8;
+    return LILCOM_HEADER_BYTES + (bits_per_sample * num_samples  +  7) / 8;
 }
 }
 
@@ -2775,7 +2775,7 @@ ssize_t lilcom_get_num_samples(const int8_t *input,
      original number of samples might have been one less), so we use 'parity' to
      disambiguate.
   */
-  ssize_t num_samples = ((input_length - 4) * 8) / bits_per_sample;
+  ssize_t num_samples = ((input_length - LILCOM_HEADER_BYTES) * 8) / bits_per_sample;
 
   if (num_samples % 2 != parity)
     num_samples--;
