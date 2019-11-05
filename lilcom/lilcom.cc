@@ -302,8 +302,21 @@ static inline int lilcom_sgn(int val) {
    bits into bytes.  See functions starting with bit_packer_.
 
    The key function is bit_packer_write_code(); see its documentation.
+
+   See also struct BitUnpacker and associated functions, for how this
+   process is reversed.
  */
 struct BitPacker {
+  ssize_t num_samples_to_write;
+  /** bits_per_sample is the number of bits per sample, in [4..8]. */
+  int bits_per_sample;
+  /** compressed_code is where we'll write the data; it points to the first
+      byte of the sequence, where we will put the sample for t == 0.. */
+  int8_t *compressed_code;
+  int compressed_code_stride;
+  /** See comments above about the constraints on STAGING_BLOCK_SIZE. */
+  int8_t staging_buffer[STAGING_BLOCK_SIZE*2];
+
   /** num_samples_committed is the number of samples we have so far committed to
       `compressed_code`.  Will always be a multiple of STAGING_BLOCK_SIZE
       until flush() is called, after which nothing else should be done
@@ -314,14 +327,7 @@ struct BitPacker {
   ssize_t num_samples_committed_mod;
   /** num_samples_to_write, required only for checking purposes, is the number of
       samples which we intend to write out. */
-  ssize_t num_samples_to_write;
-  /** bits_per_sample is the number of bits per sample, in [4..8]. */
-  int bits_per_sample;
-  /** compressed_code is where we'll write the data. */
-  int8_t *compressed_code;
-  int compressed_code_stride;
-  /** See comments above about the constraints on STAGING_BLOCK_SIZE. */
-  int8_t staging_buffer[STAGING_BLOCK_SIZE*2];
+
 
   /**
      If this were a class, the members would be:
@@ -444,6 +450,115 @@ void bit_packer_flush(BitPacker *packer) {
     bit_packer_commit_block(packer->num_samples_committed, new_end, packer);
   }
 }
+
+
+struct BitUnpacker {
+  ssize_t num_samples_to_read;
+  int bits_per_sample;
+  /** compressed_code is the source of the data */
+  const int8_t *compressed_code;
+  int compressed_code_stride;
+  /* staging_buffer is a temporary place we put samples as we are reading;
+     it's a circular buffer indexed by t % STAGING_BLOCK_SIZE.*/
+  int staging_buffer[STAGING_BLOCK_SIZE];
+  /* buffer_end is the 't' value that's the largest 't' index present
+     in the buffer, plus one.*/
+  ssize_t buffer_end;
+  /**
+     If this were a class, the members would be:
+     bit_unpacker_init() == constructor
+     bit_unpacker_read_code()
+    [private:]
+     bit_unpacker_advance_buffer()
+  */
+};
+
+/**
+   Initialize BitUnpacker object
+       @param [in] num_samples_to_read  The number of samples to be read from
+                           this buffer
+       @param [in] bits_per_sample    The number of bits per sample in the
+                           code we're reading
+       @param [in] compressed_code  Pointer to the start of the compressed
+                           data we are reading, i.e. it points to the
+                           byte where the sample for time t == 0 starts.
+       @param [out] unpacker  The unpacker object to be initialized
+*/
+void bit_unpacker_init(ssize_t num_samples_to_read, int bits_per_sample,
+                       const int8_t *compressed_code, int compressed_code_stride,
+                       BitUnpacker *unpacker) {
+  unpacker->num_samples_to_read = num_samples_to_read;
+  unpacker->bits_per_sample = bits_per_sample;
+  unpacker->compressed_code = compressed_code;
+  unpacker->compressed_code_stride = compressed_code_stride;
+  unpacker->buffer_end = 0;
+}
+
+/**
+  Internal function that fills the buffer of the bit-unpacker
+  object.
+  TODO: eventually make this read whole integers rather than char's,
+  as much as possible.
+*/
+static void bit_unpacker_advance_buffer(BitUnpacker *unpacker) {
+  ssize_t buffer_start = unpacker->buffer_end,
+      buffer_end = buffer_start + STAGING_BLOCK_SIZE;
+  if (buffer_end > unpacker->num_samples_to_read)
+    buffer_end = unpacker->num_samples_to_read;
+  assert(buffer_start % STAGING_BLOCK_SIZE == 0);
+  int compressed_code_stride = unpacker->compressed_code_stride,
+      bits_per_sample = unpacker->bits_per_sample;
+  int *staging_buffer = unpacker->staging_buffer;
+  /* `code` points to the start of the small sequence we are
+     unpacking.  buffer_start will be a multiple of
+     STAGING_BLOCK_SIZE, so the division below will be exact.
+   */
+  const int8_t *code = unpacker->compressed_code +
+      (bits_per_sample * buffer_start) / 8;
+  int num_bits = 0;
+  /* `bits`, below, cannot be 16-bit if we want to support more than 9-bit
+     integers, because it needs to have room at least bits_per_sample + 7
+     bits.  So we make it int32_t, not int.
+   */
+  uint32_t bits = 0;
+  int num_samples = buffer_end - buffer_start;
+  for (int i = 0; i < num_samples; i++) {
+    while (num_bits < bits_per_sample) {
+      /* TODO: the above while loop could be a for loop if we knew num_bits <= 8. */
+      /** We need more bits.  Put them above (i.e. higher-order-than) any bits we
+          have currently. */
+      bits |= (((int)((unsigned char)(*code))) << num_bits);
+      code += compressed_code_stride;
+      num_bits += 8;
+    }
+    /** The higher-order-than-bits_per_sample bits of the elements of the
+        staging buffer are actually undefined. */
+    staging_buffer[i] = bits;
+    bits >>= bits_per_sample;
+    num_bits -= bits_per_sample;
+  }
+}
+
+/**
+   Read a single code from the bit_unpacker object.
+       @param [in] t  The time index that is being read.  This
+                  must be called in sequential order starting with t==0,
+                  and may silently return erroneous data otherwise.
+       @param [in,out] unpacker  The unpacker object
+
+       @return    Returns an integer whose least-significant
+                  `unpacker->bits_per_sample` bits coincide with the
+                  code that was originally written; the higher order
+                  bits are undefined.
+ */
+static inline int bit_unpacker_read_code(ssize_t t, BitUnpacker *unpacker) {
+  assert((size_t)t < (size_t)unpacker->num_samples_to_read &&
+         t >= unpacker->buffer_end - STAGING_BLOCK_SIZE);
+  if (t >= unpacker->buffer_end)
+    bit_unpacker_advance_buffer(unpacker);
+  return unpacker->staging_buffer[t & (STAGING_BLOCK_SIZE - 1)];
+}
+
 
 
 /**
@@ -2138,6 +2253,7 @@ void lilcom_compress_for_time_zero(
     int8_t code;
     int ret = backtracking_encoder_get_code(residual_0, predicted_0, &next_value,
                                             &code, &(state->encoder));
+    assert(ret == 0);
     assert(next_value == state->decompressed_signal[MAX_LPC_ORDER + 0]);
     assert(state->encoder.next_sample_to_encode == 1);
   }
@@ -2699,8 +2815,18 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
   int num_bits = 0;
   unsigned int leftover_bits = 0;
 
+  BitUnpacker unpacker;
+  bit_unpacker_init(num_samples, bits_per_sample,
+                    input + (input_stride * LILCOM_HEADER_BYTES), input_stride,
+                    &unpacker);
+
   int code_0 = lilcom_get_next_compressed_code(
       bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
+  {
+    int mask = (1 << bits_per_sample) - 1;
+    assert((code_0 & mask) ==
+           (bit_unpacker_read_code(0, &unpacker) & mask));
+  }
   int exponent;
   if (lilcom_decompress_time_zero(input, code_0, input_stride, bits_per_sample,
                                   &(output[0]), &exponent)) {
@@ -2732,6 +2858,12 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
   for (t = 1; t < AUTOCORR_BLOCK_SIZE && t < num_samples; t++) {
     int code = lilcom_get_next_compressed_code(
         bits_per_sample, &leftover_bits, &num_bits, &cur_input, input_stride);
+    {
+      int mask = (1 << bits_per_sample) - 1;
+      assert((code & mask) ==
+             (bit_unpacker_read_code(t, &unpacker) & mask));
+    }
+
 
     if (lilcom_decompress_one_sample(t, bits_per_sample, lpc_order,
                                      lpc.lpc_coeffs, code,
