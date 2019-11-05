@@ -41,6 +41,11 @@ extern "C" {
 #define LILCOM_HEADER_BYTES 4
 
 
+/*  These document the minimum and maximum allowed number of bits per
+    sample.  The normal values would be 6 or 8. */
+#define LILCOM_MIN_BPS 4
+#define LILCOM_MAX_BPS 16
+
 /**
    max_lpc_order is the maximum allowed order of the linear prediction
    computation (used to set various array sizes).  Defines a limit on how large
@@ -360,7 +365,8 @@ void bit_packer_init(ssize_t num_samples_to_write,
   packer->num_samples_to_write = num_samples_to_write;
   packer->num_samples_committed = 0;
   packer->num_samples_committed_mod = 0;
-  assert(bits_per_sample >= 4 and bits_per_sample <= 8);
+  assert(bits_per_sample >= LILCOM_MIN_BPS &&
+         bits_per_sample <= LILCOM_MAX_BPS);
   packer->bits_per_sample = bits_per_sample;
   packer->compressed_code = compressed_code;
   packer->compressed_code_stride = compressed_code_stride;
@@ -526,7 +532,8 @@ static void bit_unpacker_advance_buffer(BitUnpacker *unpacker) {
   int samples_in_buffer = buffer_end - buffer_start;
   for (int i = 0; i < samples_in_buffer; i++) {
     while (num_bits < bits_per_sample) {
-      /* TODO: the above while loop could be a for loop if we knew num_bits <= 8. */
+      /* TODO: this while loop could be a for loop if we knew num_bits <= 8. */
+
       /** We need more bits.  Put them above (i.e. higher-order-than) any bits we
           have currently. */
       bits |= (((uint32_t)((unsigned char)(*code))) << num_bits);
@@ -900,7 +907,8 @@ struct BacktrackingEncoder {
 static
 void backtracking_encoder_init(int bits_per_sample,
                                BacktrackingEncoder *encoder) {
-  assert(bits_per_sample >= 4 && bits_per_sample <= 8);
+  assert(bits_per_sample >= LILCOM_MIN_BPS &&
+         bits_per_sample <= LILCOM_MAX_BPS);
   encoder->bits_per_sample = bits_per_sample;
   encoder->mantissa_limit = 1 << (bits_per_sample - 2);
   encoder->most_recent_attempt = -1;
@@ -1674,7 +1682,8 @@ static inline void lilcom_header_set_user_configs(
     int8_t *header, int stride, int lpc_order,
     int bits_per_sample, int num_samples_odd) {
   assert(lpc_order >= 0 && lpc_order <= MAX_LPC_ORDER &&
-         bits_per_sample >= 4 && bits_per_sample <= 8 &&
+         bits_per_sample >= LILCOM_MIN_BPS &&
+         bits_per_sample <= LILCOM_MAX_BPS &&
          num_samples_odd <= 1);
   header[1 * stride] = (int8_t)lpc_order + ((bits_per_sample - 4) << 4)
       + (num_samples_odd << 7);
@@ -2543,8 +2552,8 @@ extern "C" {
 /*  See documentation in lilcom.h.  */
 ssize_t lilcom_get_num_bytes(ssize_t num_samples,
                              int bits_per_sample) {
-  if (!(num_samples > 0 && bits_per_sample >= 4 &&
-        bits_per_sample <= 8))
+  if (!(num_samples > 0 && bits_per_sample >= LILCOM_MIN_BPS &&
+        bits_per_sample <= LILCOM_MAX_BPS))
     return -1;
   else
     return 4 + (bits_per_sample * num_samples  +  7) / 8;
@@ -3350,7 +3359,8 @@ float lilcom_compute_snr_float(ssize_t num_samples,
 }
 
 void lilcom_test_extract_mantissa() {
-  for (int bits_per_sample = 4; bits_per_sample <= 8; bits_per_sample++) {
+  for (int bits_per_sample = LILCOM_MIN_BPS;
+       bits_per_sample <= LILCOM_MAX_BPS; bits_per_sample++) {
     for (int mantissa = -(1<<(bits_per_sample-2));
          mantissa < (1<<(bits_per_sample-2)); mantissa++) {
       for (int exponent_bit = 0; exponent_bit < 1; exponent_bit++) {
@@ -3371,7 +3381,8 @@ void lilcom_test_compress_sine() {
   for (int i = 0; i < 1000; i++)
     buffer[i] = 700 * sin(i * 0.01);
 
-  for (int bits_per_sample = 8; bits_per_sample >= 4; bits_per_sample--) {
+  /* TODO: use LILCOM_MAX_BPS */
+  for (int bits_per_sample = 8; bits_per_sample >= LILCOM_MIN_BPS; bits_per_sample--) {
     printf("Bits per sample = %d\n", bits_per_sample);
     int exponent = -15, exponent2;
     ssize_t num_bytes = lilcom_get_num_bytes(1000, bits_per_sample);
