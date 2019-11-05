@@ -3,6 +3,7 @@
 
 import numpy as np
 import lilcom
+np.random.seed(0)
 
 
 def test_float():

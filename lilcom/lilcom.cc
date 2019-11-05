@@ -788,6 +788,9 @@ void backtracking_encoder_init(int bits_per_sample,
   encoder->mantissa_limit = 1 << (bits_per_sample - 2);
   encoder->most_recent_attempt = -1;
   encoder->next_sample_to_encode = -1;
+#ifndef NDEBUG
+  encoder->num_backtracks = 0;
+#endif
 }
 
 /**
@@ -894,8 +897,6 @@ inline int backtracking_encoder_get_code(int32_t residual,
                     mantissa < encoder->mantissa_limit);
 
     *code = (int8_t)((mantissa << 1) + exponent_delta);
-    printf("Setting exponent for t==%d from %d to %d\n", (int)t,
-           (int)encoder->exponents[t_mod], (int)exponent);
     encoder->exponents[t_mod] = exponent;
     encoder->next_sample_to_encode = t + 1;
     return 0;
@@ -903,14 +904,17 @@ inline int backtracking_encoder_get_code(int32_t residual,
     /* Failure: the exponent required to most accurately
        approximate this residual is too large; we will need
        to backtrack. */
-    printf("[failure]Setting exponent for t==%d from %d to %d\n", (int)t,
-           (int)encoder->exponents[t_mod], (int)exponent);
+    //printf("[failure]Setting exponent for t==%d from %d to %d\n", (int)t,
+    //       (int)encoder->exponents[t_mod], (int)exponent);
     encoder->exponents[t_mod] = exponent;
     while (1) {
-      printf("Min allowed exponent for t=%d = %d\n", (int)t, exponent);
+      //printf("Min allowed exponent for t=%d = %d\n", (int)t, exponent);
       exponent = LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent);
       t--;
-      printf("[2]Min allowed exponent for t=%d = %d\n", (int)t, exponent);
+#ifndef NDEBUG
+      encoder->num_backtracks++;
+#endif
+      //printf("[2]Min allowed exponent for t=%d = %d\n", (int)t, exponent);
       /* Now `exponent` is the minimum exponent we'll allow for time t-1. */
       t_mod = t & (EXPONENT_BUFFER_SIZE - 1);
       if (encoder->exponents[t_mod] >= exponent) {
@@ -2008,10 +2012,11 @@ static inline int lilcom_compress_for_time_internal(
 
   { /* Testing code. */
     if (state->encoder.next_sample_to_encode != t) {
+#ifndef NDEBUG
       fprintf(stderr, "Warning, differ, encoder=%d vs %d\n",
               int(state->encoder.next_sample_to_encode), int(t));
+#endif
     } else {
-      printf("Testing, t = %d\n", int(t));
       int8_t code;
       int16_t next_value;
       int ret = backtracking_encoder_get_code(residual,
@@ -2020,7 +2025,6 @@ static inline int lilcom_compress_for_time_internal(
       if (exponent_delta > 1) { /* Should have failed. */
         assert(state->encoder.next_sample_to_encode != t+1);
         assert(ret == 1);
-        printf("Failure\n");
       } else {
         assert(ret == 0);
         assert(state->encoder.next_sample_to_encode == t+1);
@@ -2105,7 +2109,6 @@ void lilcom_compress_for_time_zero(
       accessed, actually.  [TODO: remove this?] */
   state->exponents[EXPONENT_BUFFER_SIZE - 1] = exponent_m1;
 
-  printf("Setting exponent at t-1\n");
   backtracking_encoder_set_exponent_tm1(exponent_m1,
                                         &(state->encoder));
 
@@ -2258,6 +2261,9 @@ static inline void lilcom_compress_for_time(
   }
 }
 
+
+
+
 /**
    Initializes a newly created CompressionState struct, setting fields and doing
    the compression for time t = 0 which is a special case.
@@ -2359,9 +2365,46 @@ int lilcom_compress(
                           &state);
 
 
+  if (0) {
+    for (ssize_t t = 1; t < num_samples; t++)
+      lilcom_compress_for_time(t, &state);
+  } else {
+    while (state.encoder.next_sample_to_encode < num_samples) {
+      ssize_t t = state.encoder.next_sample_to_encode;
+      if (t <= 0) {
+        /* We have to handle times 0 and -1 separately.  later will be handled by that
+         * object. */
+        lilcom_compress_for_time_zero(state.encoder.exponents[0],
+                                      &state);
+        continue;
+      }
+      if ((t & (AUTOCORR_BLOCK_SIZE - 1)) == 0 && state.lpc_order != 0) {
+        if ((t & (SIGNAL_BUFFER_SIZE - 1)) == 0) {
+          /**  If this is the start of the uncompressed_signal buffer we need to
+               make sure that the required left context is copied appropriately. */
+          lilcom_copy_to_buffer_start(&state);
+        }
+        /** Update the autocorrelation coefficients and possibly the LPC
+            coefficients. */
+        lilcom_update_autocorrelation_and_lpc(t, &state);
+      }
+      int16_t predicted_value = lilcom_compute_predicted_value(&state, t),
+          observed_value = state.input_signal[t * state.input_signal_stride];
+      /** cast to int32 when computing the residual because a difference of int16's may
+          not fit in int16. */
+      int32_t residual = ((int32_t)observed_value) - ((int32_t)predicted_value);
+      int8_t code;
+      int16_t *next_value =
+          &(state.decompressed_signal[MAX_LPC_ORDER+(t&(SIGNAL_BUFFER_SIZE-1))]);
+      if (backtracking_encoder_get_code(residual,
+                                        predicted_value, next_value,
+                                        &code, &state.encoder) == 0) {
+        /* On success.. */
+        bit_packer_write_code(t, code, &state.packer);
+      }
+    }
 
-  for (ssize_t t = 1; t < num_samples; t++)
-    lilcom_compress_for_time(t, &state);
+  }
 
 
   bit_packer_flush(&state.packer);
