@@ -11,6 +11,13 @@ extern "C" {
 #include "lilcom.h"
 }
 
+
+#ifdef LILCOM_TEST
+#define paranoid_assert(x) assert(x)
+#else
+#define paranoid_assert(x) while(0)
+#endif
+
 /**
    The version number of the format.   Note: you can't change the various
    constants below without changing LILCOM_VERSION, because it will mess up the
@@ -188,6 +195,20 @@ extern "C" {
    (65536 = 2 << 15)
  */
 #define MAX_POSSIBLE_EXPONENT 15
+
+/**
+   MAX_BACKTRACK is a convenient way of saying 'the maximum number of samples we
+   might have to backtrack'.  The reason for the "*2" is that because of the way
+   the exponents are encoded, they can only increase on odd frames and decrease
+   on even ones, so if we had to increase the exponent from 0 to
+   MAX_POSSIBLE_EXPONENT, it could take at least twice that many samples (and
+   maybe +1 if the sample that needed to have exponent == MAX_POSSIBLE_EXPONENT
+   had the wrong parity.)
+
+   TODO: fix this, it turns out it doesn't correspond with how this actually
+   works.
+ */
+#define MAX_BACKTRACK ((MAX_POSSIBLE_EXPONENT*2)+1)
 
 /**
    This rolling-buffer size determines how far back in time we keep the
@@ -466,7 +487,7 @@ void bit_packer_flush(BitPacker *packer) {
                          the preceding time (t-1).
         @param [in] exponent_t  An exponent for time t, where the caller says
                          they want an exponent at least this large.  Must be
-                         in the range [0..11].
+                         in the range [0..MAX_POSSIBLE_EXPONENT].
         @return  Returns the smallest value that the exponent could have on
                          time t-1 such that the exponent on time t will be
                          at least exponent_t.  This may be -1 if exponent_t
@@ -715,8 +736,15 @@ static inline int least_exponent(int32_t residual,
 
 
 struct BacktrackingEncoder {
+  /* There is more documentation in backtracking_encoder_init() and
+     backtracking_encoder_get_code(). */
+
   /* bits_per_sample is a user-supllied configuration value in [4..8]. */
   int bits_per_sample;
+
+  /* mantissa_limit is 1 << (bits_per_sample-2) */
+  int mantissa_limit;
+
   /* exponents is a rolling buffer of the exponents used, for t <
      num_samples_success, or the minimum usable exponents for
      num_samples_success <= t <= most_recent_attempt.  */
@@ -745,6 +773,35 @@ struct BacktrackingEncoder {
   */
 };
 
+/**
+   Initializes the backtracking-encoder object.    After this you will
+   want to do
+   backtracking_encoder_set_exponent_tm1() and then (repeatedly)
+   backtracking_encoder_get_code(), and possibly further calls to
+   backtracking_encoder_set_exponent_tm1() if required.
+ */
+static
+void backtracking_encoder_init(int bits_per_sample,
+                               BacktrackingEncoder *encoder) {
+  assert(bits_per_sample >= 4 && bits_per_sample <= 8);
+  encoder->bits_per_sample = bits_per_sample;
+  encoder->mantissa_limit = 1 << (bits_per_sample - 2);
+  encoder->most_recent_attempt = -1;
+  encoder->next_sample_to_encode = -1;
+}
+
+/**
+   Sets the exponent for time t = -1.  Working out the encoding for time t == -1
+   is done as a special case, by the user, and doesn't go through
+   backtracking_encoder_get_code().
+ */
+void backtracking_encoder_set_exponent_tm1(
+    int exponent, BacktrackingEncoder *encoder) {
+  assert(exponent >= 0 && exponent <= MAX_POSSIBLE_EXPONENT &&
+         encoder->most_recent_attempt <= MAX_BACKTRACK);
+  encoder->exponents[EXPONENT_BUFFER_SIZE - 1] = exponent;
+  encoder->next_sample_to_encode = 0;
+}
 
 /**
    Attempts to lossily compress `residual` (which is allowed to be in the range
@@ -762,8 +819,12 @@ struct BacktrackingEncoder {
       @param [in] residual The value to be encoded for time
                            encoder->next_sample_to_encode.  Required to be
                            in the range [-(2**16-1) .. 2**16-1].
-      @param [out] approx_residual  On success, an approximate version of
-                           the residual will be written to here.
+      @param [in] predicted The predicted value from which this residual is
+                           an offset.  This is needed in order to ensure that
+                           (predicted + *approx_residual) does not
+                           overflow the range of int16_t.
+      @param [out] next_value  On success, the input `predicted` plus
+                           the approximated residual will be written to here.
       @param [out] code    On success, the code will be written to
                            here.  (Only the lowest-order encoder->bits_per_sample
                            bits will be relevant).  Note: later on we
@@ -775,16 +836,24 @@ struct BacktrackingEncoder {
       @param [in,out] encoder  The encoder object.  May be modified by
                            this call.
 
+      Requires that encoder->next_sample_to_encode >= 0.
+
       @return  Returns 0 on success, 1 on failure.  Success means
              a code was created and encoder->next_sample_to_encode
-             was increased by 1.
+             was increased by 1.  On failure,
+             encoder->next_sample_to_encode will be decreased
+             (while still satisfying encoder->most_recent_attempt -
+             encoder->next_sample_to_encode < (2*MAX_POSSIBLE_EXPONENT + 1)).
 
  */
 inline int backtracking_encoder_get_code(int32_t residual,
-                                         int32_t *approx_residual,
+                                         int16_t predicted,
+                                         int16_t *next_value,
                                          int8_t *code,
                                          BacktrackingEncoder *encoder) {
-  ssize_t t = encoder->next_sample_to_encode;
+  assert(encoder->next_sample_to_encode >= 0);
+  ssize_t t = encoder->next_sample_to_encode,
+      t_most_recent = encoder->most_recent_attempt;
   size_t t_mod = (t & (EXPONENT_BUFFER_SIZE - 1)), /* t % buffer_size */
       /* t1_mod is (t-1) % buffer_size using mathematical modulus, not C modulus,
          so -1 % buffer_size is positive.
@@ -793,8 +862,76 @@ inline int backtracking_encoder_get_code(int32_t residual,
 
   int exponent_t1 = encoder->exponents[t1_mod],
       min_codable_exponent =
-      LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_t1);
-  return 0; /* Success */
+      LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_t1),
+      exponent_floor = (min_codable_exponent < 0 ? 0 : min_codable_exponent),
+      exponent, mantissa;
+  if (t <= t_most_recent) {
+    /* We are backtracking, so there will be limitations on the
+       exponent. (encoder->exponents[t_mod] represents a floor
+       on the exponent). */
+    if (encoder->exponents[t_mod] > min_codable_exponent) {
+      exponent_floor = encoder->exponents[t_mod];
+      /* If the following assert fails it means the logic of the
+         backtracking_encoder's routines has failed somewhere. */
+      assert(exponent_floor == min_codable_exponent + 1);
+    }
+  } else {
+    encoder->most_recent_attempt = t;
+  }
+
+  if ((exponent = least_exponent(residual, predicted,
+                                 exponent_floor,
+                                 encoder->mantissa_limit,
+                                 &mantissa, next_value))
+      <= min_codable_exponent + 1) {
+    /* Success. */
+    int exponent_delta = exponent - min_codable_exponent;
+    /* The following is a checks (non-exhaustively) that exponent_delta is 0 or 1. */
+    assert((exponent_delta & 254) == 0);
+    /** Success; we can represent this.  This is (hopefully) the normal code
+        path. */
+    paranoid_assert(mantissa >= -encoder->mantissa_limit &&
+                    mantissa < encoder->mantissa_limit);
+
+    *code = (int8_t)((mantissa << 1) + exponent_delta);
+    printf("Setting exponent for t==%d from %d to %d\n", (int)t,
+           (int)encoder->exponents[t_mod], (int)exponent);
+    encoder->exponents[t_mod] = exponent;
+    encoder->next_sample_to_encode = t + 1;
+    return 0;
+  } else {
+    /* Failure: the exponent required to most accurately
+       approximate this residual is too large; we will need
+       to backtrack. */
+    printf("[failure]Setting exponent for t==%d from %d to %d\n", (int)t,
+           (int)encoder->exponents[t_mod], (int)exponent);
+    encoder->exponents[t_mod] = exponent;
+    while (1) {
+      printf("Min allowed exponent for t=%d = %d\n", (int)t, exponent);
+      exponent = LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent);
+      t--;
+      printf("[2]Min allowed exponent for t=%d = %d\n", (int)t, exponent);
+      /* Now `exponent` is the minimum exponent we'll allow for time t-1. */
+      t_mod = t & (EXPONENT_BUFFER_SIZE - 1);
+      if (encoder->exponents[t_mod] >= exponent) {
+        /* The exponent value we used for this time satsifes our limit, so we will
+           next be encoding the value at time t + 1.  */
+        encoder->next_sample_to_encode = t + 1;
+        return 1;
+      } else {
+        /* The following will set a floor on the allowed
+           exponent, which this function will inspect when
+           it is asked to encode the sample at t-1.. */
+        encoder->exponents[t_mod] = exponent;
+        /* TODO: change the code so the following if-statement is no longer necessary. */
+        if (t == -1) {
+          encoder->next_sample_to_encode = t;
+          return 1;
+        }
+      }
+    }
+    return 1;
+  }
 }
 
 
@@ -1177,6 +1314,12 @@ struct CompressionState {
   int exponents[EXPONENT_BUFFER_SIZE];
 
   /**
+     `encoder` handles the logic of exponents, mantissas and backtracking,
+     and gives us codes to be converted to bytes by struct `BitPacker`.
+   */
+  BacktrackingEncoder encoder;
+
+  /**
     `decompressed_signal` is the compressed-and-then-decompressed version of the
      input signal.  We need to keep track of this because the decompressed
      version is used to compute the LPC coefficients (this ensures that we can
@@ -1195,7 +1338,8 @@ struct CompressionState {
   */
   int16_t decompressed_signal[MAX_LPC_ORDER + SIGNAL_BUFFER_SIZE];
 
-
+  /** The following object has responsibility for writing out the codes
+      (each with between 4 and 8 bits). */
   BitPacker packer;
 
   /**  The input signal that we are compressing  */
@@ -1862,6 +2006,31 @@ static inline int lilcom_compress_for_time_internal(
   int exponent_delta = exponent - min_codable_exponent;
   assert(exponent_delta >= 0);
 
+  { /* Testing code. */
+    if (state->encoder.next_sample_to_encode != t) {
+      fprintf(stderr, "Warning, differ, encoder=%d vs %d\n",
+              int(state->encoder.next_sample_to_encode), int(t));
+    } else {
+      printf("Testing, t = %d\n", int(t));
+      int8_t code;
+      int16_t next_value;
+      int ret = backtracking_encoder_get_code(residual,
+                                              predicted_value, &next_value,
+                                              &code, &(state->encoder));
+      if (exponent_delta > 1) { /* Should have failed. */
+        assert(state->encoder.next_sample_to_encode != t+1);
+        assert(ret == 1);
+        printf("Failure\n");
+      } else {
+        assert(ret == 0);
+        assert(state->encoder.next_sample_to_encode == t+1);
+        assert(next_value ==
+               state->decompressed_signal[MAX_LPC_ORDER+(t&(SIGNAL_BUFFER_SIZE-1))]);
+        assert(state->encoder.exponents[t%EXPONENT_BUFFER_SIZE] == exponent);
+      }
+    }
+  }
+
   if (exponent_delta <= 1) {
     /** Success; we can represent this.  This is (hopefully) the normal code
         path. */
@@ -1930,10 +2099,15 @@ void lilcom_compress_for_time_zero(
     assert(lilcom_header_get_mantissa_m1(header, header_stride)
            == mantissa_m1);
   }
+
+
   /** store the initial exponent in the buffer, at sample -1.  This probably won't be
       accessed, actually.  [TODO: remove this?] */
   state->exponents[EXPONENT_BUFFER_SIZE - 1] = exponent_m1;
 
+  printf("Setting exponent at t-1\n");
+  backtracking_encoder_set_exponent_tm1(exponent_m1,
+                                        &(state->encoder));
 
   int min_codable_exponent0 = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(0, exponent_m1);
   assert(min_codable_exponent0 + 1 >= min_exponent);
@@ -1954,12 +2128,24 @@ void lilcom_compress_for_time_zero(
                                   state->mantissa_limit,
                                   &mantissa_0,
                                   &(state->decompressed_signal[MAX_LPC_ORDER + 0]));
+
+  { /* Testing. */
+    assert(state->encoder.next_sample_to_encode == 0);
+    int16_t next_value;
+    int8_t code;
+    int ret = backtracking_encoder_get_code(residual_0, predicted_0, &next_value,
+                                            &code, &(state->encoder));
+    assert(next_value == state->decompressed_signal[MAX_LPC_ORDER + 0]);
+    assert(state->encoder.next_sample_to_encode == 1);
+  }
+
+
   int exponent_bit = exponent_0 - min_codable_exponent0;
   /** The residual cannot be greater in magnitude than first_value, since we
       already encoded first_signal_value and we are now just dealing with the
       remaining part of it, so whatever exponent we used for sample -1 would
       be sufficiently large for sample 0; that's how we can guarantee
-      delta_exponent <= 2.  */
+      delta_exponent <= 1.  */
   assert(exponent_bit >= 0 && exponent_bit <= 1 &&
          mantissa_0 >= -state->mantissa_limit && mantissa_0 < state->mantissa_limit);
 
@@ -2104,6 +2290,11 @@ static inline void lilcom_init_compression(
       state->lpc_computations[i].lpc_coeffs[lpc_order] = 0;
   }
 
+
+  backtracking_encoder_init(bits_per_sample,
+                            &(state->encoder));
+
+
   state->input_signal = input;
   state->input_signal_stride = input_stride;
   state->header_start = output;
@@ -2113,7 +2304,6 @@ static inline void lilcom_init_compression(
 #ifndef NDEBUG
   state->num_backtracks = 0;
 #endif
-
 
   for (int i = 0; i < MAX_LPC_ORDER; i++)
     state->decompressed_signal[i] = 0;
@@ -2167,6 +2357,8 @@ int lilcom_compress(
                           output, output_stride, lpc_order,
                           bits_per_sample, conversion_exponent,
                           &state);
+
+
 
   for (ssize_t t = 1; t < num_samples; t++)
     lilcom_compress_for_time(t, &state);
