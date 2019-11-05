@@ -426,6 +426,382 @@ void bit_packer_flush(BitPacker *packer) {
 
 
 /**
+   This macro is added mainly for documentation purposes.  It clarifies what the
+   possible exponents are for time t given that we know the exponent for time
+   t-1.
+
+       @param [in] t   The time for which we want to know the possible
+                       exponent range.  t >= -1.
+       @param [in] exponent_tm1   The exponent used for time t-1:
+                       a value in [0..15], otherwise it is an error.
+       @return min_exponent  The minimum exponent that time t
+                       will be able to use, given exponent_tm1.
+                       This equals exponent_tm1 - ((t+exponent_tm1)&1),
+                       where &1 is a way of computing mod 2.
+                       It forms a checkerboard pattern.  If you draw
+                       the possible trajectories of exponents on
+                       a grid you'll see that this choice has nice
+                       properties that allows exponents to change
+                       quite fast when needed.  The return value is a value
+                       in [-1..15], but currently going to exponent
+                       -1 is "forbidden", meaning the encoded bit for exponent
+                       change is bound to be 1 in this case so the
+                       exponent for time t would be zero.  We may later
+                       make excursions to negative exponents allowed,
+                       which would allow us to save and then re-use
+                       bits, e.g. for on-disk formats.
+
+   Note: the maximum exponent is just min_exponent + 1 where min_exponent is
+   what this macro returns, because we use 1 bit for the change in exponent; a
+   bit value of 1 means we choose the max, zero means we choose the min.
+ */
+#define LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_tm1) (exponent_tm1 - ((((int)t)+exponent_tm1)&1))
+
+/**
+   This macro is defined mainly for documentation purposes.  It returns the
+   smallest value the exponent for time t-1 could be, given the constraint that
+   we require the exponent for time t to be at least a specified value.
+
+        @param [in]  t   The current time, t >= 0.  We want to compute an exponent-floor for
+                         the preceding time (t-1).
+        @param [in] exponent_t  An exponent for time t, where the caller says
+                         they want an exponent at least this large.  Must be
+                         in the range [0..11].
+        @return  Returns the smallest value that the exponent could have on
+                         time t-1 such that the exponent on time t will be
+                         at least exponent_t.  This may be -1 if exponent_t
+                         was 0, but this macro should never be called in that
+                         case.  So this function returns the maximum k such that
+                         LILCOM_COMPUTE_MIN_CODABLE_COMPONENT(t, k) >= exponent_t.
+                         The answer will obviously be either exponent_t or
+                         exponent_t - 1.  We work out the formula as follows:
+
+                         (a) First, assume (t+exponent_t) is even, so
+                         ((((int)t)+exponent_t)&1) is zero.  Now we ask,
+                         if exponent_tm1 = exponent_t - 1, what is
+                         the greatest exponent that we can have on time t?
+                         The minimum exponent we can have on time t is given by
+                         LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, (exponent_t - 1))
+                         and in that case we get an odd number in the modulus
+                         so there is a -1 in the formula.  That would imply the
+                         minimum exponent on time t is (exponent_t - 1) - 1 =
+                         exponent_t - 2, so the maximum is exponent_t - 1
+                         (since the bit adds one).  That's a no-go, i.e.
+                         for even ((((int)t)+exponent_t)&1) the answer is
+                         just exponent_t; for odd it's exponent_t - 1.
+                         This happens to be exactly the same formula as
+                         LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_t).
+ */
+#define LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent_t) (exponent_t - ((((int)t)+exponent_t)&1))
+
+
+/**
+   Computes the least exponent (subject to a caller-specified floor) which
+   is sufficient to encode (an approximation of) this residual; also
+   computes the associated mantissa and the next predicted value.
+
+      @param [in] residual  The residual that we are trying to encode,
+                     meaning: the observed value minus the value that was
+                     predicted by the linear prediction.  This is a
+                     difference of int16_t's, but such differences cannot
+                     always be represented as int16_t, so it's represented
+                     as an int32_t.
+
+      @param [in] predicted   The predicted sample (so the residual
+                     is the observed sample minus this).  The only reason
+                     this needs to be specified is to detect situations
+                     where, due to quantization effects, the next decompressed
+                     sample would exceed the range of int16_t; in those
+                     cases, we need to reduce the magnitude of the mantissa to
+                     stay within the allowed range of int16_t (this avoids us
+                     having to implement extra checks in the decoder).
+
+       @param [in] min_exponent  A caller-supplied floor on the exponent;
+                     must be in the range [0, 15].  This function will
+                     never return a value less than this.  min_exponent will
+                     normally be the maximum of zero and the previous sample's
+                     exponent minus 1, but may be more than that if we are
+                     backtracking (because future samples need a larger
+                     exponent).
+
+       @param [in]  mantissa_limit  A power of 2 in [4,8,16,32,64],
+                     equal to 1 << (bits_per_sample - 1).  The allowed
+                     range of the mantissa is [-mantissa_limit.. mantissa_limit-1]
+
+       @param [out] mantissa  This function will write an integer in
+                    the range [-mantissa_limit.. mantissa_limit-1]
+                    to here, such that
+                    (mantissa << exponent) is a close approximation
+                    of `residual` and satisfies the property that
+                    `predicted + (mantissa << exponent)` does not
+                    exceed the range of int16_t.
+
+       @param [out] next_compressed_value  The next compressed value
+                    will be written to here; at exit this will contain
+                    `predicted + (mantissa << exponent)`.
+
+    @return  Returns the exponent chosen, a value in the range [min_exponent..11].
+
+
+   The intention of this function is to return the exponent in the range
+   [min_exponent..15] which gives the closest approximation to `residual` that
+   we could get with any exponent, while choosing the lower exponent in case of
+   ties.  This is largely what it does, although it may not always do so in the
+   corner cases where we needed to modify the mantissa to not exceed the range
+   of int16_t.  The details of how the integer mantissa is chosen (especially
+   w.r.t. rounding and ties) is explained in a comment inside the function.
+
+   The following explains how this function chooses the exponent.
+
+   Define the exact mantissa m(e), which is a function of the exponent e,
+   as:
+            m(e) =  residual / (2^e),
+   viewed as an exact mathematical expresion, not as an integer.
+   Let M be shorthand for mantissa_limit (a power of 2).
+   We want to return the smallest value of e such that
+
+      -(M+1) <= m(e) <= (M-0.5).
+
+   This inequality ensures that there will be no loss of accuracy by choosing e
+   instead of e+1 as the exponent.  (If we had a larger exponent, the closest
+   points we'd be able to reach would be equivalent to m(e) = -(M+2) or +M; and if
+   m(e) satisfies the inequality above we'd have no loss of precision by using e
+   rather than e + 1 as the exponent.  (Notice that -(M+1) is the midpoint of
+   [-(M+2),-M] and (M-0.5) is the midpoint of [M-1,M]).  Multiplying by two, we can
+   express the above in integer math as:
+
+     (-(2M+2) << e) <= residual * 2 <= (2M-1) << e)
+
+*/
+static inline int least_exponent(int32_t residual,
+                                 int16_t predicted,
+                                 int min_exponent,
+                                 int mantissa_limit,
+                                 int *mantissa,
+                                 int16_t *next_decompressed_value) {
+  assert (min_exponent >= 0 && min_exponent <= 15); /* TODO: remove this */
+  int exponent = min_exponent;
+  int32_t residual2 = residual * 2,
+      minimum = -(2*mantissa_limit + 2) << exponent,
+      maximum = (2*mantissa_limit - 1) << exponent;
+  while (residual2 < minimum || residual2 > maximum) {
+    minimum *= 2;
+    maximum *= 2;
+    exponent++;
+  }
+  {
+    /**
+       This code block computes 'mantissa', the integer mantissa which we call
+       which should be a value in the range [-M, M-1] where M is
+       mantissa_limit
+
+       The mantissa will be the result of rounding (residual /
+       (float)2^exponent) to the nearest integer (see below for the rounding
+       behavior in case of ties, which we randomize); and then, if the result is
+       -(M+1) or +M, changing it to -M or M-1 respectively.
+
+       What we'd like to do, approximately, is to compute
+
+           mantissa = residual >> exponent
+
+       where >> can be interpreted, roughly, as division by 2^exponent; but we
+       want some control of the rounding behavior.  To maximize accuracy we want
+       to round to the closest, like what round() does for floating point
+       expressions; but we want some control of what happens in case of ties.  I
+       am concerned that always rounding towards zero might possibly generate a
+       slight ringing, in certain unusual circumstances (it's a kind of bias
+       toward the LPC prediction), so we want to round in a random direction (up
+       or down).  We choose to round up or down, pseudo-randomly.
+
+       We'll use (predicted%2) as the source of randomness.  This will be
+       sufficiently random for loud signals (varying by more than about 1 or 2
+       from sample to sample); and for very quiet signals (magnitude close to 1)
+       we'll be exactly coding it anyway so it won't matter.
+
+       Consider the expression below, which can be considered as an attempt to
+       get the rounding behavior described above:
+
+          mantissa = (residual*2 + offset) >> (exponent + 1)
+
+       (and assume >> is the same as division by a power of 2 but rounding
+       towards -infinity; the C standard coesn't guarantee this behavior but
+       we'll fix that in a different way).
+
+        and consider two possibilities for `offset`.
+       (a)  offset = (1<<exponent)
+       (b)  offset = ((1<<exponent) - 1)
+
+       In case (a) it rounds up in case of ties (e.g. if the residual is 6 and
+       exponent is 2 so we're rounding to a multiple of 4).  In case (b)
+       it rounds down.  By using:
+         offset = ((1<<exponent) - (predicted&1))
+       we are randomly choosing (a) or (b) based on randomness in the
+       least significant bit of `predicted`.
+
+       OK, imagine the code was as follows:
+
+      int offset = ((1 << exponent) - (predicted&1)),
+        local_mantissa = (residual2 + offset) >> (exponent + 1);
+
+       The above code would do what we want on almost all platforms (since >> on
+       a signed number is normally arithmetic right-shift in practice, which is
+       what we want).  But we're going to modify it to guarantee correct
+       behavior for negative numbers, since the C standard says right shift of
+       negative signed numbers is undefined.
+
+       We do this by adding 512 << exponent to "offset".  This becomes 256 when
+       we later shift right by (exponent + 1), which will disappear when casting
+       to int8_t.  The 512 also guarantees that (residual2 + offset) is positive
+       (since 512 is much greater than 64), and this ensures well-defined
+       rounding behavior.  Note: we will now explicitly make `offset` an int32_t
+       because we don't want 512 << 15 to overflow if int is int16_t (super
+       unlikely, I know).
+    */
+    int32_t offset = (((int32_t)(512+1)) << exponent) - (predicted&1);
+
+    int local_mantissa = (int)((int8_t)(((uint32_t)(residual2 + offset)) >> (exponent + 1)));
+
+    assert(local_mantissa >= -(mantissa_limit+1) && local_mantissa <= mantissa_limit);
+
+    /*
+       We can't actually represent -(mantissa_limit+1) in the number of bits
+       we're using for the mantissa, but we choose to retain this exponent, in
+       this case, because -(mantissa_limit+1) is as close to -mantissa_limit as
+       it is to -(mantissa_limit+2) which is what we'd be able to use if we used
+       a one-larger exponent.  */
+    if (local_mantissa == -(mantissa_limit+1))
+      local_mantissa = -mantissa_limit;
+    /*  The following could happen if we really wanted the mantissa to be
+        exactly mantissa_limit-0.5, and `predicted` was even so we rounded up.
+        This would only happen in case of ties, so we lose no accuracy by doing
+        this. */
+    if (local_mantissa == mantissa_limit)
+      local_mantissa = mantissa_limit-1;
+
+    int32_t next_signal_value =
+        ((int32_t)predicted) + (((int32_t)local_mantissa) << exponent);
+
+    {
+      /* Just a check.  I will remove this block after it's debugged.
+         Checking that the error is in the expected range.  */
+      int16_t error = (int16_t)(next_signal_value - (predicted + residual));
+      if (error < 0) error = -error;
+      if (local_mantissa > -mantissa_limit) {
+        assert(error <= (1 << exponent) >> 1);
+      } else {
+        /** If local_mantissa is -mantissa_limit, the desired mantissa might have been
+            -(mantissa_limit+1), meaning the error is twice as large as it could
+            normally be, so we need to make the assert different. */
+        assert(error <= (1 << exponent));
+      }
+    }
+
+    if (next_signal_value != (int16_t)next_signal_value) {
+      /** The next signal exceeds the range of int16_t; this can in principle
+        happen if the predicted signal was close to the edge of the range
+        [-32768..32767] and quantization effects took us over the edge.  We
+        need to reduce the magnitude of the mantissa by one in this case. */
+      local_mantissa -= lilcom_sgn(local_mantissa);
+      next_signal_value =
+          ((int32_t)predicted) + (((int32_t)local_mantissa) << exponent);
+      assert(next_signal_value == (int16_t)next_signal_value);
+    }
+
+    *next_decompressed_value = next_signal_value;
+    *mantissa = local_mantissa;
+  }
+  return exponent;
+}
+
+
+struct BacktrackingEncoder {
+  /* bits_per_sample is a user-supllied configuration value in [4..8]. */
+  int bits_per_sample;
+  /* exponents is a rolling buffer of the exponents used, for t <
+     num_samples_success, or the minimum usable exponents for
+     num_samples_success <= t <= most_recent_attempt.  */
+  int exponents[EXPONENT_BUFFER_SIZE];
+  /* `most_recent_attempt` records the most recent t value for which the user
+     has so far called `backtracking_encoder_get_code()`.
+  */
+  ssize_t most_recent_attempt;
+  /*
+     next_sample_to_encode is the next sample for which the user is
+     required to call backtracking_encoder_get_code().  This may go
+     backwards as well as forwards, but it will never be the case
+     that
+       most_recent_attempt - next_sample_to_encode > (2*MAX_POSSIBLE_EXPONENT + 1 == 31).
+  */
+  ssize_t next_sample_to_encode;
+
+
+  /** num_backtracks is only used in debug mode. */
+  ssize_t num_backtracks;
+
+  /**
+    If this were a class it would have
+     backtracking_encoder_init() == constructor
+     backtracking_encoder_get_code()
+  */
+};
+
+
+/**
+   Attempts to lossily compress `residual` (which is allowed to be in the range
+   [-(2**16-1) .. 2**16-1]) to an 8-bit code.  The encoding scheme uses an
+   exponent and a mantissa, and the exponent is stored as a single bit
+   `delta_exponent` by dint of only storing the changes in the exponent,
+   according to the formula:
+       exponent(t) := exponent(t-1) + (t % 2) + delta_exponent(t)
+   where delta_exponent in {0,1} is the only thing we encode.  When we
+   discover that we can't encode a large enough exponent to encode a particular
+   sample, we have to go back to previous samples and use a larger exponent for
+   them.
+
+
+      @param [in] residual The value to be encoded for time
+                           encoder->next_sample_to_encode.  Required to be
+                           in the range [-(2**16-1) .. 2**16-1].
+      @param [out] approx_residual  On success, an approximate version of
+                           the residual will be written to here.
+      @param [out] code    On success, the code will be written to
+                           here.  (Only the lowest-order encoder->bits_per_sample
+                           bits will be relevant).  Note: later on we
+                           might extend this codebase to support writing
+                           fewer than the specified number of bits where
+                           doing so would not affect the accuracy, by allowing
+                           negative excursions of the exponent.  That
+                           would require interface changes, though.
+      @param [in,out] encoder  The encoder object.  May be modified by
+                           this call.
+
+      @return  Returns 0 on success, 1 on failure.  Success means
+             a code was created and encoder->next_sample_to_encode
+             was increased by 1.
+
+ */
+inline int backtracking_encoder_get_code(int32_t residual,
+                                         int32_t *approx_residual,
+                                         int8_t *code,
+                                         BacktrackingEncoder *encoder) {
+  ssize_t t = encoder->next_sample_to_encode;
+  size_t t_mod = (t & (EXPONENT_BUFFER_SIZE - 1)), /* t % buffer_size */
+      /* t1_mod is (t-1) % buffer_size using mathematical modulus, not C modulus,
+         so -1 % buffer_size is positive.
+       */
+      t1_mod = ((t-1) & (EXPONENT_BUFFER_SIZE - 1));
+
+  int exponent_t1 = encoder->exponents[t1_mod],
+      min_codable_exponent =
+      LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_t1);
+  return 0; /* Success */
+}
+
+
+
+
+
+/**
    This contains information related to the computation of the linear prediction
    coefficients (LPC).
  */
@@ -834,8 +1210,9 @@ struct CompressionState {
       but repeated for clarity. */
   int header_stride;
 
-  /** This is only used in debug mode. */
-  int64_t num_backtracks;
+  /** num_backtracks is only used in debug mode. */
+  ssize_t num_backtracks;
+
 };
 
 
@@ -983,294 +1360,6 @@ static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
   return (int)(((int8_t)(header[2 * stride] << 1)) / 2);
 }
 
-
-/**
-   This macro is added mainly for documentation purposes.  It clarifies what the
-   possible exponents are for time t given that we know the exponent for time
-   t-1.
-
-       @param [in] t   The time for which we want to know the possible
-                       exponent range.  t >= -1.
-       @param [in] exponent_tm1   The exponent used for time t-1:
-                       a value in [0..15], otherwise it is an error.
-       @return min_exponent  The minimum exponent that time t
-                       will be able to use, given exponent_tm1.
-                       This equals exponent_tm1 - ((t+exponent_tm1)&1),
-                       where &1 is a way of computing mod 2.
-                       It forms a checkerboard pattern.  If you draw
-                       the possible trajectories of exponents on
-                       a grid you'll see that this choice has nice
-                       properties that allows exponents to change
-                       quite fast when needed.  The return value is a value
-                       in [-1..15], but currently going to exponent
-                       -1 is "forbidden", meaning the encoded bit for exponent
-                       change is bound to be 1 in this case so the
-                       exponent for time t would be zero.  We may later
-                       make excursions to negative exponents allowed,
-                       which would allow us to save and then re-use
-                       bits, e.g. for on-disk formats.
-
-   Note: the maximum exponent is just min_exponent + 1 where min_exponent is
-   what this macro returns, because we use 1 bit for the change in exponent; a
-   bit value of 1 means we choose the max, zero means we choose the min.
- */
-#define LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_tm1) (exponent_tm1 - ((((int)t)+exponent_tm1)&1))
-
-/**
-   This macro is defined mainly for documentation purposes.  It returns the
-   smallest value the exponent for time t-1 could be, given the constraint that
-   we require the exponent for time t to be at least a specified value.
-
-        @param [in]  t   The current time, t >= 0.  We want to compute an exponent-floor for
-                         the preceding time (t-1).
-        @param [in] exponent_t  An exponent for time t, where the caller says
-                         they want an exponent at least this large.  Must be
-                         in the range [0..11].
-        @return  Returns the smallest value that the exponent could have on
-                         time t-1 such that the exponent on time t will be
-                         at least exponent_t.  This may be -1 if exponent_t
-                         was 0, but this macro should never be called in that
-                         case.  So this function returns the maximum k such that
-                         LILCOM_COMPUTE_MIN_CODABLE_COMPONENT(t, k) >= exponent_t.
-                         The answer will obviously be either exponent_t or
-                         exponent_t - 1.  We work out the formula as follows:
-
-                         (a) First, assume (t+exponent_t) is even, so
-                         ((((int)t)+exponent_t)&1) is zero.  Now we ask,
-                         if exponent_tm1 = exponent_t - 1, what is
-                         the greatest exponent that we can have on time t?
-                         The minimum exponent we can have on time t is given by
-                         LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, (exponent_t - 1))
-                         and in that case we get an odd number in the modulus
-                         so there is a -1 in the formula.  That would imply the
-                         minimum exponent on time t is (exponent_t - 1) - 1 =
-                         exponent_t - 2, so the maximum is exponent_t - 1
-                         (since the bit adds one).  That's a no-go, i.e.
-                         for even ((((int)t)+exponent_t)&1) the answer is
-                         just exponent_t; for odd it's exponent_t - 1.
-                         This happens to be exactly the same formula as
-                         LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_t).
- */
-#define LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent_t) (exponent_t - ((((int)t)+exponent_t)&1))
-
-
-/**
-   Computes the least exponent (subject to a caller-specified floor) which
-   is sufficient to encode (an approximation of) this residual; also
-   computes the associated mantissa and the next predicted value.
-
-      @param [in] residual  The residual that we are trying to encode,
-                     meaning: the observed value minus the value that was
-                     predicted by the linear prediction.  This is a
-                     difference of int16_t's, but such differences cannot
-                     always be represented as int16_t, so it's represented
-                     as an int32_t.
-
-      @param [in] predicted   The predicted sample (so the residual
-                     is the observed sample minus this).  The only reason
-                     this needs to be specified is to detect situations
-                     where, due to quantization effects, the next decompressed
-                     sample would exceed the range of int16_t; in those
-                     cases, we need to reduce the magnitude of the mantissa to
-                     stay within the allowed range of int16_t (this avoids us
-                     having to implement extra checks in the decoder).
-
-       @param [in] min_exponent  A caller-supplied floor on the exponent;
-                     must be in the range [0, 15].  This function will
-                     never return a value less than this.  min_exponent will
-                     normally be the maximum of zero and the previous sample's
-                     exponent minus 1, but may be more than that if we are
-                     backtracking (because future samples need a larger
-                     exponent).
-
-       @param [in]  mantissa_limit  A power of 2 in [4,8,16,32,64],
-                     equal to 1 << (bits_per_sample - 1).  The allowed
-                     range of the mantissa is [-mantissa_limit.. mantissa_limit-1]
-
-       @param [out] mantissa  This function will write an integer in
-                    the range [-mantissa_limit.. mantissa_limit-1]
-                    to here, such that
-                    (mantissa << exponent) is a close approximation
-                    of `residual` and satisfies the property that
-                    `predicted + (mantissa << exponent)` does not
-                    exceed the range of int16_t.
-
-       @param [out] next_compressed_value  The next compressed value
-                    will be written to here; at exit this will contain
-                    `predicted + (mantissa << exponent)`.
-
-    @return  Returns the exponent chosen, a value in the range [min_exponent..11].
-
-
-   The intention of this function is to return the exponent in the range
-   [min_exponent..15] which gives the closest approximation to `residual` that
-   we could get with any exponent, while choosing the lower exponent in case of
-   ties.  This is largely what it does, although it may not always do so in the
-   corner cases where we needed to modify the mantissa to not exceed the range
-   of int16_t.  The details of how the integer mantissa is chosen (especially
-   w.r.t. rounding and ties) is explained in a comment inside the function.
-
-   The following explains how this function chooses the exponent.
-
-   Define the exact mantissa m(e), which is a function of the exponent e,
-   as:
-            m(e) =  residual / (2^e),
-   viewed as an exact mathematical expresion, not as an integer.
-   Let M be shorthand for mantissa_limit (a power of 2).
-   We want to return the smallest value of e such that
-
-      -(M+1) <= m(e) <= (M-0.5).
-
-   This inequality ensures that there will be no loss of accuracy by choosing e
-   instead of e+1 as the exponent.  (If we had a larger exponent, the closest
-   points we'd be able to reach would be equivalent to m(e) = -(M+2) or +M; and if
-   m(e) satisfies the inequality above we'd have no loss of precision by using e
-   rather than e + 1 as the exponent.  (Notice that -(M+1) is the midpoint of
-   [-(M+2),-M] and (M-0.5) is the midpoint of [M-1,M]).  Multiplying by two, we can
-   express the above in integer math as:
-
-     (-(2M+2) << e) <= residual * 2 <= (2M-1) << e)
-
-*/
-static inline int least_exponent(int32_t residual,
-                                 int16_t predicted,
-                                 int min_exponent,
-                                 int mantissa_limit,
-                                 int *mantissa,
-                                 int16_t *next_decompressed_value) {
-  assert (min_exponent >= 0 && min_exponent <= 15); /* TODO: remove this */
-  int exponent = min_exponent;
-  int32_t residual2 = residual * 2,
-      minimum = -(2*mantissa_limit + 2) << exponent,
-      maximum = (2*mantissa_limit - 1) << exponent;
-  while (residual2 < minimum || residual2 > maximum) {
-    minimum *= 2;
-    maximum *= 2;
-    exponent++;
-  }
-  {
-    /**
-       This code block computes 'mantissa', the integer mantissa which we call
-       which should be a value in the range [-M, M-1] where M is
-       mantissa_limit
-
-       The mantissa will be the result of rounding (residual /
-       (float)2^exponent) to the nearest integer (see below for the rounding
-       behavior in case of ties, which we randomize); and then, if the result is
-       -(M+1) or +M, changing it to -M or M-1 respectively.
-
-       What we'd like to do, approximately, is to compute
-
-           mantissa = residual >> exponent
-
-       where >> can be interpreted, roughly, as division by 2^exponent; but we
-       want some control of the rounding behavior.  To maximize accuracy we want
-       to round to the closest, like what round() does for floating point
-       expressions; but we want some control of what happens in case of ties.  I
-       am concerned that always rounding towards zero might possibly generate a
-       slight ringing, in certain unusual circumstances (it's a kind of bias
-       toward the LPC prediction), so we want to round in a random direction (up
-       or down).  We choose to round up or down, pseudo-randomly.
-
-       We'll use (predicted%2) as the source of randomness.  This will be
-       sufficiently random for loud signals (varying by more than about 1 or 2
-       from sample to sample); and for very quiet signals (magnitude close to 1)
-       we'll be exactly coding it anyway so it won't matter.
-
-       Consider the expression below, which can be considered as an attempt to
-       get the rounding behavior described above:
-
-          mantissa = (residual*2 + offset) >> (exponent + 1)
-
-       (and assume >> is the same as division by a power of 2 but rounding
-       towards -infinity; the C standard coesn't guarantee this behavior but
-       we'll fix that in a different way).
-
-        and consider two possibilities for `offset`.
-       (a)  offset = (1<<exponent)
-       (b)  offset = ((1<<exponent) - 1)
-
-       In case (a) it rounds up in case of ties (e.g. if the residual is 6 and
-       exponent is 2 so we're rounding to a multiple of 4).  In case (b)
-       it rounds down.  By using:
-         offset = ((1<<exponent) - (predicted&1))
-       we are randomly choosing (a) or (b) based on randomness in the
-       least significant bit of `predicted`.
-
-       OK, imagine the code was as follows:
-
-      int offset = ((1 << exponent) - (predicted&1)),
-        local_mantissa = (residual2 + offset) >> (exponent + 1);
-
-       The above code would do what we want on almost all platforms (since >> on
-       a signed number is normally arithmetic right-shift in practice, which is
-       what we want).  But we're going to modify it to guarantee correct
-       behavior for negative numbers, since the C standard says right shift of
-       negative signed numbers is undefined.
-
-       We do this by adding 512 << exponent to "offset".  This becomes 256 when
-       we later shift right by (exponent + 1), which will disappear when casting
-       to int8_t.  The 512 also guarantees that (residual2 + offset) is positive
-       (since 512 is much greater than 64), and this ensures well-defined
-       rounding behavior.  Note: we will now explicitly make `offset` an int32_t
-       because we don't want 512 << 15 to overflow if int is int16_t (super
-       unlikely, I know).
-    */
-    int32_t offset = (((int32_t)(512+1)) << exponent) - (predicted&1);
-
-    int local_mantissa = (int)((int8_t)(((uint32_t)(residual2 + offset)) >> (exponent + 1)));
-
-    assert(local_mantissa >= -(mantissa_limit+1) && local_mantissa <= mantissa_limit);
-
-    /*
-       We can't actually represent -(mantissa_limit+1) in the number of bits
-       we're using for the mantissa, but we choose to retain this exponent, in
-       this case, because -(mantissa_limit+1) is as close to -mantissa_limit as
-       it is to -(mantissa_limit+2) which is what we'd be able to use if we used
-       a one-larger exponent.  */
-    if (local_mantissa == -(mantissa_limit+1))
-      local_mantissa = -mantissa_limit;
-    /*  The following could happen if we really wanted the mantissa to be
-        exactly mantissa_limit-0.5, and `predicted` was even so we rounded up.
-        This would only happen in case of ties, so we lose no accuracy by doing
-        this. */
-    if (local_mantissa == mantissa_limit)
-      local_mantissa = mantissa_limit-1;
-
-    int32_t next_signal_value =
-        ((int32_t)predicted) + (((int32_t)local_mantissa) << exponent);
-
-    {
-      /* Just a check.  I will remove this block after it's debugged.
-         Checking that the error is in the expected range.  */
-      int16_t error = (int16_t)(next_signal_value - (predicted + residual));
-      if (error < 0) error = -error;
-      if (local_mantissa > -mantissa_limit) {
-        assert(error <= (1 << exponent) >> 1);
-      } else {
-        /** If local_mantissa is -mantissa_limit, the desired mantissa might have been
-            -(mantissa_limit+1), meaning the error is twice as large as it could
-            normally be, so we need to make the assert different. */
-        assert(error <= (1 << exponent));
-      }
-    }
-
-    if (next_signal_value != (int16_t)next_signal_value) {
-      /** The next signal exceeds the range of int16_t; this can in principle
-        happen if the predicted signal was close to the edge of the range
-        [-32768..32767] and quantization effects took us over the edge.  We
-        need to reduce the magnitude of the mantissa by one in this case. */
-      local_mantissa -= lilcom_sgn(local_mantissa);
-      next_signal_value =
-          ((int32_t)predicted) + (((int32_t)local_mantissa) << exponent);
-      assert(next_signal_value == (int16_t)next_signal_value);
-    }
-
-    *next_decompressed_value = next_signal_value;
-    *mantissa = local_mantissa;
-  }
-  return exponent;
-}
 
 
 /**
