@@ -1580,7 +1580,9 @@ struct CompressionState {
 
 
 
-/*******************
+/*
+  HEADER FORMAT:
+
   The lilcom_header functions below mostly serve to clarify the format
   of the header; we could just have put the statements inline, which is
   what we hope the compiler will do.
@@ -1593,14 +1595,11 @@ struct CompressionState {
              The highest-order bit is always set (this helps work out the
              time axis when decompressing, together with it never being
              set for byte 2.
-    Byte 1:  Least significant 4 bits contain the LPC order (this is
-             user-specifiable in 0..14).
-             The next 3 bits contain the bits_per_sample minus 4;
-             the bits_per_sample is in [4..8] so bits_per_sample-4 is
-             in [0..4].
-             The highest-order bit is 1 if the num_samples of the
-             input was odd and 0 if it was even (this is used to
-             disambiguate the sequence length).
+    Byte 1:  The lowest 7 bits contain the LPC order which must be
+             in 0..MAX_LPC_ORDER (currently 14.)
+             The highest-order bit is set if the number of samples
+             stored is odd; this is used to disambiguate the number of
+             samples.
     Byte 2:  Low order 7 bits are the corresponding bits of the mantissa
              of the -1'th sample, in [-64..63] regardless of the value of
              bits_per_sample.  The highest-order bit is never set; this is
@@ -1615,6 +1614,8 @@ struct CompressionState {
              will normally be set (by calling code) to 0 if the data was
              originally int16; this will mean that when converting to float,
              we'll remain in the range [-1, 1]
+    Byte 4:  The bits-per-sample as a signed char.  Must be in
+             [LILCOM_MIN_BPS..LILCOM_MAX_BPS], currently [4..16].
  */
 
 
@@ -1636,15 +1637,6 @@ static inline int lilcom_header_get_exponent_m1(const int8_t *header,
   return (int)(header[0 * stride] & 15);
 }
 
-/**  Check that this is plausibly a lilcom header.  The low-order 4 bits of the
-     first byte of the header are used for this; the magic number is 7.  */
-static inline int lilcom_header_plausible(const int8_t *header,
-                                          int stride) {
-  /** Currently only one version number is supported. */
-  int byte0 = header[0 * stride], byte2 = header[2 * stride];
-  return (byte0 & 0xF0) == ((LILCOM_VERSION << 4) + 128) &&
-      (byte2 & 128) == 0;
-}
 
 /** Set the conversion_exponent in the header.
         @param [in] header  Pointer to start of the header
@@ -1685,18 +1677,18 @@ static inline void lilcom_header_set_user_configs(
          bits_per_sample >= LILCOM_MIN_BPS &&
          bits_per_sample <= LILCOM_MAX_BPS &&
          num_samples_odd <= 1);
-  header[1 * stride] = (int8_t)lpc_order + ((bits_per_sample - 4) << 4)
-      + (num_samples_odd << 7);
+  header[1 * stride] = (int8_t)lpc_order + (num_samples_odd << 7);
+  header[4 * stride] = bits_per_sample;
 }
 
 /** Return the LPC order from the header.  Does no range checking!  */
 static inline int lilcom_header_get_lpc_order(const int8_t *header, int stride) {
-  return (int)(header[1 * stride] & 15);
+  return (int)(header[1 * stride] & 127);
 }
 
 /** Returns bits_per_sample from the header; result will be in [4..8].  */
 static inline int lilcom_header_get_bits_per_sample(const int8_t *header, int stride) {
-  return (((unsigned int)(header[1 * stride] & 112)) >> 4) + 4;
+  return (int)header[4 * stride];
 }
 
 /** Returns the parity of the original num-samples from the header,
@@ -1724,6 +1716,19 @@ static inline int lilcom_header_get_mantissa_m1(const int8_t *header,
   return (int)(((int8_t)(header[2 * stride] << 1)) / 2);
 }
 
+/**  Check that this is plausibly a lilcom header.  */
+static inline int lilcom_header_plausible(const int8_t *header,
+                                          int stride) {
+  /** Currently only one version number is supported. */
+  int byte0 = header[0 * stride],
+      byte2 = header[2 * stride],
+      bps = lilcom_header_get_bits_per_sample(header, stride),
+      lpc_order = lilcom_header_get_lpc_order(header, stride);
+  return (byte0 & 0xF0) == ((LILCOM_VERSION << 4) + 128) &&
+      (byte2 & 128) == 0 &&
+      bps >= LILCOM_MIN_BPS && bps <= LILCOM_MAX_BPS &&
+      lpc_order >= 0 && lpc_order <= MAX_LPC_ORDER;
+}
 
 
 /**
