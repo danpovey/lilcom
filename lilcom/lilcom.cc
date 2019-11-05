@@ -2664,12 +2664,10 @@ int lilcom_compress(
  */
 static inline int lilcom_decompress_one_sample(
     ssize_t t,
-    int bits_per_sample,
     int lpc_order,
     const int32_t *lpc_coeffs,
-    int input_code,
-    int16_t *output_sample,
-    int *exponent) {
+    int32_t residual,
+    int16_t *output_sample) {
 
   int16_t predicted_sample;
 
@@ -2694,32 +2692,7 @@ static inline int lilcom_decompress_one_sample(
     predicted_sample = (int16_t)predicted;
   }
 
-  /**
-     Below, it would have been nice to be able to compute 'mantissa' as just
-     input_code >> 1, but we can't rely on this being implemented as arithmetic
-     bit-shift, the C standard does not guarantee that.  We also can't just
-     divide by 4 because that division would round up for negative input,
-     depending on the lower-order two bits, so we need to `and` it with
-     ~((int_8)3) to get rid of those low-order two bits.  Hopefully the
-     compiler can optimize this.
-   */
-  int exponent_bit = (input_code & 1),
-      min_codable_exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, *exponent),
-      mantissa = extract_mantissa(input_code, bits_per_sample);
-  *exponent = min_codable_exponent + exponent_bit;
-
-
-  if (((unsigned int)*exponent) > MAX_POSSIBLE_EXPONENT) {
-    /** If `exponent` is not in the range [0,15], something is wrong.
-        We return 1 on failure.  */
-#ifndef NDEBUG
-    fprintf(stderr, "Decompression failed, bad exponent %d at t=%d\n",
-            (int)*exponent, (int)t);
-#endif
-    return 1;
-  }
-
-  int32_t new_sample = (int32_t)predicted_sample  +  (mantissa << *exponent);
+  int32_t new_sample = (int32_t)predicted_sample + residual;
 
   if (((new_sample + 32768) & ~(int32_t)65535) != 0) {
     /** If `new_sample` is outside the range [-32768 .. 32767], it
@@ -2754,9 +2727,10 @@ static inline int lilcom_decompress_one_sample(
  */
 static inline int lilcom_decompress_time_zero(
     const int8_t *header, int code_0, int input_stride, int bits_per_sample,
-    int16_t *output, int *exponent) {
+    int16_t *output, Decoder *decoder) {
   int exponent_m1 = lilcom_header_get_exponent_m1(header, input_stride),
       mantissa_m1 = lilcom_header_get_mantissa_m1(header, input_stride);
+  decoder_init(bits_per_sample, exponent_m1, decoder);
   /** Failure in the following assert would be a code error, not an error in the
       input.  We already checked the exponent range in
      `lilcom_header_plausible`.  */
@@ -2764,18 +2738,16 @@ static inline int lilcom_decompress_time_zero(
          exponent_m1 >= 0 && exponent_m1 <= 15);
   int32_t sample_m1 = mantissa_m1 << exponent_m1;
 
-  int32_t
-      exponent_bit = (code_0 & 1),
-      mantissa = extract_mantissa(code_0, bits_per_sample);
+  int32_t residual_0;
+  if (decoder_decode(0, code_0, decoder, &residual_0) != 0)
+    return 1;  /* exponent out of range. */
 
-  *exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(0, exponent_m1) + exponent_bit;
-  int32_t sample_0 = sample_m1 + (mantissa << *exponent);
+  int32_t sample_0 = sample_m1 + residual_0;
   if (((sample_0 + 32768) & ~(int32_t)65535) != 0) {
     return 1;  /**  Out-of-range error */
   }
   *output = (int16_t)sample_0;
   return 0;
-
 }
 
 
@@ -2832,9 +2804,10 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
 
   int code_0 = bit_unpacker_read_code(0, &unpacker);
 
-  int exponent;
+  Decoder decoder;
+
   if (lilcom_decompress_time_zero(input, code_0, input_stride, bits_per_sample,
-                                  &(output[0]), &exponent)) {
+                                  &(output[0]), &decoder)) {
 #ifndef NDEBUG
     fprintf(stderr, "lilcom: decompressing: error uncmopressing time zero "
             "(Maybe not lilcom-compressed data?)\n");
@@ -2862,11 +2835,11 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
   int t;
   for (t = 1; t < AUTOCORR_BLOCK_SIZE && t < num_samples; t++) {
     int code = bit_unpacker_read_code(t, &unpacker);
-
-    if (lilcom_decompress_one_sample(t, bits_per_sample, lpc_order,
-                                     lpc.lpc_coeffs, code,
-                                     &(output_buffer[MAX_LPC_ORDER + t]),
-                                     &exponent)) {
+    int32_t residual;
+    if (decoder_decode(t, code, &decoder, &residual) != 0 ||
+        lilcom_decompress_one_sample(t, lpc_order,
+                                     lpc.lpc_coeffs, residual,
+                                     &(output_buffer[MAX_LPC_ORDER + t])) != 0) {
 #ifndef NDEBUG
       fprintf(stderr, "lilcom: decompression failure for t=%d\n",
               (int)t);
@@ -2915,10 +2888,10 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
                              t + AUTOCORR_BLOCK_SIZE : num_samples);
       for (; t < local_max_t; t++) {
         int code = bit_unpacker_read_code(t, &unpacker);
-        if (lilcom_decompress_one_sample(
-                t, bits_per_sample, lpc_order,
-                lpc.lpc_coeffs, code,
-                output + t, &exponent)) {
+        int32_t residual;
+        if (decoder_decode(t, code, &decoder, &residual) != 0 ||
+            lilcom_decompress_one_sample(t, lpc_order, lpc.lpc_coeffs, residual,
+                                         output + t) != 0) {
 #ifndef NDEBUG
           fprintf(stderr, "lilcom: decompression failure for t=%d\n",
                   (int)t);
@@ -2967,10 +2940,11 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
                              t + AUTOCORR_BLOCK_SIZE : num_samples);
       for (; t < local_max_t; t++) {
         int code = bit_unpacker_read_code(t, &unpacker);
-        if (lilcom_decompress_one_sample(
-                t, bits_per_sample, lpc_order, lpc.lpc_coeffs, code,
-                output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1)),
-                &exponent)) {
+        int32_t residual;
+        if (decoder_decode(t, code, &decoder, &residual) != 0 ||
+            lilcom_decompress_one_sample(
+                t,lpc_order, lpc.lpc_coeffs, residual,
+                output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1))) != 0) {
 #ifndef NDEBUG
           fprintf(stderr, "lilcom: decompression failure for t=%d\n",
                   (int)t);
