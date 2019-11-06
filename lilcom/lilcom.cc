@@ -869,7 +869,7 @@ struct BacktrackingEncoder {
    (allows you to extract the approximately-encoded residuals.)
   */
 
-  /* bits_per_sample is a user-supllied configuration value in [4..8]. */
+  /* bits_per_sample is a user-supplied configuration value in [4..8]. */
   int bits_per_sample;
 
   /* mantissa_limit is 1 << (bits_per_sample-2) */
@@ -3390,7 +3390,7 @@ void lilcom_test_compress_sine() {
     buffer[i] = 700 * sin(i * 0.01);
 
   /* TODO: use LILCOM_MAX_BPS */
-  for (int bits_per_sample = 9; bits_per_sample >= LILCOM_MIN_BPS; bits_per_sample--) {
+  for (int bits_per_sample = LILCOM_MAX_BPS; bits_per_sample >= LILCOM_MIN_BPS; bits_per_sample--) {
     printf("Bits per sample = %d\n", bits_per_sample);
     int exponent = -15, exponent2;
     ssize_t num_bytes = lilcom_get_num_bytes(1000, bits_per_sample);

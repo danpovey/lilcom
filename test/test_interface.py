@@ -7,7 +7,7 @@ np.random.seed(0)
 
 
 def test_float():
-    for bits_per_sample in [4,6,8]:
+    for bits_per_sample in [4,6,8,12,16]:
         for axis in [-1, 1, 0, -2]:
             for use_out in [False, True]:
                 a = np.random.randn(100+bits_per_sample+axis,
@@ -24,7 +24,7 @@ def test_float():
                     axis, bits_per_sample, rel_error))
 
 def test_int16():
-    for bits_per_sample in [4,5,8]:
+    for bits_per_sample in [4,5,8,16]:
         for axis in [-1, 1, 0, -2]:
             a = ((np.random.rand(100 + bits_per_sample + axis,
                                  200 + 10*bits_per_sample + axis) * 65535) - 32768).astype(np.int16)
