@@ -6,7 +6,6 @@
 #endif
 #include <float.h>  /* for FLT_MAX */
 
-
 extern "C" {
 #include "lilcom.h"
 }
@@ -724,7 +723,7 @@ static inline int least_exponent(int32_t residual,
                                  int mantissa_limit,
                                  int *mantissa,
                                  int16_t *next_decompressed_value) {
-  assert (min_exponent >= 0 && min_exponent <= 15); /* TODO: remove this */
+  assert (min_exponent >= 0 && min_exponent <= 15); /* TODO: remove this? */
   int exponent = min_exponent;
   int32_t residual2 = residual * 2,
       minimum = -(2*mantissa_limit + 2) << exponent,
@@ -750,13 +749,15 @@ static inline int least_exponent(int32_t residual,
            mantissa = residual >> exponent
 
        where >> can be interpreted, roughly, as division by 2^exponent; but we
-       want some control of the rounding behavior.  To maximize accuracy we want
-       to round to the closest, like what round() does for floating point
-       expressions; but we want some control of what happens in case of ties.  I
-       am concerned that always rounding towards zero might possibly generate a
-       slight ringing, in certain unusual circumstances (it's a kind of bias
-       toward the LPC prediction), so we want to round in a random direction (up
-       or down).  We choose to round up or down, pseudo-randomly.
+       want some control of the rounding behavior; we need to make sure it is
+       well defined according to the C standard (I don't think it guarantees
+       consistent results on different platforms for negative arguments).  To
+       maximize accuracy we choose to round to the closest, like what round()
+       does for floating point expressions; but we want some control of what
+       happens in case of ties.  I am concerned that always rounding towards
+       zero might cause a bias that might matter for some purposes, so it is
+       desired to round in a random direction (up or down).  We choose to round
+       up or down, pseudo-randomly.
 
        We'll use (predicted%2) as the source of randomness.  This will be
        sufficiently random for loud signals (varying by more than about 1 or 2
@@ -785,7 +786,7 @@ static inline int least_exponent(int32_t residual,
 
        OK, imagine the code was as follows:
 
-      int offset = ((1 << exponent) - (predicted&1)),
+       int offset = ((1 << exponent) - (predicted&1)),
         local_mantissa = (residual2 + offset) >> (exponent + 1);
 
        The above code would do what we want on almost all platforms (since >> on
@@ -794,17 +795,17 @@ static inline int least_exponent(int32_t residual,
        behavior for negative numbers, since the C standard says right shift of
        negative signed numbers is undefined.
 
-       We do this by adding 512 << exponent to "offset".  This becomes 256 when
-       we later shift right by (exponent + 1), which will disappear when casting
-       to int8_t.  The 512 also guarantees that (residual2 + offset) is positive
-       (since 512 is much greater than 64), and this ensures well-defined
-       rounding behavior.  Note: we will now explicitly make `offset` an int32_t
-       because we don't want 512 << 15 to overflow if int is int16_t (super
-       unlikely, I know).
+       The way we ensure consistent right-shift behavior is to cast to int32_t,
+       then cast to uint32_t and right-shift as unsigned (this will leave up to
+       MAX_POSSIBLE_EXPONENT == 15 zeros in the most significant bits), then
+       cast to int16_t which will get rid of those zeros and to to interpret it
+       as a signed number as we wanted, then cast to int (which may or may not
+       be int16).  This won't be portable to systems that don't use twos-complement
+       representation of signed integers (if they still exist).
     */
-    int32_t offset = (((int32_t)(512+1)) << exponent) - (predicted&1);
+    int32_t offset = (1 << exponent) - (predicted&1);
 
-    int local_mantissa = (int)((int8_t)(((uint32_t)(residual2 + offset)) >> (exponent + 1)));
+    int local_mantissa = (int)(int16_t)(((uint32_t)(residual2 + (int32_t)offset)) >> (exponent + 1));
 
     assert(local_mantissa >= -(mantissa_limit+1) && local_mantissa <= mantissa_limit);
 
@@ -832,7 +833,7 @@ static inline int least_exponent(int32_t residual,
       int16_t error = (int16_t)(next_signal_value - (predicted + residual));
       if (error < 0) error = -error;
       if (local_mantissa > -mantissa_limit) {
-        assert(error <= (1 << exponent) >> 1);
+        assert(error <= ((1 << exponent) >> 1));
       } else {
         /** If local_mantissa is -mantissa_limit, the desired mantissa might have been
             -(mantissa_limit+1), meaning the error is twice as large as it could
@@ -1021,7 +1022,7 @@ inline int backtracking_encoder_encode(int32_t residual,
     paranoid_assert(mantissa >= -encoder->mantissa_limit &&
                     mantissa < encoder->mantissa_limit);
 
-    *code = (int8_t)((mantissa << 1) + exponent_delta);
+    *code = ((mantissa << 1) + exponent_delta);
     encoder->exponents[t_mod] = exponent;
     encoder->next_sample_to_encode = t + 1;
     return 0;
@@ -1029,17 +1030,13 @@ inline int backtracking_encoder_encode(int32_t residual,
     /* Failure: the exponent required to most accurately
        approximate this residual is too large; we will need
        to backtrack. */
-    //printf("[failure]Setting exponent for t==%d from %d to %d\n", (int)t,
-    //       (int)encoder->exponents[t_mod], (int)exponent);
     encoder->exponents[t_mod] = exponent;
     while (1) {
-      //printf("Min allowed exponent for t=%d = %d\n", (int)t, exponent);
       exponent = LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent);
       t--;
 #ifndef NDEBUG
       encoder->num_backtracks++;
 #endif
-      //printf("[2]Min allowed exponent for t=%d = %d\n", (int)t, exponent);
       /* Now `exponent` is the minimum exponent we'll allow for time t-1. */
       t_mod = t & (EXPONENT_BUFFER_SIZE - 1);
       if (encoder->exponents[t_mod] >= exponent) {
@@ -1119,8 +1116,8 @@ static inline int extract_mantissa(int code, int bits_per_sample) {
 
 
 /**
-   Converts this code into a signed int32 value.  Must be called
-   exactly in sequence for t = 0, t = 1 and so on.n
+   Converts this code into a signed int32 value (which will typically represent
+   a residual).  Must be called exactly in sequence for t = 0, t = 1 and so on.
 
            @param [in] code  The encoded value; only the lower-order
                           `decoder->bits_per_sample` bits will be inspected.
@@ -1900,7 +1897,7 @@ void lilcom_compute_lpc(int lpc_order,
      no LPC at all.  But I account for the possibility that in pathological
      cases, rounding errors might make this untrue.
   */
-  assert(E > 0 && E <= (autocorr[0] + (((uint64_t)autocorr[0]) >> 10)));
+  assert(E > 0 && E <= (autocorr[0] + ((int64_t)(((uint64_t)autocorr[0]) >> 10))));
 
 
   /**
@@ -2315,7 +2312,7 @@ void lilcom_compress_for_time_zero(
       exponent_m1 = least_exponent(residual_m1,
                                    predicted_m1,
                                    sample_m1_min_exponent,
-                                   64, /** Note,mantissa_limit not used here! */
+                                   64, /** Note, mantissa_limit not used here! */
                                    &mantissa_m1, &signal_m1);
   {  /** Set the exponent and mantissa for t == -1 in the header. */
     assert(exponent_m1 >= 0);
@@ -2621,12 +2618,11 @@ int lilcom_compress(
           &(state.decompressed_signal[MAX_LPC_ORDER+(t&(SIGNAL_BUFFER_SIZE-1))]);
       if (backtracking_encoder_encode(residual,
                                       predicted_value, next_value,
-                                      &code, &state.encoder) == 0) {
-        /* On success.. */
+                                      &code, &state.encoder) == 0)
         bit_packer_write_code(t, code, &state.packer);
-      }
+      /* If it returns 1 (failure) it is not an error; it just means we have to
+         backtrack. */
     }
-
   }
 
 
@@ -2714,8 +2710,8 @@ static inline int lilcom_decompress_one_sample(
     /** If `new_sample` is outside the range [-32768 .. 32767], it
         is an error; we should not be generating such samples. */
 #ifndef NDEBUG
-    fprintf(stderr, "lilcom: decompression failure (corruption?): new_sample = %d\n",
-            (int)new_sample);
+    fprintf(stderr, "lilcom: decompression failure (corruption?), t = %d\n",
+            (int)t);
 #endif
     return 1;
   }
@@ -2800,7 +2796,8 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
       num_samples != lilcom_get_num_samples(input, num_bytes, input_stride)) {
 #ifndef NDEBUG
     fprintf(stderr,
-            "lilcom: Warning: bad header, num-bytes=%d, num-samples=%d, input-stride=%d, plausible=%d\n",
+            "lilcom: Warning: bad header, num-bytes=%d, num-samples=%d, "
+            "input-stride=%d, plausible=%d\n",
             (int)num_bytes, (int)num_samples, (int)input_stride,
             (int)lilcom_header_plausible(input, input_stride));
 #endif
@@ -2858,8 +2855,7 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
                                      lpc.lpc_coeffs, residual,
                                      &(output_buffer[MAX_LPC_ORDER + t])) != 0) {
 #ifndef NDEBUG
-      fprintf(stderr, "lilcom: decompression failure for t=%d\n",
-              (int)t);
+      fprintf(stderr, "lilcom: decompression failure for t=%d\n", (int)t);
 #endif
       return 1;  /** Error */
     }
@@ -3139,7 +3135,7 @@ int lilcom_compress_float(
 
   if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
       lpc_order < 0 || lpc_order > MAX_LPC_ORDER ||
-      bits_per_sample < 4 || bits_per_sample > 8 ||
+      bits_per_sample < LILCOM_MIN_BPS || bits_per_sample > LILCOM_MAX_BPS ||
       num_bytes != lilcom_get_num_bytes(num_samples, bits_per_sample))
     return 1;  /* error */
 
@@ -3384,18 +3380,18 @@ void lilcom_test_extract_mantissa() {
 }
 
 void lilcom_test_compress_sine() {
-  int16_t buffer[1000];
+  int16_t buffer[999];
   int lpc_order = 10;
-  for (int i = 0; i < 1000; i++)
+  for (int i = 0; i < 999; i++)
     buffer[i] = 700 * sin(i * 0.01);
 
   /* TODO: use LILCOM_MAX_BPS */
   for (int bits_per_sample = LILCOM_MAX_BPS; bits_per_sample >= LILCOM_MIN_BPS; bits_per_sample--) {
     printf("Bits per sample = %d\n", bits_per_sample);
     int exponent = -15, exponent2;
-    ssize_t num_bytes = lilcom_get_num_bytes(1000, bits_per_sample);
+    ssize_t num_bytes = lilcom_get_num_bytes(999, bits_per_sample);
     int8_t *compressed = (int8_t*)malloc(num_bytes);
-    int ret = lilcom_compress(buffer, 1000, 1,
+    int ret = lilcom_compress(buffer, 999, 1,
                               compressed, num_bytes, 1,
                               lpc_order, bits_per_sample, exponent);
     assert(!ret);
@@ -3403,16 +3399,16 @@ void lilcom_test_compress_sine() {
     for (int32_t i = 0; i < num_bytes; i++)
       sum += compressed[i];
     printf("hash = %d\n", sum);
-    int16_t decompressed[1000];
+    int16_t decompressed[999];
     if (lilcom_decompress(compressed, num_bytes, 1,
-                          decompressed, 1000, 1,
+                          decompressed, 999, 1,
                           &exponent2) != 0) {
       fprintf(stderr, "Decompression failed\n");
     }
     assert(exponent2 == exponent);
     fprintf(stderr, "Bits-per-sample=%d, sine snr (dB) = %f\n",
             bits_per_sample,
-            lilcom_compute_snr(1000 , buffer, 1, decompressed, 1));
+            lilcom_compute_snr(999 , buffer, 1, decompressed, 1));
     free(compressed);
   }
 }
@@ -3421,7 +3417,7 @@ void lilcom_test_compress_sine() {
 void lilcom_test_compress_maximal() {
   /** this is mostly to check for overflow when computing autocorrelation. */
 
-  for (int bits_per_sample = 4; bits_per_sample <= 8; bits_per_sample++) {
+  for (int bits_per_sample = 4; bits_per_sample <= 16; bits_per_sample++) {
     for (int lpc_order = 0; lpc_order <= MAX_LPC_ORDER; lpc_order++) {
       if (lpc_order > 4 && lpc_order % 2 == 1)
         continue;
@@ -3480,7 +3476,7 @@ void lilcom_test_compress_maximal() {
 
 void lilcom_test_compress_sine_overflow() {
   for (int bits_per_sample = 4;
-       bits_per_sample <= 8; bits_per_sample += 2) {
+       bits_per_sample <= 16; bits_per_sample += 2) {
     ssize_t num_samples = 1001 + bits_per_sample;
     int16_t *buffer = (int16_t*)malloc(num_samples * sizeof(int16_t));
     int lpc_order = 10;
@@ -3535,7 +3531,7 @@ void lilcom_test_compress_float() {
 
   int lpc_order = 5;
 
-  for (int bits_per_sample = 4; bits_per_sample <= 8; bits_per_sample++) {
+  for (int bits_per_sample = 4; bits_per_sample <= 16; bits_per_sample++) {
     int stride = 1 + (bits_per_sample % 3);
     int num_samples = 1000 / stride;
     for (int exponent = -140; exponent <= 131; exponent++) {

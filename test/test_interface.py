@@ -24,7 +24,8 @@ def test_float():
                     axis, bits_per_sample, rel_error))
 
 def test_int16():
-    for bits_per_sample in [4,5,8,16]:
+    for bits_per_sample in [4,5,8,12,16]:
+        print("bps = ", bits_per_sample);
         for axis in [-1, 1, 0, -2]:
             a = ((np.random.rand(100 + bits_per_sample + axis,
                                  200 + 10*bits_per_sample + axis) * 65535) - 32768).astype(np.int16)
