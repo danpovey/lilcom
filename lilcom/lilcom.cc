@@ -1506,11 +1506,6 @@ struct CompressionState {
   /** The user-specified bits per sample, in the range [4..8]. */
   int bits_per_sample;
 
-  /** This is 1 << (bits_per_sample - 2), e.g.
-      64 if bits_per_sample is 8.  Will be one of
-      [4,8,16,32,64].  */
-  int mantissa_limit;
-
 
   /**
      'lpc_computations' is to be viewed as a circular buffer of size 2,
@@ -1529,23 +1524,6 @@ struct CompressionState {
      also the LPC coefficients (see docs for LPC_COMPUTE_INTERVAL).
   */
   struct LpcComputation lpc_computations[LPC_ROLLING_BUFFER_SIZE];
-
-  /**
-     `exponents` is a circular buffer of the exponent values used to compress
-     the signal; the exponent used at time t is stored in exponents[t %
-     EXPONENT_BUFFER_SIZE].  Note: the only the differences between the
-     exponents are stored in the code; define the difference in the exponent
-     at time t as:
-
-            d(t) = e(t) - e(t-1),
-
-     where d(t) is in the range [-1..2].  We store (d(t) + 1) in
-     the lowest-order two bits of the compressed code.  This buffer is
-     needed primarily to deal with backtracking (which is what happens
-     when the limitation of d(t) to the range [-1..2] means we can't
-     use an exponent large enough to encode the signal).
-  */
-  int exponents[EXPONENT_BUFFER_SIZE];
 
   /**
      `encoder` handles the logic of exponents, mantissas and backtracking,
@@ -2164,7 +2142,6 @@ static inline void lilcom_init_compression(
                   &state->packer);
 
   state->bits_per_sample = bits_per_sample;
-  state->mantissa_limit = 1 << (bits_per_sample - 2);
   state->lpc_order = lpc_order;
 
   lilcom_init_lpc(&(state->lpc_computations[0]), lpc_order);
@@ -2237,10 +2214,9 @@ int lilcom_compress(
                           bits_per_sample, conversion_exponent,
                           &state);
 
-
   while (state.encoder.next_sample_to_encode < num_samples) {
     ssize_t t = state.encoder.next_sample_to_encode;
-    if ((t & (AUTOCORR_BLOCK_SIZE - 1)) == 0 && state.lpc_order != 0) {
+    if ((t & (AUTOCORR_BLOCK_SIZE - 1)) == 0 && state.lpc_order != 0 && t != 0) {
       if ((t & (SIGNAL_BUFFER_SIZE - 1)) == 0) {
         /**  If this is the start of the uncompressed_signal buffer we need to
              make sure that the required left context is copied appropriately. */
