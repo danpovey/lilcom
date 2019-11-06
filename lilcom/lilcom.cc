@@ -320,7 +320,7 @@ struct BitPacker {
   int8_t *compressed_code;
   int compressed_code_stride;
   /** See comments above about the constraints on STAGING_BLOCK_SIZE. */
-  int8_t staging_buffer[STAGING_BLOCK_SIZE*2];
+  int staging_buffer[STAGING_BLOCK_SIZE*2];
 
   /** num_samples_committed is the number of samples we have so far committed to
       `compressed_code`.  Will always be a multiple of STAGING_BLOCK_SIZE
@@ -392,15 +392,15 @@ void bit_packer_commit_block(ssize_t begin_t,
     /** The division below will always be exact because STAGING_BLOCK_SIZE is a
         multiple of 8 and begin_t will always be a multiple of it. */
     ssize_t s = begin_t % (STAGING_BLOCK_SIZE*2);
-    const int8_t *src = packer->staging_buffer + s;
+    const int *src = packer->staging_buffer + s;
     int8_t *compressed_code = packer->compressed_code +
         compressed_code_stride * ((begin_t * bits_per_sample) / 8);
     /** Make code unsigned so that right-shift is well defined. */
     unsigned int code = 0, mask = (1 << bits_per_sample) - 1, bits_in_code = 0;
     for (ssize_t t = begin_t; t < end_t; t++) {
-      code |= ((((int)(unsigned char)(*(src++))) & mask) << bits_in_code);
+      code |= (((*(src++)) & mask) << bits_in_code);
       bits_in_code += bits_per_sample;
-      if (bits_in_code >= 8) {  /* Shift off the lowest-order byte */
+      while (bits_in_code >= 8) {  /* Shift off the lowest-order byte */
         *compressed_code = (int8_t) code;
         compressed_code += compressed_code_stride;
         code >>= 8;
@@ -425,7 +425,7 @@ void bit_packer_commit_block(ssize_t begin_t,
    always satisfy:
      t-you-are-writing-now > largest-t-you-have-ever-written - STAGING_BLOCK_SIZE.
  */
-void bit_packer_write_code(ssize_t t, int8_t code,
+void bit_packer_write_code(ssize_t t, int code,
                            BitPacker *packer) {
   ssize_t t_mod = t & (STAGING_BLOCK_SIZE*2 - 1);
   if (t % STAGING_BLOCK_SIZE == 0) {
@@ -975,10 +975,10 @@ void backtracking_encoder_set_exponent_tm1(
 
  */
 inline int backtracking_encoder_encode(int32_t residual,
-                                         int16_t predicted,
-                                         int16_t *next_value,
-                                         int8_t *code,
-                                         BacktrackingEncoder *encoder) {
+                                       int16_t predicted,
+                                       int16_t *next_value,
+                                       int *code,
+                                       BacktrackingEncoder *encoder) {
   assert(encoder->next_sample_to_encode >= 0);
   ssize_t t = encoder->next_sample_to_encode,
       t_most_recent = encoder->most_recent_attempt;
@@ -1724,10 +1724,12 @@ static inline int lilcom_header_plausible(const int8_t *header,
       byte2 = header[2 * stride],
       bps = lilcom_header_get_bits_per_sample(header, stride),
       lpc_order = lilcom_header_get_lpc_order(header, stride);
-  return (byte0 & 0xF0) == ((LILCOM_VERSION << 4) + 128) &&
+  int ans = (byte0 & 0xF0) == ((LILCOM_VERSION << 4) + 128) &&
       (byte2 & 128) == 0 &&
       bps >= LILCOM_MIN_BPS && bps <= LILCOM_MAX_BPS &&
       lpc_order >= 0 && lpc_order <= MAX_LPC_ORDER;
+  assert(ans);
+  return ans;
 }
 
 
@@ -2238,11 +2240,11 @@ static inline int lilcom_compress_for_time_internal(
               int(state->encoder.next_sample_to_encode), int(t));
 #endif
     } else {
-      int8_t code;
+      int code;
       int16_t next_value;
       int ret = backtracking_encoder_encode(residual,
-                                              predicted_value, &next_value,
-                                              &code, &(state->encoder));
+                                            predicted_value, &next_value,
+                                            &code, &(state->encoder));
       if (exponent_delta > 1) { /* Should have failed. */
         assert(state->encoder.next_sample_to_encode != t+1);
         assert(ret == 1);
@@ -2260,7 +2262,7 @@ static inline int lilcom_compress_for_time_internal(
     /** Success; we can represent this.  This is (hopefully) the normal code
         path. */
     assert(mantissa >= -mantissa_limit && mantissa < mantissa_limit);
-    bit_packer_write_code(t, (int8_t)((mantissa << 1) + exponent_delta),
+    bit_packer_write_code(t, (mantissa << 1) + exponent_delta,
                           &(state->packer));
     state->exponents[t & (EXPONENT_BUFFER_SIZE - 1)] = exponent;
     return exponent;
@@ -2356,9 +2358,9 @@ void lilcom_compress_for_time_zero(
   { /* Testing. */
     assert(state->encoder.next_sample_to_encode == 0);
     int16_t next_value;
-    int8_t code;
+    int code;
     int ret = backtracking_encoder_encode(residual_0, predicted_0, &next_value,
-                                            &code, &(state->encoder));
+                                          &code, &(state->encoder));
     assert(ret == 0);
     assert(next_value == state->decompressed_signal[MAX_LPC_ORDER + 0]);
     assert(state->encoder.next_sample_to_encode == 1);
@@ -2374,7 +2376,7 @@ void lilcom_compress_for_time_zero(
   assert(exponent_bit >= 0 && exponent_bit <= 1 &&
          mantissa_0 >= -state->mantissa_limit && mantissa_0 < state->mantissa_limit);
 
-  bit_packer_write_code(0,(int8_t)((mantissa_0 << 1) + exponent_bit),
+  bit_packer_write_code(0, ((mantissa_0 << 1) + exponent_bit),
                         &(state->packer));
 
   for (int i = 0; i < MAX_LPC_ORDER; i++) {
@@ -2574,7 +2576,7 @@ int lilcom_compress(
     int lpc_order, int bits_per_sample, int conversion_exponent) {
   if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
       lpc_order < 0 || lpc_order > MAX_LPC_ORDER ||
-      bits_per_sample < 4 || bits_per_sample > 8 ||
+      bits_per_sample < LILCOM_MIN_BPS || bits_per_sample > LILCOM_MAX_BPS ||
       conversion_exponent < -127 || conversion_exponent > 128 ||
       num_bytes != lilcom_get_num_bytes(num_samples, bits_per_sample))
     return 1;  /* error */
@@ -2614,7 +2616,7 @@ int lilcom_compress(
       /** cast to int32 when computing the residual because a difference of int16's may
           not fit in int16. */
       int32_t residual = ((int32_t)observed_value) - ((int32_t)predicted_value);
-      int8_t code;
+      int code;
       int16_t *next_value =
           &(state.decompressed_signal[MAX_LPC_ORDER+(t&(SIGNAL_BUFFER_SIZE-1))]);
       if (backtracking_encoder_encode(residual,
@@ -2798,8 +2800,9 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
       num_samples != lilcom_get_num_samples(input, num_bytes, input_stride)) {
 #ifndef NDEBUG
     fprintf(stderr,
-            "lilcom: Warning: bad header, num-bytes=%d, num-samples=%d, input-stride=%d\n",
-            (int)num_bytes, (int)num_samples, (int)input_stride);
+            "lilcom: Warning: bad header, num-bytes=%d, num-samples=%d, input-stride=%d, plausible=%d\n",
+            (int)num_bytes, (int)num_samples, (int)input_stride,
+            (int)lilcom_header_plausible(input, input_stride));
 #endif
     return 1;  /** Error */
   }
@@ -3358,9 +3361,9 @@ float lilcom_compute_snr_float(ssize_t num_samples,
   }
   /** return the answer in decibels.  */
   if (signal_sumsq == 0.0 && noise_sumsq == 0.0)
-    return 10.0 * log10(0.0); /* log(0) = -inf. */
+    return -10.0 * log10(0.0); /* log(0) = -inf. */
   else
-    return 10.0 * log10((noise_sumsq * 1.0) / signal_sumsq);
+    return -10.0 * log10((noise_sumsq * 1.0) / signal_sumsq);
 }
 
 void lilcom_test_extract_mantissa() {
@@ -3387,16 +3390,17 @@ void lilcom_test_compress_sine() {
     buffer[i] = 700 * sin(i * 0.01);
 
   /* TODO: use LILCOM_MAX_BPS */
-  for (int bits_per_sample = 8; bits_per_sample >= LILCOM_MIN_BPS; bits_per_sample--) {
+  for (int bits_per_sample = 9; bits_per_sample >= LILCOM_MIN_BPS; bits_per_sample--) {
     printf("Bits per sample = %d\n", bits_per_sample);
     int exponent = -15, exponent2;
     ssize_t num_bytes = lilcom_get_num_bytes(1000, bits_per_sample);
     int8_t *compressed = (int8_t*)malloc(num_bytes);
-    lilcom_compress(buffer, 1000, 1,
-                    compressed, num_bytes, 1,
-                    lpc_order, bits_per_sample, exponent);
+    int ret = lilcom_compress(buffer, 1000, 1,
+                              compressed, num_bytes, 1,
+                              lpc_order, bits_per_sample, exponent);
+    assert(!ret);
     int sum = 0;
-    for (int32_t i = 0; i < 1004; i++)
+    for (int32_t i = 0; i < num_bytes; i++)
       sum += compressed[i];
     printf("hash = %d\n", sum);
     int16_t decompressed[1000];
@@ -3665,6 +3669,7 @@ void lilcom_test_get_max_abs_float_value() {
 
   assert(max_abs_float_value(array, 100, 1) == lilcom_abs(array[99]));
 }
+
 
 
 int main() {
