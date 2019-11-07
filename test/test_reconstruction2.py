@@ -135,7 +135,8 @@ def toeplitz_solve(autocorr, y):
 
 
 def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
-               num_iters=2, order=None):
+               num_iters=2, order=None, dtype=np.float64,
+               proportional_smoothing=1.0e-10):
     # Note: this modifies cur_coeffs in place.
     #  Uses conjugate gradient method to minimize the function
     #  cur_coeffs^T quad_mat cur_coeffs, subject to the constraint
@@ -149,15 +150,15 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
         order = quad_mat.shape[0] - 1
     if order != quad_mat.shape[0] - 1:
         conj_optim(cur_coeffs[0:order+1], quad_mat[0:order+1, 0:order+1],
-                   autocorr_stats[0:order+1], num_iters)
+                   autocorr_stats[0:order+1], num_iters, dtype=dtype)
         return
 
-    smoothing = 1.0e-08
-    if smoothing != 0.0:
+    abs_smoothing = 1.0e-10
+    if proportional_smoothing != 0.0 or abs_smoothing != 0.0:
         dim = quad_mat.shape[0]
-        quad_mat = quad_mat + np.eye(dim, dtype=np.float64) * (smoothing * (1.0e-05 + quad_mat.trace()))
+        quad_mat = quad_mat + np.eye(dim, dtype=dtype) * (abs_smoothing + proportional_smoothing * quad_mat.trace())
         autocorr_stats = autocorr_stats.copy()
-        autocorr_stats[0] += smoothing * (autocorr_stats[0] + 1.0e-05)
+        autocorr_stats[0] += abs_smoothing + proportional_smoothing * autocorr_stats[0]
 
 
     b = quad_mat[0,1:]
@@ -312,7 +313,7 @@ def add_reflection(array, t_end, order, autocorr_stats, sign = 1):
 
 
 
-def init_stats(array, order, block_size, optimize = False):
+def init_stats(array, order, block_size, optimize = False, dtype=np.float64):
     """
     Initializes the stats (quad_mat, autocorr_stats)
 
@@ -321,13 +322,13 @@ def init_stats(array, order, block_size, optimize = False):
     included as the 'x' but only as history.
     """
     orderp1 = order + 1
-    quad_mat = np.zeros((orderp1, orderp1), dtype=np.float64)
-    autocorr_stats = np.zeros(orderp1, dtype=np.float64)
-    assert block_size > order * 2
+    quad_mat = np.zeros((orderp1, orderp1), dtype=dtype)
+    autocorr_stats = np.zeros(orderp1, dtype=dtype)
+    assert block_size > order
 
     # Get autocorrelation stats for the rest of the block except for
     # t < order.  These include products with t < order.
-    autocorr = np.zeros(orderp1, dtype=np.float64)
+    autocorr = np.zeros(orderp1, dtype=dtype)
     for t in range(order, block_size):
         for j in range(orderp1):
             autocorr_stats[j] += array[t] * array[t-j]
@@ -376,7 +377,8 @@ def init_stats(array, order, block_size, optimize = False):
 def update_stats(array, t_start,
                  t_end, quad_mat,
                  autocorr_stats,
-                 prev_scale):
+                 prev_scale, dtype=np.float32,
+                 proportional_smoothing=1.0e-10):
     """
     Update autocorrelation and quadratic stats.. scale down previous stats by 0 < prev_scale <= 1.
     The aim is for quad_mat to contain the following, where N == order:
@@ -403,8 +405,8 @@ def update_stats(array, t_start,
 
     quad_mat *= prev_scale
 
-    autocorr_within_block = np.zeros(orderp1, dtype=np.float64)
-    autocorr_cross_block = np.zeros(orderp1, dtype=np.float64)
+    autocorr_within_block = np.zeros(orderp1, dtype=dtype)
+    autocorr_cross_block = np.zeros(orderp1, dtype=dtype)
 
     # Get the autocorrelation stats for which the later frame in the product is
     # within the current block.  This includes some cross-block terms, which
@@ -469,19 +471,21 @@ def update_stats(array, t_start,
     # out when processing it.  (If this is the first block, we'll have
     # t_start == order and those will be fresh terms that we do want.)
 
-    optimize = True
+    optimize = False
     add_prev_block_terms(array, t_start, order, quad_mat,
                          optimize)
 
-    if False:  # test code
+    if True:  # test code
         # Copy upper to lower triangle of quad_mat
         for i in range(orderp1):
             for j in range(i):
                 quad_mat[i,j] = quad_mat[j,i]
 
         w, v = np.linalg.eig(quad_mat)
-        print("tstart,end={},{}; After adding before-the-beginning terms, smallest eig of quad_mat is: {}".format(
-                t_start, t_end, w.min()))
+        if w.min() < 0 and w.min() < proportional_smoothing * w.sum():
+            print("tstart,end={},{}; After adding before-the-beginning terms, smallest eig of quad_mat is: {}, ratio={}".format(
+                    t_start, t_end, w.min(), w.min() / w.sum()));
+            assert(0)
 
     subtract_block_end_terms(array, t_end, order, quad_mat, optimize)
 
@@ -491,10 +495,14 @@ def update_stats(array, t_start,
             quad_mat[i,j] = quad_mat[j,i]
 
 
-    if False: # test code
+    if True: # test code
         w, v = np.linalg.eig(quad_mat)
-        print("tstart,end={},{}; After subtracting block-end terms, smallest eig of quad_mat is: {}".format(
-                t_start, t_end, w.min()))
+        threshold = 1.0e-05
+        proportional_smoothing = 1.0e-10
+        if w.min() < 0 and w.min() < proportional_smoothing * w.sum():
+            print("tstart,end={},{}; After subtracting after-the-end terms, smallest eig of quad_mat is: {}, ratio={}".format(
+                    t_start, t_end, w.min(), w.min() / w.sum()));
+            assert(0);
 
 
 
@@ -504,33 +512,36 @@ def test_prediction(array):
     assert(len(array.shape) == 1)
     array = array.astype(np.float64)
     order = 25
+    dtype = np.float64
     orderp1 = order + 1
     T = array.shape[0]
-    autocorr = np.zeros(orderp1)
+    autocorr = np.zeros(orderp1, dtype=dtype)
 
-    cur_coeff = np.zeros(orderp1)
+    cur_coeff = np.zeros(orderp1, dtype=dtype)
     cur_coeff[0] = -1
 
 
-    weight = 0.5
+    weight = 0.75
     num_cg_iters = 3
     pred_sumsq_tot = 0.0
     raw_sumsq_tot = 0.0
-    BLOCK = 64
-    assert(BLOCK >= 2 * order)
+    BLOCK = 32
+    proportional_smoothing=1.0e-10
+    assert(BLOCK > order)
 
     for t in range(T):
 
         if (t % BLOCK == 0) and t > 0:
-            optimize = False
+            optimize = True
             # This block updates quad_mat_stats.
             if t == BLOCK:
                 (quad_mat_stats, autocorr_stats) = init_stats(array, order, BLOCK,
-                                                              optimize)
+                                                              optimize, dtype=dtype)
             else:
                 update_stats(array, max(order, t-BLOCK), t,
                              quad_mat_stats, autocorr_stats,
-                             weight)
+                             weight, dtype=dtype,
+                             proportional_smoothing=proportional_smoothing)
 
 
             if True:
@@ -539,9 +550,12 @@ def test_prediction(array):
 
                 conj_optim(cur_coeff, quad_mat,
                            autocorr_stats, num_cg_iters,
-                           None if t > 5*BLOCK else min(t // 16, order))
-                print("Current residual / unpredicted-residual is (after update): {}".format(
-                        np.dot(cur_coeff, np.dot(quad_mat, cur_coeff)) / orig_zero_element))
+                           order=(None if t > 5*BLOCK else min(t // 16, order)),
+                           dtype=dtype,
+                           proportional_smoothing=proportional_smoothing)
+                max_elem = np.max(np.abs(cur_coeff[1:]))
+                print("Current residual / unpredicted-residual is (after update): {}, max coeff is {}".format(
+                        np.dot(cur_coeff, np.dot(quad_mat, cur_coeff)) / orig_zero_element, max_elem))
 
             raw_sumsq = 0.0
             pred_sumsq = 0.0
