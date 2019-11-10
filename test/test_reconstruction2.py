@@ -72,7 +72,7 @@ def toeplitz_solve(autocorr, y):
 
       This function solves the linear system A x = b, returning x.
 
-    We require for the Toeplitz matrix to satisfy the normal conditions for
+    We require for the Toeplitz matrix to satisfy the usual conditions for
     algorithms on Toeplitz matrices, meaning no singular leading minor may be
     singular (i.e. not det(A[0:n,0:n])==0 for any n).  This will naturally be
     satisfied if A is the autocorrelation of a finite nonzero sequence (I
@@ -127,7 +127,7 @@ def toeplitz_solve(autocorr, y):
 
         # The following is an unnumbered formula below Eq. 2.9
         lambda_n = y[n] - sum([ r[n-j] * x[j] for j in range(n)])
-        x[:n+1] += (lambda_n / epsilon) * b[:n+1]
+        x[:n+1] += (lambda_n / epsilon) * b[:n+1];
 
     return x
 
@@ -153,39 +153,43 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
                    autocorr_stats[0:order+1], num_iters, dtype=dtype)
         return
 
+
+
     abs_smoothing = 1.0e-10
-    if proportional_smoothing != 0.0 or abs_smoothing != 0.0:
+    if False:  #proportional_smoothing != 0.0 or abs_smoothing != 0.0:
         dim = quad_mat.shape[0]
         quad_mat = quad_mat + np.eye(dim, dtype=dtype) * (abs_smoothing + proportional_smoothing * quad_mat.trace())
-        autocorr_stats = autocorr_stats.copy()
+        autocorr_stats = autocorr_stats.copy().astype(dtype)
         autocorr_stats[0] += abs_smoothing + proportional_smoothing * autocorr_stats[0]
 
 
-    b = quad_mat[0,1:]
-    A = quad_mat[1:,1:]
+    b = quad_mat[0,1:].copy().astype(dtype)
+    A = quad_mat[1:,1:].copy().astype(dtype)
+
 
     w, v = np.linalg.eig(A)
     if not w.min() > 0.0:
         w2, v = np.linalg.eig(quad_mat)
-        print("Error: eigs are not positive: A={}, eigs={}, quad-mat-eigs={}".format(A, w, w2))
-        exit(1)
+        print("WARN:eigs are not positive: A={}, eigs={}, quad-mat-eigs={}".format(A, w, w2))
 
     ## we are solving Ax = b.  Trivial solution is: x = A^{-1} b
-    x = cur_coeffs[1:]
+    x = cur_coeffs[1:].copy()
 
     if True:
         exact_x = np.dot(np.linalg.inv(A), b)
         print("Exact objf is {}".format(np.dot(np.dot(A,exact_x),exact_x) - 2.0 * np.dot(exact_x,b)))
         #cur_coeffs[1:]  = exact_x
         #return
-    x = cur_coeffs[1:].astype(np.float64)
-    A = A.astype(np.float64)
-    b = b.astype(np.float64)
 
 
     if True:
         # use preconditioner
-        Minv = get_autocorr_preconditioner(autocorr_stats)
+        M = get_autocorr_matrix(autocorr_stats, dtype=np.float64)
+        Minv = np.linalg.inv(M)
+        abs_smoothing = 1.0e-10
+        dim = quad_mat.shape[0] - 1
+        A += proportional_smoothing * M + abs_smoothing * np.eye(dim, dtype=dtype)
+
         w, v = np.linalg.eig(Minv)
         if not w.min() > 0.0:
             print("Eigs of Minv are {}".format(w))
@@ -215,7 +219,6 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
     for iter in range(num_iters):
         Ap = np.dot(A, p)
         alpha = rsold / np.dot(p, Ap)
-        foo = x + alpha * p
         x += alpha * p
         r -= alpha * Ap;
         #z = np.dot(Minv, r)
@@ -231,8 +234,19 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
     cur_coeffs[1:] = x
 
 
+def get_autocorr_matrix(autocorr_stats, dtype = np.float64):
+    """
+    Returns a matrix of dimension N-1 by N-1 if autocorr_stats.shape[0] == N.
+    """
+    order = autocorr_stats.shape[0] - 1
+    A = np.zeros((order, order), dtype=dtype)
+    for i in range(order):
+        for j in range(order):
+            A[i,j] = autocorr_stats[abs(i-j)]
+    return A
 
-def get_autocorr_preconditioner(autocorr_stats):
+
+def get_autocorr_preconditioner(autocorr_stats, dtype = np.float64):
     """
     Returns the preconditioner implied by these autocorrelation stats.
     We're using the inverse of the Toeplitz matrix.
@@ -483,9 +497,8 @@ def update_stats(array, t_start,
 
         w, v = np.linalg.eig(quad_mat)
         if w.min() < 0 and w.min() < proportional_smoothing * w.sum():
-            print("tstart,end={},{}; After adding before-the-beginning terms, smallest eig of quad_mat is: {}, ratio={}".format(
+            print("tstart,end={},{}; WARN: After adding before-the-beginning terms, smallest eig of quad_mat is: {}, ratio={}".format(
                     t_start, t_end, w.min(), w.min() / w.sum()));
-            assert(0)
 
     subtract_block_end_terms(array, t_end, order, quad_mat, optimize)
 
@@ -500,25 +513,23 @@ def update_stats(array, t_start,
         threshold = 1.0e-05
         proportional_smoothing = 1.0e-10
         if w.min() < 0 and w.min() < proportional_smoothing * w.sum():
-            print("tstart,end={},{}; After subtracting after-the-end terms, smallest eig of quad_mat is: {}, ratio={}".format(
+            print("tstart,end={},{}; WARN: after subtracting after-the-end terms, smallest eig of quad_mat is: {}, ratio={}".format(
                     t_start, t_end, w.min(), w.min() / w.sum()));
-            assert(0);
-
 
 
 
 def test_prediction(array):
     # Operate on a linear signal.
     assert(len(array.shape) == 1)
-    array = array.astype(np.float64)
     order = 25
     dtype = np.float64
+    array = array.astype(dtype)
     orderp1 = order + 1
     T = array.shape[0]
     autocorr = np.zeros(orderp1, dtype=dtype)
 
-    cur_coeff = np.zeros(orderp1, dtype=dtype)
-    cur_coeff[0] = -1
+    cur_coeffs = np.zeros(orderp1, dtype=dtype)
+    cur_coeffs[0] = -1
 
 
     weight = 0.75
@@ -526,7 +537,7 @@ def test_prediction(array):
     pred_sumsq_tot = 0.0
     raw_sumsq_tot = 0.0
     BLOCK = 32
-    proportional_smoothing=1.0e-10
+    proportional_smoothing = 1.0e-04
     assert(BLOCK > order)
 
     for t in range(T):
@@ -548,14 +559,14 @@ def test_prediction(array):
                 quad_mat = quad_mat_stats.copy()
                 orig_zero_element = quad_mat[0,0]
 
-                conj_optim(cur_coeff, quad_mat,
+                conj_optim(cur_coeffs, quad_mat,
                            autocorr_stats, num_cg_iters,
                            order=(None if t > 5*BLOCK else min(t // 16, order)),
-                           dtype=dtype,
+                           dtype=np.float32,
                            proportional_smoothing=proportional_smoothing)
-                max_elem = np.max(np.abs(cur_coeff[1:]))
+                max_elem = np.max(np.abs(cur_coeffs[1:]))
                 print("Current residual / unpredicted-residual is (after update): {}, max coeff is {}".format(
-                        np.dot(cur_coeff, np.dot(quad_mat, cur_coeff)) / orig_zero_element, max_elem))
+                        np.dot(cur_coeffs, np.dot(quad_mat, cur_coeffs)) / orig_zero_element, max_elem))
 
             raw_sumsq = 0.0
             pred_sumsq = 0.0
@@ -567,7 +578,7 @@ def test_prediction(array):
 
                 pred = 0.0
                 for i in range(order+1):
-                    pred += cur_coeff[i] * array[t2 - i]
+                    pred += cur_coeffs[i] * array[t2 - i]
                 pred_sumsq += pred * pred
             print("For this block, pred_sumsq / raw_sumsq = {}".format(pred_sumsq / raw_sumsq))
             if t > BLOCK:
