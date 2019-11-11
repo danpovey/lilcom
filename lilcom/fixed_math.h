@@ -1,5 +1,6 @@
 #include <math.h>
 #include <stdint.h>
+#include <assert.h>
 
 
 
@@ -12,6 +13,8 @@
   get the actual value.
  */
 typedef struct {
+  /*  number of elements in `data` */
+  int dim;
   /* exponent defines what the data means as a floating point number
      (multiply data[i] by pow(2.0, exponent) to get the float value). */
   int exponent;
@@ -20,8 +23,6 @@ typedef struct {
      it's OK if size is a little larger than needed). */
   int size;
 
-  /*  number of elements in `data` */
-  int dim;
   /*  The underlying data.  Not owned here from a memory management point of view,
       but the framework does not expect any given memory location to be
       owned by more than one Region64. */
@@ -29,20 +30,22 @@ typedef struct {
 } Region64;
 
 typedef struct {
+  /* `region` is the top-level memory region that owns this data... it's needed
+     when the exponent changes, as it all has to be kept consistent (there is
+     one exponent per memory region.) */
+  Region64 *region;
   /* number of elements in the vector.  Must be > 0 for the Vector64 to be
-   * valid.. */
+     valid.. */
   int dim;
   /* stride.  must be != 0. */
   int stride;
   /* Pointer to the zeroth element. */
   int64_t *data;
-  /* `owner` is the top-level memory region that owns this data... it's needed
-     when the exponent changes, as it all has to be kept consistent (there is
-     one exponent per memory region.) */
-  Region64 *region;
 } Vector64;
 
 typedef struct {
+  /* memory region that owns this data. */
+  Region64 *region;
   /* number of rows in the matrix */
   int num_rows;
   /* number of columns in the matrix */
@@ -54,8 +57,6 @@ typedef struct {
   int col_stride;
   /* pointer to element [0,0]. */
   int64_t *data;
-  /* memory region that owns this data. */
-  Region64 *region;
 } Matrix64;
 
 typedef struct {
@@ -71,7 +72,20 @@ typedef struct {
 /*
   Initializes a Region64.
  */
-void InitRegion64(int64_t *data, int dim, Region64 *region);
+void InitRegion64(int64_t *data, int dim, int exponent, int size_hint, Region64 *region);
+
+extern inline void InitVector64(Region64 *region, int dim, int stride, int64_t *data, Vector64 *vec) {
+  vec->region = region;
+  vec->dim = dim;
+  vec->stride = stride;
+  vec->data = data;
+  assert(dim > 0 && dim <= region->dim && stride != 0 &&
+         data >= region->data && data < region->data + region->dim &&
+         data + ((dim-1)*stride) >= region->data &&
+         data + ((dim-1)*stride) < region->data + region->dim);
+}
+
+
 
 /* Shift the data right by this many bits and adjust the exponent so the
    number it represents is unchanged.  */
@@ -91,18 +105,18 @@ void ShiftScalar64Left(int left_shift, Scalar64 *scalar);
 
 /* Copies data from `src` to `dest`; they must have the same dimension
    and be non-overlapping. */
-void Vec64Copy(const Vector64 *src, Vector64 *dest);
+void Vector64Copy(const Vector64 *src, Vector64 *dest);
 
 /* Updates the `size` field of `vec` to be accurate. */
-void FixVec64Size(const Vector64 *vec);
+void FixVector64Size(const Vector64 *vec);
 
 /* like BLAS saxpy.  y := a*x + y.
    x and y must be from different regions.
  */
-void AddVec64(const Vector64 *x, Scalar64 *a, Vector64 *y);
+void AddVector64(const Vector64 *x, Scalar64 *a, Vector64 *y);
 
 /* does y[i] += a for each element of y. */
-void Vec64AddScalar(const Scalar64 *a, Vector64 *y);
+void Vector64AddScalar(const Scalar64 *a, Vector64 *y);
 
 /* y := a * b.  It is OK if some of the pointer args are the same.  */
 void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
@@ -125,8 +139,9 @@ inline void NegateScalar64(Scalar64 *a) { a->data *= -1; }
 /* Sets this scalar to an integer. */
 void SetScalar64ToInt(int64_t i, Scalar64 *a);
 
-/* Computes dot product between two Vector64's */
-void Dot64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
+/* Computes dot product between two Vector64's:
+   y := a . b */
+void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
 
 /* Copies the i'th element of `a` to y:   y = a[i] */
 void CopyToScalar64(const Vector64 *a, int i, Scalar64 *y);
