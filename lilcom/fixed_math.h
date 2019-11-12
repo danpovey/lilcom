@@ -50,10 +50,11 @@ typedef struct {
   int num_rows;
   /* number of columns in the matrix */
   int num_cols;
-  /* row stride, i.e. distance in elements between row i and i+1. */
+  /* Distance in elements between rows */
   int row_stride;
   /* column stride, i.e. distance in elements between columns i and i+1.  Would
-   * normally be 1. */
+   * normally be 1. WARNING: current code will crash if this is not 1,
+   * since we haven't needed it to be != 1 yet. */
   int col_stride;
   /* pointer to element [0,0]. */
   int64_t *data;
@@ -86,6 +87,27 @@ extern inline void InitVector64(Region64 *region, int dim, int stride, int64_t *
 }
 
 
+extern inline void InitMatrix64(Region64 *region,
+                                int num_rows, int row_stride,
+                                int num_cols, int col_stride,
+                                int64_t *data, Matrix64 *mat) {
+  mat->region = region;
+  mat->num_rows = num_rows;
+  mat->row_stride = row_stride;
+  mat->num_cols = num_cols;
+  mat->col_stride = col_stride;
+  // WARNING: col-stride must be 1 currently.
+  assert(col_stride == 1);
+  mat->data = data;
+  // TODO: the following assertions would need to change
+  // if we choose to allow negative row-stride and col-stride != 1.
+  int max_offset = (num_rows-1) * row_stride + (num_cols-1) * col_stride;
+  assert(num_rows > 0 && num_cols > 0 && col_stride == 1 &&
+         row_stride >= num_cols * col_stride &&
+         data >= region->data && data + max_offset <  region->data + region->dim);
+}
+
+
 
 /* Shift the data right by this many bits and adjust the exponent so the
    number it represents is unchanged.  */
@@ -111,9 +133,11 @@ void Vector64Copy(const Vector64 *src, Vector64 *dest);
 void FixVector64Size(const Vector64 *vec);
 
 /* like BLAS saxpy.  y := a*x + y.
-   x and y must be from different regions.
- */
-void AddVector64(const Vector64 *x, Scalar64 *a, Vector64 *y);
+   x and y must be from different regions.   */
+void AddVector64(const Vector64 *x, const Scalar64 *a, Vector64 *y);
+
+/* Does y := a * x.   x and y must be from different regions. */
+void ScalarTimesVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y);
 
 /* does y[i] += a for each element of y. */
 void Vector64AddScalar(const Scalar64 *a, Vector64 *y);
@@ -125,8 +149,10 @@ void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 void AddScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 
 
-/* Sets this vector to zero. */
-void SetZero(Vector64 *a);
+/* Sets the elements of this vector to zero.  Does touch the `size`
+   or exponent.  Currently intended for use inside implementation functions.
+ */
+void ZeroVector64(Vector64 *a);
 
 /* Sets the size for this region to the appropriate value.
    (See docs for the `size` member).  63 <= size_hint <= 0
@@ -137,11 +163,23 @@ void SetRegion64Size(int size_hint, Region64 *r);
 inline void NegateScalar64(Scalar64 *a) { a->data *= -1; }
 
 /* Sets this scalar to an integer. */
-void SetScalar64ToInt(int64_t i, Scalar64 *a);
+void InitScalar64FromInt(int64_t i, Scalar64 *a);
 
 /* Computes dot product between two Vector64's:
    y := a . b */
 void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
+
+/* Computes matrix-vector product:
+     y := M x.   Note: y must not be in the same region as x or m.
+   CAUTION: for implementation reasons (to avoid having to reason
+   about exponents in the already-existing y, the current code
+   requires that `y` occupy the entirety of the region it is in.
+   (This ensures there will be nothing else whose exponent would
+   need to be adjusted.)
+*/
+void MatTimesVector4(const Matrix64 *m, const Vector64 *x,
+                     const Vector64 *y);
+
 
 /* Copies the i'th element of `a` to y:   y = a[i] */
 void CopyToScalar64(const Vector64 *a, int i, Scalar64 *y);
@@ -153,11 +191,22 @@ void CopyFromScalar64(const Scalar64 *a, int i, Vector64 *y);
 void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 
 /* does: y := a.  Just copies all the elements of the struct. */
-void CopyScalar64(const Scalar64 *a, Scalar64 *y);
+extern inline void CopyScalar64(const Scalar64 *a, Scalar64 *y) {
+  y->size = a->size;
+  y->exponent = a->exponent;
+  y->data = a->data;
+}
 
-/* Adds two 64-bit scalars. Must all be different pointers.
-   does: y := a + b. */
+/* Computes the inverse of a 64-bit scalar: does b := 1.0 / a.  The pointers do
+   not have to be different.  Will die with assertion or numerical exception if
+   a == 0. */
+void InvertScalar64(const Scalar64 *a, Scalar64 *b);
+
+/* Adds two 64-bit scalars.
+   does: y := a + b. The pointers do not have to be different. */
 void AddScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
+
+
 
 /* Subtracts two 64-bit scalars. Must all be different pointers.
    does: y := a - b. */
@@ -169,8 +218,8 @@ void DivideScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 /* Does: y := 1.0 / a */
 void InvertScalar64(const Scalar64 *a,  Scalar64 *y);
 
-/* Convert to float- needed only for testing. */
-float Scalar64ToFloat(const Scalar64 *a);
+/* Convert to double- needed only for testing. */
+double Scalar64ToDouble(const Scalar64 *a);
 
 /* Returns nonzero if a and b are similar within a tolerance.  Intended mostly
    for checking code.*/
