@@ -47,6 +47,34 @@ void PrintRegion64(Region64 *region) {
     fprintf(stderr, "%lld ", region->data[i]);
   fprintf(stderr, "] }\n");
 }
+
+void PrintVector64(Vector64 *vec) {
+  fprintf(stderr, "{ Vector64, dim = %d, stride = %d, data = [ ",
+          vec->dim, vec->stride);
+  float factor = pow(2.0, vec->region->exponent);
+  for (int i = 0; i < vec->dim; i++) {
+    float f = vec->data[i * vec->stride] * factor;
+    fprintf(stderr, "%f ", f);
+  }
+  fprintf(stderr, "] }\n");
+}
+
+void PrintMatrix64(Matrix64 *mat) {
+  fprintf(stderr, "{ Matrix64, num-rows = %d, row-stride = %d, num-cols = %d, col-stride = %d,\n"
+          "  data = [ ", mat->num_rows, mat->row_stride, mat->num_cols, mat->col_stride);
+  float factor = pow(2.0, mat->region->exponent);
+  for (int i = 0; i < mat->num_rows; i++) {
+    const int64_t *row_data = mat->data + i * mat->row_stride;
+    for (int j = 0; j < mat->num_cols; j++) {
+      float f = row_data[i * mat->col_stride] * factor;
+      fprintf(stderr, "%f ", f);
+    }
+    if (i + 1 < mat->num_rows)
+      fprintf(stderr, "\n    ");
+  }
+  fprintf(stderr, "] }\n");
+}
+
 #endif
 
 
@@ -988,6 +1016,7 @@ void SetRegion64Size(int size_hint, Region64 *r) {
 
 
 #ifdef FIXED_MATH_TEST
+
 void TestFindSize() {
   uint64_t n = 1;
   assert(FindSize(0, 0) == 0);
@@ -1189,6 +1218,79 @@ void TestAddVector() {
 }
 
 
+void TestSetMatrixVector64() {
+  for (int source = 0; source < 1000; source++ ) {
+    /* source is a source of randomness. */
+    int shift1 = source % 29,
+        shift2 = source % 17,
+        shift3 = source % 11;
+    int64_t data1[100];
+    for (int i = 0; i < 100; i++)
+      data1[i] = i;
+    int64_t data2[100];
+    for (int i = 0; i < 100; i++) {
+      data2[i] = i + 4;
+    }
+    int64_t data3[10];
+    for (int i = 0; i < 10; i++) {
+      data3[i] = -1000000000;
+    }
+
+    int64_t data3_ref[10];
+    for (int i = 0; i < 10; i++) {
+      data3_ref[i] = 0;
+      for (int j = 0; j < 10; j++) {
+        data3_ref[i] += data1[i * 10 + j] * data2[j];
+      }
+    }
+
+
+    Region64 region1;
+    InitRegion64(data1, 100, 0, 5, &region1);
+    if (region1.size + shift1 >= 64)
+      continue;
+    ShiftRegion64Left(shift1, &region1);
+
+    Region64 region2;
+    InitRegion64(data2, 100, 0, 5, &region2);
+    if (region2.size + shift2 >= 64)
+      continue;
+    ShiftRegion64Left(shift2, &region2);
+
+    Region64 region3;
+    InitRegion64(data3, 10, 0, 5, &region3);
+
+
+    Matrix64 mat;
+    InitMatrix64(&region1, 10, 10, 10, 1, region1.data, &mat);
+
+    Vector64 vec1;
+    InitVector64(&region2, 10, 1, region2.data, &vec1);
+
+    Vector64 vec2;
+    InitVector64(&region3, 10, 1, region3.data, &vec2);
+
+
+    /* do: vec2 := mat * vec1.  */
+    SetMatrixVector64(&mat, &vec1, &vec2);
+
+    fprintf(stderr, "Product is below\n");
+    PrintVector64(&vec2);
+
+    fprintf(stderr, "Ref-sum = [ ");
+    for (int i = 0; i < 10; i++)
+      fprintf(stderr, "%f ", (float)data3_ref[i]);
+    fprintf(stderr, "]\n");
+
+    /*
+      fprintf(stderr, "shift{1,2,3} = %d,%d->%d,%d, f = %f, ref_sum = %lld, size = %d, scalar exponent = %d\n",
+            shift1, shift2, -region2.exponent, shift3, f, ref_sum, scalar.size, scalar.exponent);
+            assert(f == ref_sum); */
+  }
+}
+
+
+
 void TestInvertScalar() {
   for (int i = -9; i < 100; i += 2) {
     for (int shift = 0; shift < 64; shift++) {
@@ -1317,6 +1419,7 @@ int main() {
   TestDotVector();
   TestAddVector();
   TestInvertScalar();
+  TestSetMatrixVector64();
 }
 #endif /* FIXED_MATH_TEST */
 

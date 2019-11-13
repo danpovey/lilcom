@@ -72,6 +72,15 @@ typedef struct {
 
 /*
   Initializes a Region64.
+     @param [in]  data    data underlying the region; should be an array of at least `dim` elements
+     @param [in]  dim     number of elements in the region
+     @param [in]  exponent   exponent with which to interpret whatever data is currently
+                          in the region (i.e. it will be interpreted as that integer
+                          number + 2^exponent).
+     @param [in]  size_hint   caller's approximation to the `size` of the region,
+                          meaning the smallest power of 2 >= 0that is greater than all
+                          the absolute values of elements of the region.
+     @param [out] region   region  the region object to be created
  */
 void InitRegion64(int64_t *data, int dim, int exponent, int size_hint, Region64 *region);
 
