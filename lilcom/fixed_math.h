@@ -176,8 +176,8 @@ void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
 /* Computes matrix-vector product:
      y := M x.   Note: y must not be in the same region as x or m.
 */
-void MatTimesVector64(const Matrix64 *m, const Vector64 *x,
-                     const Vector64 *y);
+void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
+                       const Vector64 *y);
 
 
 /* Copies the i'th element of `a` to y:   y = a[i] */

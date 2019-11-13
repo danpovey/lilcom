@@ -279,6 +279,12 @@ inline static void GetShiftsForAdd(int in_size, int in_exponent,
      else  # in this case b_shift, post_shift will be zero.
          out += ((a << -a_shift) * b)
 
+   [Note: you could change that if-condition to
+    if (a_shift > 0 || b_shift > 0 || post_shift > 0)
+    and it would be a bit more efficient, at least for large input,
+    by avoiding unnecessary shifts.]
+
+
 
   The job of this function is to compute out_shift, a_shift, b_shift, post_shift.
 
@@ -646,12 +652,12 @@ void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
   fprintf(stderr, "a_shift = %d, x_shift = %d,  post_shift = %d, final_size_guess = %d\n",
           a_shift, x_shift, post_shift, final_size_guess);
 
-  if (a_shift >= 0) {
+  int x_stride = x->stride, y_stride = y->stride;
+  int64_t *x_data = x->data, *y_data = y->data;
+  uint64_t tot_bits = 0;  /* `tot_bits` is a bit pattern keeping track of max size. */
+  int i;
+  if (a_shift > 0 || y_shift > 0 || post_shift > 0) {
     int64_t a_shifted = a->data >> a_shift;
-    int dim = x->dim, x_stride = x->stride, y_stride = y->stride;
-    int64_t *x_data = x->data, *y_data = y->data;
-    uint64_t tot_bits = 0;  /* `tot_bits` is a bit pattern keeping track of max size. */
-    int i;
     for (i = 0; i + 4 <= dim; i += 4) {
       int64_t prod1 = (a_shifted * (x_data[i * x_stride] >> x_shift)) >> post_shift,
           prod2 = (a_shifted * (x_data[(i+1) * x_stride] >> x_shift)) >> post_shift,
@@ -668,16 +674,9 @@ void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
       y_data[i * y_stride] += prod;
       tot_bits |= FM_ABS(prod);
     }
-    int size = FindSize(final_size_guess, tot_bits);
-    if (size > y->region->size)
-      y->region->size = size;
   } else {
     /* We can implement the shifting by shifting just a. */
     int64_t a_shifted = a->data << -a_shift;
-    uint64_t tot_bits = 0;  /* `tot_bits` is a bit pattern keeping track of max size. */
-    int dim = x->dim, x_stride = x->stride, y_stride = y->stride;
-    int64_t *x_data = x->data, *y_data = y->data;
-    int i;
     for (i = 0; i + 4 <= dim; i += 4) {
       int64_t prod1 = a_shifted * x_data[i * x_stride],
           prod2 = a_shifted * x_data[(i+1) * x_stride],
@@ -694,10 +693,11 @@ void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
       y_data[i * y_stride] += prod;
       tot_bits |= prod;
     }
-    int size = FindSize(final_size_guess, tot_bits);
-    if (size > y->region->size)
-      y->region->size = size;
   }
+  int size = FindSize(final_size_guess, tot_bits);
+  if (size > y->region->size)
+    y->region->size = size;
+
 }
 
 
@@ -728,12 +728,12 @@ void SetScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
                                  &y_shift, &final_size_guess);
   ShiftRegion64(y_shift, y->region);
 
-  if (a_shift >= 0) {
+  int x_stride = x->stride, y_stride = y->stride;
+  int64_t *x_data = x->data, *y_data = y->data;
+  uint64_t tot_bits = 0;  /* `tot_bits` is a bit pattern keeping track of max size. */
+  int i;
+  if (a_shift > 0 | x_shift > 0 || post_shift > 0) {
     int64_t a_shifted = a->data >> a_shift;
-    int x_stride = x->stride, y_stride = y->stride;
-    int64_t *x_data = x->data, *y_data = y->data;
-    uint64_t tot_bits = 0;  /* `tot_bits` is a bit pattern keeping track of max size. */
-    int i;
     for (i = 0; i + 4 <= dim; i += 4) {
       int64_t prod1 = (a_shifted * (x_data[i * x_stride] >> x_shift)) >> post_shift,
           prod2 = (a_shifted * (x_data[(i+1) * x_stride] >> x_shift)) >> post_shift,
@@ -750,12 +750,8 @@ void SetScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
       y_data[i * y_stride] = prod;
       tot_bits |= FM_ABS(prod);
     }
-    int size = FindSize(final_size_guess, tot_bits);
-    if (size > y->region->size)
-      y->region->size = size;
   } else {
     assert(x_shift == 0 && post_shift == 0);
-
     /* We can implement the shifting by shifting just a. */
     int64_t a_shifted = a->data << -a_shift;
     uint64_t tot_bits = 0;  /* `tot_bits` is a bit pattern keeping track of max size. */
@@ -778,10 +774,10 @@ void SetScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
       y_data[i * y_stride] += prod;
       tot_bits |= prod;
     }
-    int size = FindSize(final_size_guess, tot_bits);
-    if (size > y->region->size)
-      y->region->size = size;
   }
+  int size = FindSize(final_size_guess, tot_bits);
+  if (size > y->region->size)
+    y->region->size = size;
 }
 
 
@@ -884,8 +880,8 @@ void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y) {
 
    Note, this code closely mirrors the code of DotVector64.
 */
-void MatTimesVector64(const Matrix64 *m, const Vector64 *x,
-                      const Vector64 *y) {
+void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
+                       const Vector64 *y) {
   assert(y->region != x->region && y->region != m->region &&
          x->dim == m->num_cols && y->dim == m->num_rows);
   /*int num_rows = m->num_rows,*/
@@ -894,64 +890,76 @@ void MatTimesVector64(const Matrix64 *m, const Vector64 *x,
    * could be greater than the elements of the sum. */
   int col_size = (num_cols < 32? fm_num_bits[num_cols] : FindSize(6, num_cols));
 
+  if (y->dim == y->region->dim)
+    y->region->size = 0;  /* So it knows it doesn't really have to shift.
+                             y's data will be overwritten.*/
 
-  int m_size = m->region->size, x_size = x->region->size,
-      m_shift, x_shift, post_shift,
-      final_size_guess;
-  GetShiftsFor2ArgMultiply(m_size, x_size, col_size,
-                           &m_shift, &x_shift, &post_shift,
-                           &final_size_guess);
+  int m_size = m->region->size, m_exponent = m->region->exponent,
+      x_size = x->region->size, x_exponent = x->region->exponent,
+      y_size = y->region->size, y_exponent = y->region->exponent,
+      m_shift, x_shift, post_shift, y_shift, final_size_guess;
+  /* Note: it's "AndAdd" even though we don't add to y, because y may
+     in general contain other data in its region. */
+  GetShiftsFor2ArgMultiplyAndAdd(m_size, m_exponent, x_size, x_exponent,
+                                 y_size, y_exponent, col_size,
+                                 &m_shift, &x_shift, &post_shift,
+                                 &y_shift, &final_size_guess);
+  ShiftRegion64(y_shift, y->region);
 
-  /*
-  int product_max_size = a_size + b_size - (a_shift + b_shift + post_shift) + dim_size,
-      product_exponent = a->region->exponent + b->region->exponent +
-      (a_shift + b_shift + post_shift);
-  if (y->dim == y->region->dim) {
-    y->region->exponent = product_exponent;
-  } else {
-    int y_right_shift = product_exponent - y->region->exponent;
-    if (y_right_shift > 0) {
-      // we need to shift y's data right or shift our data left.
-      if (y_right_shift <= post_shift &&
-          product_max_size + y_right_shift <= FM_MAX_SIZE) {
-        // We can just decrease our post_shift to resolve this without needing
-        // to shift y's region.
-        post_shift -= y_right_shift;
-        product_exponent -= y_right_shift;
-        product_max_size += y_right_shift;
-      } else {
-        ShiftRegion64Right(y_right_shift, y->region);
+  /* We haven't made much of an effort here to think about optimizations for
+     memory loads . */
+  uint64_t tot_bits = 0;  /* Bit pattern to compute size of output. */
+  int x_dim = x->dim, x_stride = x->stride,
+      y_dim = y->dim, y_stride = y->stride,
+      m_row_stride = m->row_stride,
+      m_col_stride = m->col_stride;
+  const int64_t *mdata = m->data, *xdata = x->data;
+  int64_t *ydata = y->data;
+  if (m_shift > 0 || x_shift > 0 || post_shift > 0) {
+    for (int i = 0; i < y_dim; i++) {
+      int64_t y_i = 0;
+      const int64_t *mrowdata = mdata + (i * m_row_stride);
+      int j;
+      for (j = 0; j + 4 <= x_dim; j += 4) {
+        int64_t prod0 = ((mrowdata[j * m_col_stride] >> m_shift) * (xdata[j * x_stride] >> x_shift)) >> post_shift,
+            prod1 = ((mrowdata[(j+1) * m_col_stride] >> m_shift) * (xdata[(j+1) * x_stride] >> x_shift)) >> post_shift,
+            prod2 = ((mrowdata[(j+2) * m_col_stride] >> m_shift) * (xdata[(j+2) * x_stride] >> x_shift)) >> post_shift,
+            prod3 = ((mrowdata[(j+3) * m_col_stride] >> m_shift) * (xdata[(j+2) * x_stride] >> x_shift)) >> post_shift;
+        y_i += (prod0 + prod1) + (prod2 + prod3);
       }
-    } else if (y_right_shift < 0) {
-      // We need to shift y's data left or shift our data right.
-      if (product_max_size + y_right_shift >= FM_MIN_SIZE) {
-        // We can just increase our post_shift to resolve this without needing
-        // to shift y's region.
-        post_shift -= y_right_shift;
-        product_exponent -= y_right_shift;
-        product_max_size += y_right_shift;
-      } else {
-        if (
-        ShiftRegion64Left(-y_right_shift, y->region);
+      for (; j < x_dim; j++) {
+        int64_t prod = ((mrowdata[j * m_col_stride] >> m_shift) * (xdata[j * x_stride] >> x_shift)) >> post_shift;
+        y_i += prod;
       }
+      tot_bits |= FM_ABS(y_i);
+      ydata[i * y_stride] = y_i;
     }
-
-
-      int diff = y->region->exponent - exponent,
-          max_left_shift = FM_TARGET_SIZE
-
-          }
-
-  int i;
-  //HERE
-
-
-       y_size_guess = a_size + b_size - (a_shift + b_shift + post_shift) + dim_size/2
-
-  Vector64 *
-           */
-
-
+  } else {
+    for (int i = 0; i < y_dim; i++) {
+      int64_t y_i = 0;
+      const int64_t *mrowdata = mdata + (i * m_row_stride);
+      int j;
+      for (j = 0; j + 4 <= x_dim; j += 4) {
+        int64_t prod0 = mrowdata[j * m_col_stride]  * xdata[j * x_stride],
+            prod1 = mrowdata[(j+1) * m_col_stride] * xdata[(j+1) * x_stride],
+            prod2 = mrowdata[(j+2) * m_col_stride] * xdata[(j+2) * x_stride],
+            prod3 = mrowdata[(j+3) * m_col_stride] * xdata[(j+2) * x_stride];
+        y_i += (prod0 + prod1) + (prod2 + prod3);
+      }
+      for (; j < x_dim; j++) {
+        int64_t prod = mrowdata[j * m_col_stride] * xdata[j * x_stride];
+        y_i += prod;
+      }
+      /* NOTE: the m_shift is supposed to be applied to m, but we can apply it anywhere,
+         and it's more efficient to apply it after the summation. */
+      y_i = y_i << -m_shift;
+      tot_bits |= FM_ABS(y_i);
+      ydata[i * y_stride] = y_i;
+    }
+  }
+  int size = FindSize(final_size_guess, tot_bits);
+  if (size > y->region->size)
+    y->region->size = size;
 }
 
 
