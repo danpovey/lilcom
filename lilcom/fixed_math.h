@@ -127,20 +127,24 @@ void ShiftScalar64Left(int left_shift, Scalar64 *scalar);
 
 /* Copies data from `src` to `dest`; they must have the same dimension
    and be non-overlapping. */
-void Vector64Copy(const Vector64 *src, Vector64 *dest);
+void CopyVector64(const Vector64 *src, Vector64 *dest);
 
 /* Updates the `size` field of `vec` to be accurate. */
 void FixVector64Size(const Vector64 *vec);
 
 /* like BLAS saxpy.  y := a*x + y.
    x and y must be from different regions.   */
-void AddVector64(const Vector64 *x, const Scalar64 *a, Vector64 *y);
+void AddVectorScalar64(const Vector64 *x, const Scalar64 *a, Vector64 *y);
 
 /* Does y := a * x.   x and y must be from different regions. */
-void ScalarTimesVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y);
+void SetScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y);
 
 /* does y[i] += a for each element of y. */
 void Vector64AddScalar(const Scalar64 *a, Vector64 *y);
+
+/* does y[i] := a for each element of y. */
+void Vector64SetScalar(const Scalar64 *a, Vector64 *y);
+
 
 /* y := a * b.  It is OK if some of the pointer args are the same.  */
 void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
