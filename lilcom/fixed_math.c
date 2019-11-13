@@ -22,9 +22,9 @@
                            going up to if doing so would save operations such
                            as shifting a region. */
 
-#define FM_MIN_SIZE 40  /* The minimum `size` we allow if right shifting... this
+#define FM_MIN_SIZE 38  /* The minimum `size` we allow if right shifting... this
                            is equivalent to the number of bits of precision we
-                           keep.  This should basically be >= 32, because when we multiply
+                           keep.  This should be >= 32, because when we multiply
                            in the typical case we'll only keep 32 bits of precision. */
 
 
@@ -214,13 +214,33 @@ inline static void GetShiftsForAdd(int in_size, int in_exponent,
      shift the input (the + 1 accounts for it getting larger when we add the two
      things. */
   int sum_max_size = FM_MAX(out_size, in_size + dim_size - possible_in_shift) + 1,
+      sum_min_size = FM_MAX(out_size, in_size +  possible_in_shift),
       sum_guess_size = FM_MAX(out_size, in_size + (dim_size/2) - possible_in_shift);
 
-  if (sum_max_size < 64 && (sum_max_size >= FM_MIN_SIZE || possible_in_shift < 0)) {
-      /* If we can just shift the input, not shift the output, and not risk
+  if (sum_max_size < 64 && out_size != 0 &&
+      (possible_in_shift <= 0 || sum_min_size >= FM_MIN_SIZE)) {
+    /* If we can just shift the input, not shift the output, and not risk
        overflow or getting excessively low precision, then we do it.  (Shifting
-       `out` might require shifting the entire region).
-     */
+       `out` might require shifting the entire region).  Reasons for the conditions:
+
+       `sum_max_size < 64` because if it's 64 it's not safe to do this.
+
+       `out_size != 0` because if out_size = 0 there is no reason going out of
+       our way to avoid shifting `out`.  (The ShiftRegion operation would do no work).
+
+       `(possible_in_shift <= 0 || sum_min_size >= FM_MIN_SIZE)` because...
+
+          well, in the normal case we would never want shift the input right if
+          it made the final magnitude smaller than FM_MIN_SIZE, as that would
+          cause too much roundoff error (hence we might want to require
+          sum_max_size >= FM_MIN_SIZE); but we use sum_min_size (which lacks the
+          +dim_size term) instead because we are worried about the worst
+          reasonable case for roundoff where the terms don't really add up.  (We
+          can't worry about the almost-complete-cancellation case, that would
+          never be workable.)  However, we can ignore this requirement if
+          possible_in_shift <= 0 because in that case we are not losing any
+          precision on the input.
+      */
     *in_shift = possible_in_shift;
     *out_shift = 0;
     *final_size_guess = sum_guess_size;
@@ -338,8 +358,8 @@ inline static void GetShiftsFor2ArgMultiplyAndAdd(
                                 a_shift, b_shift);
 
 
-  int product_size = a_size + b_size - a_shift - b_shift,
-      product_exponent = a_exponent + b_exponent + a_shift + b_shift;
+  int product_size = a_size + b_size - *a_shift - *b_shift,
+      product_exponent = a_exponent + b_exponent + *a_shift + *b_shift;
 
   GetShiftsForAdd(product_size, product_exponent,
                   out_size, out_exponent, dim_size,
@@ -348,98 +368,6 @@ inline static void GetShiftsFor2ArgMultiplyAndAdd(
   if (*post_shift < 0) {
     assert(*a_shift == 0 && *b_shift == 0);
     *a_shift = *post_shift;
-    *post_shift = 0;
-  }
-
-
-  int cur_summation_size = a_size + b_size + dim_size - *a_shift - *b_shift,
-      cur_summation_size_guess = a_size + b_size + (dim_size/2) - *a_shift - *b_shift;
-
-  /* First ask ourselves: could we get away with not shifting the output at all, and
-     making do with either left-shifting a or right-shifting with post_shift?
-     Note: we can only do this if out_size < 63, because otherwise anything added
-     to it could take it over the limit. */
-  int product_rshift = out_exponent -  (a_exponent + b_exponent + *a_shift + *b_shift);
-  if (out_size != 0 && out_size < 63) {
-    /*
-      If the function returns while inside this block, it means we
-      are not shifting the output (*out_shift == 0).
-
-      If out_size == 0, shifting `out` takes no real work, so there is no
-       desire to make the exponent of the product coincide with that of `out`
-       (which is what this block otherwise tries to do).
-
-       If out_size == 63 (which is the max allowed) we can't add anything to it
-       without shifting, as it could take the size up to 64 which is not
-       allowed.
-     */
-    int possible_final_size_guess = FM_MAX(out_size, cur_summation_size_guess - product_rshift);
-    /* Note: if we don't return now, we'll later overwrite *final_size. */
-    *final_size_guess = possible_final_size_guess;
-    if (product_rshift > 0 && cur_summation_size - product_rshift < 63 &&
-        cur_summation_size - product_rshift >= FM_MIN_SIZE) {
-      /* The products will be right-shifted to an acceptable range.  We prefer
-         this situation even if the size of the output is not fully ideal, as it
-         avoids the need to shift the output region. */
-      *post_shift = product_rshift;
-      *out_shift = 0;
-      /* cancel out dim_size/2 because in reality we expect the size to be somewhere
-         in between... */
-      return;
-    } else if (product_rshift < 0 && cur_summation_size - product_rshift < 63) {
-      /* We need to left-shift the products to match the exponent of the
-         output.  Do this by left-shifting a. */
-      assert(*a_shift == 0 && *b_shift == 0);
-      *a_shift = product_rshift;  /* A negative number! */
-      *post_shift = 0;
-      return;
-    } else if (product_rshift == 0) {
-      *post_shift = 0;
-      return;
-    }
-  }
-
-  /* OK, if we reached this point then we know we need to shift `output`.
-     Here 'product_rshift' is the amount by which we would have had to shift our
-     current product to match the output's exponent, or the amount
-     we'd need to left-shift the output.
-
-     'out_size_shifted' is the size of 'out' if we shifted it to
-     match the exponent of the current product.
-
-     'cur_final_size' is an upper bound on the size of the final output.
-     The + 1 is because adding together the output and the summation could
-     increase the size by at most 1.  (There are circumstances where
-     we could avoid adding this, but there's not much point.)
-  */
-  int out_size_shifted = out_size + product_rshift,
-      cur_final_size = FM_MAX(out_size_shifted, cur_summation_size) + 1,
-      cur_final_size_guess = FM_MAX(out_size_shifted, cur_summation_size_guess);
-
-  /* post_rshift is: if the final output with size `cur_final_size` were shifted
-     to have size `FM_TARGET_SIZE`, how much would we have to right-shift the
-     products? */
-  int post_rshift = cur_final_size - FM_TARGET_SIZE,
-      out_rshift = post_rshift - product_rshift;
-  if (post_rshift < 0 && out_rshift < 0) {
-    /* It makes no sense to shift the product left *and* shift the output left,
-       because we gain no precision from that. */
-    if (post_rshift < out_rshift) {
-      post_rshift -= out_rshift;
-      out_rshift = 0;
-    } else {
-      out_rshift -= post_rshift;
-      post_rshift = 0;
-    }
-  }
-
-  *final_size_guess = cur_final_size_guess - post_rshift;
-  *out_shift = post_rshift - product_rshift;
-  if (post_rshift > 0) {
-    *post_shift = post_rshift;
-  } else {
-    assert(*a_shift == 0 && *b_shift == 0);
-    *a_shift = post_rshift;  /* A negative number, will become left shift. */
     *post_shift = 0;
   }
 }
@@ -696,7 +624,7 @@ void AddScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y) {
 }
 
 
-void AddVectorScalar64(const Vector64 *x, const Scalar64 *a, Vector64 *y) {
+void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
   int x_size = x->region->size, x_exponent = x->region->exponent,
       a_size = a->size, a_exponent = a->exponent,
       x_shift, a_shift, post_shift, y_shift, final_size_guess,
@@ -711,9 +639,12 @@ void AddVectorScalar64(const Vector64 *x, const Scalar64 *a, Vector64 *y) {
      and doing so on the scalar is more efficient. */
   GetShiftsFor2ArgMultiplyAndAdd(a_size, a_exponent, x_size, x_exponent,
                                  y_size, y_exponent, dim_size,
-                                 &x_shift, &a_shift, &post_shift,
+                                 &a_shift, &x_shift, &post_shift,
                                  &y_shift, &final_size_guess);
   ShiftRegion64(y_shift, y->region);
+
+  fprintf(stderr, "a_shift = %d, x_shift = %d,  post_shift = %d, final_size_guess = %d\n",
+          a_shift, x_shift, post_shift, final_size_guess);
 
   if (a_shift >= 0) {
     int64_t a_shifted = a->data >> a_shift;
@@ -954,18 +885,15 @@ void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y) {
    Note, this code closely mirrors the code of DotVector64.
 */
 void MatTimesVector64(const Matrix64 *m, const Vector64 *x,
-                     const Vector64 *y) {
+                      const Vector64 *y) {
   assert(y->region != x->region && y->region != m->region &&
          x->dim == m->num_cols && y->dim == m->num_rows);
   /*int num_rows = m->num_rows,*/
   int num_cols = m->num_cols;
-  int col_size;  /* col_size is the number of bits by which the a sum over this
-                  * many terms could be greater than the elements of the sum. */
-  if (num_cols < 32)
-    col_size = fm_num_bits[num_cols];
-  else
-    col_size = FindSize(6, num_cols);
-  assert(CheckSize(num_cols, col_size));
+  /* col_size is the number of bits by which the a sum over this many terms
+   * could be greater than the elements of the sum. */
+  int col_size = (num_cols < 32? fm_num_bits[num_cols] : FindSize(6, num_cols));
+
 
   int m_size = m->region->size, x_size = x->region->size,
       m_shift, x_shift, post_shift,
@@ -1204,8 +1132,9 @@ void TestAddVector() {
     for (int i = 0; i < 100; i++)
       data1[i] = i;
     int64_t data2[100];
-    for (int i = 0; i < 100; i++)
+    for (int i = 0; i < 100; i++) {
       data2[i] = i + 4;
+    }
 
     int64_t ref_sum = 0;
     for (int i = 0; i < 10; i++)
@@ -1239,8 +1168,7 @@ void TestAddVector() {
        Then compute result = vec1 * vec2.
        so result = vec1 * (vec2 + scalar * vec1). */
 
-    AddVectorScalar64(&vec1, &scalar, &vec2);
-
+    AddScalarVector64(&scalar, &vec1, &vec2);
 
     Scalar64 dot_prod;
     DotVector64(&vec1, &vec2, &dot_prod);
@@ -1305,27 +1233,32 @@ void TestGetShiftsForAdd() {
     int in_size = i % 64,
         out_size = (i * 7) % 64,
         in_exponent = -100 + i % 199,
-        out_exponent = -50 + i % 93;
+        out_exponent = -50 + i % 93,
+        dim_size = (i * 11) % 32;
 
     int in_shift = -1000, out_shift = -1000,
         final_size_guess = -1000;
     GetShiftsForAdd(in_size, in_exponent,
                     out_size, out_exponent,
+                    dim_size,
                     &in_shift, &out_shift,
                     &final_size_guess);
     assert(in_exponent + in_shift == out_exponent + out_shift);
-    int max_size_out = FM_MAX(in_size - in_shift, out_size - out_shift) + 1;
+    int max_size_out = FM_MAX(in_size + dim_size - in_shift, out_size - out_shift) + 1,
+        size_guess = FM_MAX(in_size + (dim_size/2) - in_shift, out_size - out_shift),
+        min_size_out =  FM_MAX(in_size - in_shift, out_size - out_shift);
     assert(max_size_out < 64);
-    assert(final_size_guess == max_size_out - 1);
+    assert(final_size_guess == size_guess);
     assert( !(out_shift < 0 && in_shift < 0));  /* doesn't make sense to shift
                                                  * both left. */
     if (out_shift > 0 && in_shift > 0) {
       assert(final_size_guess <= FM_TARGET_SIZE);
     }
-    if (out_shift > 0 || in_shift > 0) {
-      assert(final_size_guess >= FM_MIN_SIZE);
-    }
 
+    if (out_shift > 0 || in_shift > 0) {
+      assert(min_size_out >= FM_MIN_SIZE ||
+             max_size_out >= FM_TARGET_SIZE);
+    }
   }
 }
 
@@ -1348,6 +1281,7 @@ void TestGetShiftsForTwoArgMultiplyAndAdd() {
                                    &final_size_guess);
     int final_size2 = FM_MAX(a_size + b_size + (dim_size/2) - a_shift - b_shift - post_shift,
                              out_size - out_shift);
+    assert(b_shift >= 0);
     assert(final_size2 == final_size_guess);
     assert(a_size + b_size - a_shift - b_shift < 64);
     if (a_shift > 0 || b_shift > 0) {

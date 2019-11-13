@@ -134,7 +134,7 @@ void FixVector64Size(const Vector64 *vec);
 
 /* like BLAS saxpy.  y := a*x + y.
    x and y must be from different regions.   */
-void AddVectorScalar64(const Vector64 *x, const Scalar64 *a, Vector64 *y);
+void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y);
 
 /* Does y := a * x.   x and y must be from different regions. */
 void SetScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y);
@@ -175,13 +175,8 @@ void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
 
 /* Computes matrix-vector product:
      y := M x.   Note: y must not be in the same region as x or m.
-   CAUTION: for implementation reasons (to avoid having to reason
-   about exponents in the already-existing y, the current code
-   requires that `y` occupy the entirety of the region it is in.
-   (This ensures there will be nothing else whose exponent would
-   need to be adjusted.)
 */
-void MatTimesVector4(const Matrix64 *m, const Vector64 *x,
+void MatTimesVector64(const Matrix64 *m, const Vector64 *x,
                      const Vector64 *y);
 
 
