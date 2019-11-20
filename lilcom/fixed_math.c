@@ -77,7 +77,6 @@ void PrintMatrix64(Matrix64 *mat) {
 
 #endif
 
-
 #ifndef NDEBUG
 /** Checks that the region currently has the size that it should have; dies if not.. */
 void CheckRegion64Size(const Region64 *r_in) {
@@ -87,6 +86,15 @@ void CheckRegion64Size(const Region64 *r_in) {
   assert(size == r->size && "Region had wrong size.");
 }
 #endif
+
+
+/* If shift > 0 shifts right by `rshift`; if shift < 0 shift left by -rshift. */
+inline static void ShiftRegion64(int rshift, Region64 *region) {
+  if (rshift > 0) ShiftRegion64Right(rshift, region);
+  else if (rshift < 0) ShiftRegion64Left(-rshift, region);
+
+}
+
 
 /**
    This function, used to get right-shifts for arguments to a multiplication,
@@ -291,6 +299,39 @@ inline static void GetShiftsForAdd(int in_size, int in_exponent,
   *final_size_guess = sum_guess_size - shift_offset;
 }
 
+/**
+   GetShiftsForCopy is the same as GetShiftsForAdd except a "+ 1" in the
+   expression for sum_max_size is absent, because overflowing a power of 2
+   cannot occur when we are just setting a value.  All comments have been
+   removed from this code; please refer to the docs for GetShiftsForAdd()
+ */
+
+
+inline static void GetShiftsForCopy(int in_size, int in_exponent,
+                                   int out_size, int out_exponent,
+                                   int dim_size,
+                                   int *in_shift, int *out_shift,
+                                   int *final_size_guess) {
+  int possible_in_shift = out_exponent - in_exponent;
+  int sum_max_size = FM_MAX(out_size, in_size + dim_size - possible_in_shift),
+      sum_min_size = FM_MAX(out_size, in_size +  possible_in_shift),
+      sum_guess_size = FM_MAX(out_size, in_size + (dim_size/2) - possible_in_shift);
+
+  if (sum_max_size < 64 && out_size != 0 &&
+      (possible_in_shift <= 0 || sum_min_size >= FM_MIN_SIZE)) {
+    *in_shift = possible_in_shift;
+    *out_shift = 0;
+    *final_size_guess = sum_guess_size;
+  }
+  int shift_offset = sum_max_size - FM_TARGET_SIZE;
+  if (shift_offset < 0 && shift_offset + possible_in_shift < 0) {
+    shift_offset = (possible_in_shift > 0 ? -possible_in_shift : 0);
+  }
+  *in_shift = possible_in_shift + shift_offset;
+  *out_shift = shift_offset;
+  *final_size_guess = sum_guess_size - shift_offset;
+}
+
 
 /**
    Get shifts for a 2-arg multiply-and-add, that is conceptually of the form:
@@ -482,6 +523,24 @@ inline static int FindSize(int guess, uint64_t value) {
   }
 }
 
+void CopyScalar64ToElem(const Scalar64 *scalar, Elem64 *elem){
+  int in_shift, out_shift, final_size_guess;
+  GetShiftsForCopy(scalar->size, scalar->exponent,
+                   elem->region->size, elem->region->exponent,
+                   0, &in_shift, &out_shift, &final_size_guess);
+  ShiftRegion64(out_shift, elem->region);
+  *(elem->data) = (in_shift > 0 ? scalar->data >> in_shift :
+                   scalar->data << -in_shift);
+}
+
+
+void CopyElemToScalar64(const Elem64 *elem, Scalar64 *scalar) {
+  scalar->data = *(elem->data);
+  scalar->size = FindSize(elem->region->size, FM_ABS(*(elem->data)));
+  scalar->exponent = elem->region->exponent;
+}
+
+
 
 void ZeroVector64(Vector64 *a) {
   int dim = a->dim, stride = a->stride;
@@ -568,13 +627,6 @@ void ShiftRegion64Left(int left_shift, Region64 *region) {
   for (int i = 0; i < dim; i++)
     data[i] <<= left_shift;
   CheckRegion64Size(region);
-}
-
-/* If shift > 0 shifts right by `rshift`; if shift < 0 shift left by -rshift. */
-inline static void ShiftRegion64(int rshift, Region64 *region) {
-  if (rshift > 0) ShiftRegion64Right(rshift, region);
-  else if (rshift < 0) ShiftRegion64Left(-rshift, region);
-
 }
 
 void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y) {
@@ -710,7 +762,7 @@ void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
           prod2 = a_shifted * x_data[(i+1) * x_stride],
           prod3 = a_shifted * x_data[(i+2) * x_stride],
           prod4 = a_shifted * x_data[(i+3) * x_stride];
-      tot_bits |= (uint64_t)((prod1 | prod2) | (prod3 | prod4));
+      tot_bits |= (uint64_t)((FM_ABS(prod1) | FM_ABS(prod2)) | (FM_ABS(prod3) | FM_ABS(prod4)));
       y_data[i * y_stride] += prod1;
       y_data[(i+1) * y_stride] += prod2;
       y_data[(i+2) * y_stride] += prod3;
@@ -719,7 +771,7 @@ void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
     for (; i < dim; i++) {
       int64_t prod = a_shifted * x_data[i * x_stride];
       y_data[i * y_stride] += prod;
-      tot_bits |= prod;
+      tot_bits |= FM_ABS(prod);
     }
   }
   int size = FindSize(final_size_guess, tot_bits);
@@ -952,7 +1004,7 @@ void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
         int64_t prod0 = ((mrowdata[j * m_col_stride] >> m_shift) * (xdata[j * x_stride] >> x_shift)) >> post_shift,
             prod1 = ((mrowdata[(j+1) * m_col_stride] >> m_shift) * (xdata[(j+1) * x_stride] >> x_shift)) >> post_shift,
             prod2 = ((mrowdata[(j+2) * m_col_stride] >> m_shift) * (xdata[(j+2) * x_stride] >> x_shift)) >> post_shift,
-            prod3 = ((mrowdata[(j+3) * m_col_stride] >> m_shift) * (xdata[(j+2) * x_stride] >> x_shift)) >> post_shift;
+            prod3 = ((mrowdata[(j+3) * m_col_stride] >> m_shift) * (xdata[(j+3) * x_stride] >> x_shift)) >> post_shift;
         y_i += (prod0 + prod1) + (prod2 + prod3);
       }
       for (; j < x_dim; j++) {
@@ -971,7 +1023,7 @@ void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
         int64_t prod0 = mrowdata[j * m_col_stride]  * xdata[j * x_stride],
             prod1 = mrowdata[(j+1) * m_col_stride] * xdata[(j+1) * x_stride],
             prod2 = mrowdata[(j+2) * m_col_stride] * xdata[(j+2) * x_stride],
-            prod3 = mrowdata[(j+3) * m_col_stride] * xdata[(j+2) * x_stride];
+            prod3 = mrowdata[(j+3) * m_col_stride] * xdata[(j+3) * x_stride];
         y_i += (prod0 + prod1) + (prod2 + prod3);
       }
       for (; j < x_dim; j++) {
@@ -1259,7 +1311,10 @@ void TestSetMatrixVector64() {
 
     Region64 region3;
     InitRegion64(data3, 10, 0, 5, &region3);
+    ShiftRegion64Left(shift3, &region3);
 
+    Region64 region4;
+    InitRegion64(data3_ref, 10, 0, 5, &region4);
 
     Matrix64 mat;
     InitMatrix64(&region1, 10, 10, 10, 1, region1.data, &mat);
@@ -1270,8 +1325,9 @@ void TestSetMatrixVector64() {
     Vector64 vec2;
     InitVector64(&region3, 10, 1, region3.data, &vec2);
 
+    Vector64 vec2_ref;
+    InitVector64(&region4, 10, 1, region4.data, &vec2_ref);
 
-    /* do: vec2 := mat * vec1.  */
     SetMatrixVector64(&mat, &vec1, &vec2);
 
     fprintf(stderr, "Product is below\n");
@@ -1281,6 +1337,19 @@ void TestSetMatrixVector64() {
     for (int i = 0; i < 10; i++)
       fprintf(stderr, "%f ", (float)data3_ref[i]);
     fprintf(stderr, "]\n");
+
+
+    /* do: vec2 := vec2 - vec2_ref.  Should give us zero. */
+    Scalar64 minus_one;
+    InitScalar64FromInt(-1, &minus_one);
+    AddScalarVector64(&minus_one, &vec2_ref, &vec2);
+
+    Scalar64 diff_product;
+    DotVector64(&vec2, &vec2, &diff_product);
+
+    /* Check that this error term is zero. */
+    double d = Scalar64ToDouble(&diff_product);
+    assert(d == 0);
 
     /*
       fprintf(stderr, "shift{1,2,3} = %d,%d->%d,%d, f = %f, ref_sum = %lld, size = %d, scalar exponent = %d\n",
@@ -1373,6 +1442,41 @@ void TestGetShiftsForAdd() {
 }
 
 
+void TestGetShiftsForCopy() {
+  for (int i = 0; i < 2000; i++) {
+    int in_size = i % 64,
+        out_size = (i * 7) % 64,
+        in_exponent = -100 + i % 199,
+        out_exponent = -50 + i % 93,
+        dim_size = (i * 11) % 32;
+
+    int in_shift = -1000, out_shift = -1000,
+        final_size_guess = -1000;
+    GetShiftsForCopy(in_size, in_exponent,
+                    out_size, out_exponent,
+                    dim_size,
+                    &in_shift, &out_shift,
+                    &final_size_guess);
+    assert(in_exponent + in_shift == out_exponent + out_shift);
+    int max_size_out = FM_MAX(in_size + dim_size - in_shift, out_size - out_shift),
+        size_guess = FM_MAX(in_size + (dim_size/2) - in_shift, out_size - out_shift),
+        min_size_out =  FM_MAX(in_size - in_shift, out_size - out_shift);
+    assert(max_size_out < 64);
+    assert(final_size_guess == size_guess);
+    assert( !(out_shift < 0 && in_shift < 0));  /* doesn't make sense to shift
+                                                 * both left. */
+    if (out_shift > 0 && in_shift > 0) {
+      assert(final_size_guess <= FM_TARGET_SIZE);
+    }
+
+    if (out_shift > 0 || in_shift > 0) {
+      assert(min_size_out >= FM_MIN_SIZE ||
+             max_size_out >= FM_TARGET_SIZE);
+    }
+  }
+}
+
+
 void TestGetShiftsForTwoArgMultiplyAndAdd() {
   for (int i = 0; i < 2000; i++) {
     int a_size = i % 64,
@@ -1406,8 +1510,51 @@ void TestGetShiftsForTwoArgMultiplyAndAdd() {
   }
 }
 
+
+
+void TestCopyScalarToElem64() {
+  for (int i = -9; i < 100; i += 2) {
+    for (int source = 0; source < 500; source++) {
+      int value = -9 + (source % 100);
+      int shift_a = (source * 3) % 64,
+          shift_b = (source * 11) % 64;
+
+      Scalar64 a;
+      InitScalar64FromInt(i, &a);
+      if (a.size + shift_a >= 64 || a.size + shift_b >= 64)
+        continue;
+      ShiftScalar64Left(shift_a, &a);
+
+      int64_t data[20];
+      for (int i = 0; i < 20; i++)
+        data[i] = 0;
+      data[2] = 1 << shift_b;
+      Region64 region;
+      InitRegion64(data, 10, 0, 5, &region);
+
+      Elem64 elem;
+      InitElem64(&region, region.data + 5, &elem);
+
+      Scalar64 scalar;
+      InitScalar64FromInt(value, &scalar);
+
+      CopyScalar64ToElem(&scalar, &elem);
+
+      Scalar64 scalar2;
+      CopyElemToScalar64(&elem, &scalar2);
+
+      double d1 = Scalar64ToDouble(&scalar),
+          d2 = Scalar64ToDouble(&scalar2);
+      assert(d1 == d2);
+    }
+  }
+}
+
+
+
 int main() {
   TestGetShiftsForAdd();
+  TestGetShiftsForCopy();
   TestGetShiftsForTwoArgMultiply();
   TestGetShiftsForTwoArgMultiplyAndAdd();
   TestFindSize();
@@ -1420,6 +1567,7 @@ int main() {
   TestAddVector();
   TestInvertScalar();
   TestSetMatrixVector64();
+  TestCopyScalarToElem64();
 }
 #endif /* FIXED_MATH_TEST */
 

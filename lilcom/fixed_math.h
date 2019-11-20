@@ -60,6 +60,7 @@ typedef struct {
   int64_t *data;
 } Matrix64;
 
+
 typedef struct {
   /* exponent defines what the data means as a floating point number
      (multiply data by pow(2.0, exponent) to get the float value). */
@@ -68,6 +69,11 @@ typedef struct {
   int size;
   int64_t data;
 } Scalar64;
+
+typedef struct {
+  Region64 *region;
+  int64_t *data;
+} Elem64;  /* Elem64 is like Scalar64 but it is part of an existing region. */
 
 
 /*
@@ -116,23 +122,34 @@ extern inline void InitMatrix64(Region64 *region,
          data >= region->data && data + max_offset <  region->data + region->dim);
 }
 
+extern inline void InitElem64(Region64 *region, int64_t *data, Elem64 *elem) {
+  elem->region = region;
+  elem->data = data;
+}
 
 
-/* Shift the data right by this many bits and adjust the exponent so the
-   number it represents is unchanged.  */
+/* Shift the data elements right by this many bits and adjust the exponent so
+   the number it represents is unchanged.
+         @param [in] right_shift   A shift value >= 0
+         @param [in,out] region   The region to be shifted
+*/
 void ShiftRegion64Right(int right_shift, Region64 *region);
+
+/* Shift the data elements left by this many bits and adjust the exponent so
+   the number it represents is unchanged.
+         @param [in] left_shift   A shift value >= 0
+         @param [in,out] region   The region to be shifted
+*/
+void ShiftRegion64Left(int left_shift, Region64 *region);
 
 /* Shift the data right by this many bits, and adjust the exponent so
    the number it represents is unchanged. */
 void ShiftScalar64Right(int right_shift, Scalar64 *scalar);
 
-/* Shift the data right by this many bits, and adjust the exponent so
+/* Shift the data left by this many bits, and adjust the exponent so
    the number it represents is unchanged.  This is present only
    for testing purposes. */
 void ShiftScalar64Left(int left_shift, Scalar64 *scalar);
-
-
-
 
 /* Copies data from `src` to `dest`; they must have the same dimension
    and be non-overlapping. */
@@ -188,6 +205,13 @@ void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
 void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
                        const Vector64 *y);
 
+
+
+/* Copies the data in the scalar to the `elem`. */
+void CopyScalarToElem64(const Scalar64 *scalar, Elem64 *elem);
+
+/* Does Y := a. */
+void CopyElemToScalar64(const Elem64 *a, Scalar64 *y);
 
 /* Copies the i'th element of `a` to y:   y = a[i] */
 void CopyToScalar64(const Vector64 *a, int i, Scalar64 *y);
