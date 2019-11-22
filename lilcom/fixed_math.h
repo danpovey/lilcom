@@ -76,6 +76,11 @@ typedef struct {
 } Elem64;  /* Elem64 is like Scalar64 but it is part of an existing region. */
 
 
+inline extern uint64_t FM_ABS(int64_t a) {
+  return (uint64_t)(a > 0 ? a : -a);
+}
+
+
 /*
   Initializes a Region64.
      @param [in]  data    data underlying the region; should be an array of at least `dim` elements
@@ -84,11 +89,21 @@ typedef struct {
                           in the region (i.e. it will be interpreted as that integer
                           number + 2^exponent).
      @param [in]  size_hint   caller's approximation to the `size` of the region,
-                          meaning the smallest power of 2 >= 0that is greater than all
+                          meaning the smallest power of 2 >= 0 that is greater than all
                           the absolute values of elements of the region.
      @param [out] region   region  the region object to be created
  */
 void InitRegion64(int64_t *data, int dim, int exponent, int size_hint, Region64 *region);
+
+
+/**
+   Zeros the contents of a `Region64`, setting the exponent and size to zero.
+   Good to call occasionally if you keep a region around for a while, since otherwise
+   if you only access it from sub-parts, the size can become larger than
+   it needs to be.
+ */
+void ZeroRegion64(Region64 *region);
+
 
 extern inline void InitVector64(Region64 *region, int dim, int stride, int64_t *data, Vector64 *vec) {
   vec->region = region;
@@ -101,6 +116,10 @@ extern inline void InitVector64(Region64 *region, int dim, int stride, int64_t *
          data + ((dim-1)*stride) < region->data + region->dim);
 }
 
+/**
+   Zeros the region's data, setting size and exponent to zero.
+ */
+void ZeroRegion64(Region64 *region);
 
 extern inline void InitMatrix64(Region64 *region,
                                 int num_rows, int row_stride,
@@ -121,6 +140,14 @@ extern inline void InitMatrix64(Region64 *region,
          row_stride >= num_cols * col_stride &&
          data >= region->data && data + max_offset <  region->data + region->dim);
 }
+
+/* Returns 1 if vectors overlap in memory, 0 if they do not.
+   Caution: may return 1 for some vectors that do not really overlap,
+   as the method is quite simple.
+   CAUTION: not tested.  For now we insist on things being from
+   different regions.
+*/
+int VectorsOverlap(const Vector64 *vec1, const Vector64 *vec2);
 
 extern inline void InitElem64(Region64 *region, int64_t *data, Elem64 *elem) {
   elem->region = region;
@@ -152,7 +179,11 @@ void ShiftScalar64Right(int right_shift, Scalar64 *scalar);
 void ShiftScalar64Left(int left_shift, Scalar64 *scalar);
 
 /* Copies data from `src` to `dest`; they must have the same dimension
-   and be non-overlapping. */
+   and be from different regions.
+   CAUTION: this is not very optimal about sizes; it just assumes
+   the "worst case" in terms of the src data we're seeing being the
+   largest src data (for purposes of `size` estimation).
+*/
 void CopyVector64(const Vector64 *src, Vector64 *dest);
 
 /* Updates the `size` field of `vec` to be accurate. */
@@ -185,7 +216,7 @@ void AddScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 void ZeroVector64(Vector64 *a);
 
 /* Sets the size for this region to the appropriate value.
-   (See docs for the `size` member).  63 <= size_hint <= 0
+   (See docs for the `size` member).  0 <= size_hint <= 63
    is a hint for what we think the size might be.
 */
 void SetRegion64Size(int size_hint, Region64 *r);
@@ -195,6 +226,22 @@ inline void NegateScalar64(Scalar64 *a) { a->data *= -1; }
 /* Sets this scalar to an integer. */
 void InitScalar64FromInt(int64_t i, Scalar64 *a);
 
+
+/*
+  a[i] = value:
+     Sets the i'th element of vector a to 'value'.  This is
+   not the same as setting a->data[i] = value, because of the
+   exponent.
+     @param [in] i      The element of `value` to set, must be in [0..a->dim-1]
+     @param [in] value  The value to set.  Exponents are not supported;
+                        for that, manually create a Scalar64.
+     @param [in] size_hint  A number in [0,63] that is the user's best
+                        guess to the `size` of `value`.
+     @para [out] a  The vector to set
+ */
+void SetVector64ElemToInt(int i, int64_t value, int size_hint, Vector64 *a);
+
+
 /* Computes dot product between two Vector64's:
    y := a . b */
 void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
@@ -203,8 +250,7 @@ void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
      y := M x.   Note: y must not be in the same region as x or m.
 */
 void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
-                       const Vector64 *y);
-
+                       Vector64 *y);
 
 
 /* Copies the data in the scalar to the `elem`. */
@@ -214,7 +260,7 @@ void CopyScalarToElem64(const Scalar64 *scalar, Elem64 *elem);
 void CopyElemToScalar64(const Elem64 *a, Scalar64 *y);
 
 /* Copies the i'th element of `a` to y:   y = a[i] */
-void CopyToScalar64(const Vector64 *a, int i, Scalar64 *y);
+void CopyVectorElemToScalar64(const Vector64 *a, int i, Scalar64 *y);
 
 /* Sets an element of a vector to a scalar:  y[i] = a. */
 void CopyFromScalar64(const Scalar64 *a, int i, Vector64 *y);
@@ -253,7 +299,25 @@ void InvertScalar64(const Scalar64 *a,  Scalar64 *y);
 /* Convert to double- needed only for testing. */
 double Scalar64ToDouble(const Scalar64 *a);
 
+/* Converts element i of vector `vec` to double and returns it. */
+double Vector64ElemToDouble(int i, const Vector64 *vec);
+
+
+
 /* Returns nonzero if a and b are similar within a tolerance.  Intended mostly
    for checking code.*/
 int Scalar64ApproxEqual(const Scalar64 *a, const Scalar64 *b, float tol);
 
+
+/*
+  Returns the smallest integer i >= 0 such that
+  (1 << i) > value, or equivalently (since `value` is unsigned), that
+  value >> i == 0
+
+   @param [in] value  The value whose size we are testing.  CAUTION: this is
+                    unsigned, so if you are starting with a signed value you
+                    should probably put it through FM_ABS() first.
+   @param [in] guess    May be any value in [0,63]; it is an error if it is outside that
+                    range.  If it's close to the true value it will be faster.
+ */
+int FindSize(uint64_t value, int guess);
