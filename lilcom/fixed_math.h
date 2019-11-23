@@ -278,8 +278,8 @@ void CopyScalar64ToVectorElem(const Scalar64 *s, int i, Vector64 *a);
 /* Sets an element of a vector to a scalar:  y[i] = a. */
 void CopyFromScalar64(const Scalar64 *a, int i, Vector64 *y);
 
-/* Multiplies 64-bit scalars.   y must not be the same object
-   as a or b. */
+/* Multiplies 64-bit scalars.   the args do not have to be distinct
+   objects. */
 void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 
 /* does: y := a.  Just copies all the elements of the struct. */

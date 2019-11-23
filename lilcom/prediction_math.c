@@ -107,10 +107,13 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
         fprintf(stderr: "Error:, nu_n out of range %f\n", d);
       }
     }
-    Scalar64 nu_n2, ;  /* nu_n^2 */
+    Scalar64 nu_n2,  /* nu_n^2 */
+        factor;
     MulScalar64(&nu_n, &nu_n, &nu_n2);
-
-
+    NegateScalar64(&nn_n2);
+    InitScalar64FromInt(1, &factor);
+    AddScalar64(&factor, &nu_n2, &factor);  /*
+                                             */
   /*
 
         b[:n+1] = b_temp[:n+1]

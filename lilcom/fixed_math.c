@@ -723,7 +723,6 @@ void ShiftRegion64Left(int left_shift, Region64 *region) {
 }
 
 void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y) {
-  assert(y != a && y != b);
   int a_size = a->size,
       b_size = b->size,
       dim_size = 0,
@@ -1588,9 +1587,12 @@ void TestInvertScalar() {
       InvertScalar64(&a_inv, &a_inv);
 
       Scalar64 one;
+      MulScalar64(&a, &a, &a);
+      MulScalar64(&a_inv, &a_inv, &a_inv);
       MulScalar64(&a, &a_inv, &one);
       double f = Scalar64ToDouble(&one);
-      assert(f - 1.0 < pow(2.0, -31));
+      assert(f - 1.0 < pow(2.0, -29));  /* actually this limit -29 is just emprical.
+                                           I haven't done careful analysis here. */
     }
   }
 }
