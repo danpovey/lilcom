@@ -116,6 +116,16 @@ extern inline void InitVector64(Region64 *region, int dim, int stride, int64_t *
          data + ((dim-1)*stride) < region->data + region->dim);
 }
 
+extern inline void InitSubVector64(const Vector64 *src, int offset, int dim, int stride, Vector64 *dest) {
+  assert(offset >= 0 && offset + (dim-1) * stride < src->dim && stride != 0 &&
+         offset < dim && offset + (dim-1) * stride >= 0);
+  dest->region = src->region;
+  dest->dim = dim;
+  dest->stride = stride * src->stride;
+  dest->data = src->data + offset * src->stride;
+}
+
+
 /**
    Zeros the region's data, setting size and exponent to zero.
  */
@@ -239,7 +249,7 @@ void InitScalar64FromInt(int64_t i, Scalar64 *a);
                         guess to the `size` of `value`.
      @para [out] a  The vector to set
  */
-void SetVector64ElemToInt(int i, int64_t value, int size_hint, Vector64 *a);
+void CopyIntToVector64Elem(int i, int64_t value, int size_hint, Vector64 *a);
 
 
 /* Computes dot product between two Vector64's:
@@ -262,10 +272,14 @@ void CopyElemToScalar64(const Elem64 *a, Scalar64 *y);
 /* Copies the i'th element of `a` to y:   y = a[i] */
 void CopyVectorElemToScalar64(const Vector64 *a, int i, Scalar64 *y);
 
+/* Copies `s` to the i'th element of `a`:  a[i] = s. */
+void CopyScalar64ToVectorElem(const Scalar64 *s, int i, Vector64 *a);
+
 /* Sets an element of a vector to a scalar:  y[i] = a. */
 void CopyFromScalar64(const Scalar64 *a, int i, Vector64 *y);
 
-/* Multiplies 64-bit scalars.  Must all be different pointers. */
+/* Multiplies 64-bit scalars.   y must not be the same object
+   as a or b. */
 void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 
 /* does: y := a.  Just copies all the elements of the struct. */

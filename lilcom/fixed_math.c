@@ -574,6 +574,22 @@ void CopyVectorElemToScalar64(const Vector64 *a, int i, Scalar64 *y) {
   y->size = FindSize(y->data, a->region->size);
 }
 
+void CopyScalar64ToVectorElem(const Scalar64 *s, int i, Vector64 *a) {
+  assert(i >= 0 && i < a->dim);
+  int in_shift, out_shift, final_size_guess;
+  GetShiftsForAssign(s->size, s->exponent,
+                   a->region->size, a->region->exponent,
+                   0, &in_shift, &out_shift, &final_size_guess);
+  ShiftRegion64(out_shift, a->region);
+  a->data[i * a->stride] = (in_shift > 0 ? s->data >> in_shift :
+                            s->data << -in_shift);
+  EnsureRegionAtLeastSizeOf(FM_ABS(a->data[i * a->stride]),
+                            final_size_guess,
+                            a->region);
+  CheckRegion64Size(a->region);
+}
+
+
 
 void ZeroVector64(Vector64 *a) {
   int dim = a->dim, stride = a->stride;
@@ -632,7 +648,7 @@ void InitScalar64FromInt(int64_t i, Scalar64 *a) {
 }
 
 
-void SetVector64ElemToInt(int i, int64_t value, int size_hint, Vector64 *a) {
+void CopyIntToVector64Elem(int i, int64_t value, int size_hint, Vector64 *a) {
   assert(i >= 0 && i < a->dim);
   int size = FindSize(FM_ABS(value), size_hint),
       exponent = 0, dim_size = 0;
@@ -707,6 +723,7 @@ void ShiftRegion64Left(int left_shift, Region64 *region) {
 }
 
 void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y) {
+  assert(y != a && y != b);
   int a_size = a->size,
       b_size = b->size,
       dim_size = 0,
@@ -1257,7 +1274,7 @@ void TestMulScalar() {
   }
 }
 
-void TestInitVector() {
+void TestInitVector() {  /* Also tests InitSubVector64. */
   int64_t data[100];
   for (int i = 0; i < 100; i++)
     data[i] = i;
@@ -1272,11 +1289,23 @@ void TestInitVector() {
   }
   Vector64 vec;
   InitVector64(&region, 10, 1, region.data, &vec);
+
+  Vector64 vec2, vec3;
+  InitSubVector64(&vec, 9, 10, -1, &vec2);
+  InitSubVector64(&vec2, 0, 5, 2, &vec3);
+
+  int64_t scalar = -79;
+  int size_guess = 6;
+  CopyIntToVector64Elem(2, scalar, size_guess, &vec2);
+  assert(scalar == Vector64ElemToDouble(7, &vec));
+  scalar += 1;
+  CopyIntToVector64Elem(3, scalar, size_guess, &vec3);
+  assert(scalar == Vector64ElemToDouble(6, &vec2));
 }
 
 
 
-void TestSetVector64ElemToInt() {
+void TestCopyIntToVector64Elem() {
   for (int source = 0; source < 500; source++) {
     int64_t data[100];
     for (int i = 0; i < 100; i++)
@@ -1303,7 +1332,7 @@ void TestSetVector64ElemToInt() {
       continue;
     int index = 5;
     value <<= value_shift;
-    SetVector64ElemToInt(index, value, value_shift, &vec);
+    CopyIntToVector64Elem(index, value, value_shift, &vec);
 
     assert(value - Vector64ElemToDouble(index, &vec) <= FM_ABS(value) * 1.0e-10);
   }
@@ -1437,7 +1466,7 @@ void TestCopyVector() {
     InitVector64(&region2, 5, -1, region2.data + 9, &vec2);
 
     int index = 3, size_hint = 2;
-    SetVector64ElemToInt(index, scalar_number, size_hint, &vec1);
+    CopyIntToVector64Elem(index, scalar_number, size_hint, &vec1);
 
     assert(scalar_number == Vector64ElemToDouble(index, &vec1));
 
@@ -1730,6 +1759,22 @@ void TestCopyScalarToElem64() {
       double d1 = Scalar64ToDouble(&scalar),
           d2 = Scalar64ToDouble(&scalar2);
       assert(d1 == d2);
+
+
+      { // test CopyScalar64ToVectorElem
+        Vector64 vec;
+        for (int i = 0; i < 20; i++)
+          data[i] = 0;
+        data[2] = 1 << shift_b;
+        /* re-init region. */
+        InitRegion64(data, 10, 0, 5, &region);
+        InitVector64(&region, 10, 1, region.data, &vec);
+        Scalar64 scalar;
+        InitScalar64FromInt(value, &scalar);
+        int index = 4;
+        CopyScalar64ToVectorElem(&scalar, index, &vec);
+        assert(value == Vector64ElemToDouble(index, &vec));
+      }
     }
   }
 }
@@ -1753,7 +1798,7 @@ int main() {
   TestInvertScalar();
   TestSetMatrixVector64();
   TestCopyScalarToElem64();
-  TestSetVector64ElemToInt();
+  TestCopyIntToVector64Elem();
 }
 #endif /* FIXED_MATH_TEST */
 

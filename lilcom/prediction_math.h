@@ -39,7 +39,15 @@
        @param [in] autocorr  The autocorrelation coefficients of dimension n
        @param [in] y         The y in A x = y above
        @param [out] x        The x to be solved for
-       @param [in,out] temp  A temporary vector of dimension
+       @param [in,out] temp1, temp2  Two temporary vectors of dimension n
+                             should be from different regions from each
+                             other.
+
+           ALL VECTORS SHOULD BE FROM DIFFERENT REGIONS
+           (except autocorr and y may share a region, since they are unchanged.)
+           YOU SHOULD CALL ZeroRegion64() on the regions for x, temp1 and temp2
+           before calling this function, to make sure the `size` values of the
+           regions stay accurate.
 
        @return       Returns 0 on success, 1 on failure.  The only
                      possible failure condition is division by zero,
@@ -48,4 +56,4 @@
                      singular)
  */
 int ToeplitzSolve(const Vector64 *autocorr, const Vector64 *y, Vector64 *x,
-                  Vector64 *temp);
+                  Vector64 *temp1, Vector64 *temp2);
