@@ -317,17 +317,28 @@ static inline int lilcom_sgn(int val) {
  */
 struct BitPacker {
   /** num_samples_to_write is the total number of samples which we intend to
-      write out. */
+      write out. Used only for checking purposes. */
   ssize_t num_samples_to_write;
-  /** bits_per_sample is the number of bits per sample, in
-      [LILCOM_MIN_BPS..LILOM_MAX_BPS]. */
-  int bits_per_sample;
-  /** compressed_code is where we'll write the data; it points to the first
+  /* compressthe byte where we started writing the code.. */
+  int8_t *compressed_code_start;
+
+  /* next_compressed_code is where we'll write the next byte of data;
+      it will equal compressed_code_start +
+      (compressed_code_stride * (number of bytes written)).
       byte of the sequence, where we will put the sample for t == 0.. */
-  int8_t *compressed_code;
+  int8_t *next_compressed_code;
+  /* compressed_code_stride is the number of bytes bretween elements of
+     the compressed code (normally 1) */
+
   int compressed_code_stride;
-  /** See comments above about the constraints on STAGING_BLOCK_SIZE. */
-  int staging_buffer[STAGING_BLOCK_SIZE*2];
+
+
+  /* An array of an anonymous struct...  See comments above about the
+     constraints on STAGING_BLOCK_SIZE. */
+  struct {
+    int code;
+    int num_bits;
+  } staging_buffer[STAGING_BLOCK_SIZE*2];
 
   /** num_samples_committed is the number of samples we have so far committed to
       `compressed_code`.  Will always be a multiple of STAGING_BLOCK_SIZE
@@ -337,6 +348,13 @@ struct BitPacker {
   /** num_samples_committed_mod always equals num_samples_committed % buffer_size,
       where buffer_size == STAGING_BLOCK_SIZE*2.  */
   ssize_t num_samples_committed_mod;
+
+  /* After we finish writing one staging block, there may be bits
+     remaining that didn't fit exactly into a byte.
+      0 <= remaining_num_bits < 8 will be the number of those bits, and
+      the actual bits will be the lowest-order bits of `remaining_bits`. */
+  uint32_t remaining_bits;
+  int remaining_num_bits;
 
   /**
      If this were a class, the members would be:
@@ -364,63 +382,62 @@ struct BitPacker {
                           compressed code; will normally be 1.  Must be nonzero.
  */
 void bit_packer_init(ssize_t num_samples_to_write,
-                     int bits_per_sample,
                      int8_t *compressed_code,
                      int compressed_code_stride,
                      struct BitPacker *packer) {
   packer->num_samples_to_write = num_samples_to_write;
   packer->num_samples_committed = 0;
   packer->num_samples_committed_mod = 0;
-  assert(bits_per_sample >= LILCOM_MIN_BPS &&
-         bits_per_sample <= LILCOM_MAX_BPS);
-  packer->bits_per_sample = bits_per_sample;
-  packer->compressed_code = compressed_code;
+  packer->compressed_code_start = compressed_code;
+  packer->next_compressed_code = compressed_code;
   packer->compressed_code_stride = compressed_code_stride;
+  packer->remaining_bits = 0;
+  packer->remaining_num_bits = 0;
 }
 
 void bit_packer_commit_block(ssize_t begin_t,
                              ssize_t end_t,
+                             int flush,
                              struct BitPacker *packer) {
   assert(begin_t == packer->num_samples_committed);
-  int bits_per_sample = packer->bits_per_sample,
-      compressed_code_stride = packer->compressed_code_stride;
+  int compressed_code_stride = packer->compressed_code_stride;
+  int8_t *next_compressed_code = packer->next_compressed_code;
 
-  if (bits_per_sample == 8) {
-    /** Treat this case specially as it can be more efficient.  */
-    int8_t *compressed_code = packer->compressed_code;
-    ssize_t t = begin_t,
-        s = begin_t % (STAGING_BLOCK_SIZE*2);
-    for (; t < end_t; s++, t++) {
-      compressed_code[t*compressed_code_stride] =
-          packer->staging_buffer[s];
+  /* `code` and `bits_in_code` are like a little buffer of bits
+     that we're going to write. */
+  uint32_t code = packer->remaining_bits;
+  unsigned int bits_in_code = packer->remaining_num_bits;
+
+  int cur_index = begin_t % (STAGING_BLOCK_SIZE * 2),
+      end_index = cur_index + (end_t - begin_t);
+  assert(end_index <= STAGING_BLOCK_SIZE * 2);
+  for (; cur_index != end_index; ++cur_index) {
+    unsigned int this_num_bits = packer->staging_buffer[cur_index].num_bits;
+    uint32_t this_code = packer->staging_buffer[cur_index].code,
+        this_mask = ((((uint32_t)1) << this_num_bits) - 1);
+    code |= (this_code & this_mask) << bits_in_code;
+    bits_in_code += this_num_bits;
+    while (bits_in_code >= 8) {  /* Shift off the lowest-order byte */
+      *next_compressed_code = (int8_t) code;
+      next_compressed_code += compressed_code_stride;
+      code >>= 8;
+      bits_in_code -= 8;
     }
-  } else {
-    /** The division below will always be exact because STAGING_BLOCK_SIZE is a
-        multiple of 8 and begin_t will always be a multiple of it. */
-    ssize_t s = begin_t % (STAGING_BLOCK_SIZE*2);
-    const int *src = packer->staging_buffer + s;
-    int8_t *compressed_code = packer->compressed_code +
-        compressed_code_stride * ((begin_t * bits_per_sample) / 8);
-    /** Make code unsigned so that right-shift is well defined. */
-    unsigned int code = 0, mask = (1 << bits_per_sample) - 1, bits_in_code = 0;
-    for (ssize_t t = begin_t; t < end_t; t++) {
-      code |= (((*(src++)) & mask) << bits_in_code);
-      bits_in_code += bits_per_sample;
-      while (bits_in_code >= 8) {  /* Shift off the lowest-order byte */
-        *compressed_code = (int8_t) code;
-        compressed_code += compressed_code_stride;
-        code >>= 8;
-        bits_in_code -= 8;
-      }
-    }
+  }
+  if (flush) {
     if (bits_in_code != 0) {
-      /* Get rid of the last partial byte; this will only be
-         reached at the end of the file. */
-      *compressed_code = (int8_t) code;
+      /* Get rid of the last partial byte */
+      *next_compressed_code = (int8_t) code;
+      next_compressed_code += compressed_code_stride;
     }
+    assert(end_t == packer->num_samples_to_write);
+  } else {
+    packer->remaining_bits = code;
+    packer->remaining_num_bits = bits_in_code;
   }
   packer->num_samples_committed = end_t;
   packer->num_samples_committed_mod = end_t % (STAGING_BLOCK_SIZE*2);
+  packer->next_compressed_code = next_compressed_code;
 }
 
 /**
@@ -430,8 +447,22 @@ void bit_packer_commit_block(ssize_t begin_t,
    You're allowed to backtrack and re-write old samples, as long as you
    always satisfy:
      t-you-are-writing-now > largest-t-you-have-ever-written - STAGING_BLOCK_SIZE.
+
+     @param [in] 0 <= t < packer->num_samples_to_write  The time
+                 index for which you are writing this sample.  These do not
+                 have to be in increasing order, but you are not allowed
+                 to call with a 't' value that is less by more than
+                 STAGING_BLOCK_SIZE than the largest 't' value you have
+                 ever used.
+     @param [in] code  The code to write; the lowest 'num_bits' of it
+                 will be the relevant ones, and others will be ignored.
+     @param [in] num_bits  The number of bits in this code; must
+                 be in the range [1..16].
+     @param [in,out] packer  The BitPacker object we are using to
+                 write the code.
  */
-void bit_packer_write_code(ssize_t t, int code,
+void bit_packer_write_code(ssize_t t,
+                           int code, int num_bits,
                            struct BitPacker *packer) {
   ssize_t t_mod = t & (STAGING_BLOCK_SIZE*2 - 1);
   if (t % STAGING_BLOCK_SIZE == 0) {
@@ -443,10 +474,13 @@ void bit_packer_write_code(ssize_t t, int code,
       bit_packer_commit_block(
           packer->num_samples_committed,
           packer->num_samples_committed + STAGING_BLOCK_SIZE,
+          0, /* no flush */
           packer);
     }
   }
-  packer->staging_buffer[t_mod] = code;
+  assert(((num_bits - 1) & ~(int)15) == 0);  /* check that 0 < num_bits <= 16 */
+  packer->staging_buffer[t_mod].code = code;
+  packer->staging_buffer[t_mod].num_bits = num_bits;
 }
 
 /**
@@ -457,9 +491,15 @@ void bit_packer_flush(struct BitPacker *packer) {
   ssize_t T = packer->num_samples_to_write;
   while (packer->num_samples_committed < T) {
     ssize_t new_end = packer->num_samples_committed + STAGING_BLOCK_SIZE;
-    if (new_end > T)
+    int flush;
+    if (new_end > T) {
       new_end = T;
-    bit_packer_commit_block(packer->num_samples_committed, new_end, packer);
+      flush = 1;
+    } else {
+      flush = 0;
+    }
+    bit_packer_commit_block(packer->num_samples_committed, new_end,
+                            flush, packer);
   }
 }
 
@@ -2134,7 +2174,7 @@ static inline void lilcom_init_compression(
     int conversion_exponent,
     struct CompressionState *state) {
 
-  bit_packer_init(num_samples, bits_per_sample,
+  bit_packer_init(num_samples,
                   output + LILCOM_HEADER_BYTES * output_stride,
                   output_stride,
                   &state->packer);
@@ -2233,7 +2273,7 @@ int lilcom_compress(
     if (backtracking_encoder_encode(residual,
                                     predicted_value, next_value,
                                     &code, &state.encoder) == 0)
-      bit_packer_write_code(t, code, &state.packer);
+      bit_packer_write_code(t, code, bits_per_sample, &state.packer);
     /* If it returns 1 (failure) it is not an error; it just means we have to
        backtrack. */
   }
