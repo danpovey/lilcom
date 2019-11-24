@@ -70,7 +70,7 @@ def toeplitz_solve(autocorr, y):
     `autocorr` be vector of dimension N representing, conceptually,
     a Toeplitz matrix A(i,j) = autocorr[abs(i-j)].
 
-      This function solves the linear system A x = b, returning x.
+      This function solves the linear system A x = y, returning x.
 
     We require for the Toeplitz matrix to satisfy the usual conditions for
     algorithms on Toeplitz matrices, meaning no singular leading minor may be
@@ -131,7 +131,24 @@ def toeplitz_solve(autocorr, y):
 
     return x
 
+def test_toeplitz_solve():
+    for dim in [ 1, 2, 5, 9 ]:
+        signal_len = 100
+        signal = np.random.rand(signal_len).astype(np.float64)
+        # We want the Toeplitz matrix to be invertib
+        autocorr = np.zeros(dim, dtype=np.float64)
+        for offset in range(dim):
+            autocorr[offset] = np.dot(signal[:signal_len-offset], signal[offset:])
 
+        y = np.random.rand(dim).astype(np.float64)
+        b = toeplitz_solve(autocorr, y)
+        A = np.zeros((dim, dim), dtype=np.float64)
+        for i in range(dim):
+            for j in range(dim):
+                A[i,j] = autocorr[abs(i-j)]
+        err = np.dot(A, b) - y
+        relative_error = np.abs(err).sum() / np.abs(y).sum()
+        print("Toeplitz solver: relative error is {}".format(relative_error))
 
 
 def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
@@ -912,6 +929,10 @@ fileList = [settings["dataset-dir"] + "/" + item
 
 # Initial prints
 logger(logmod="initialization")
+
+
+
+test_toeplitz_solve()
 
 for file in fileList:
     audioArray = waveRead(file, settings["sample-rate"])
