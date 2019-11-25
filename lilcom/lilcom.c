@@ -665,6 +665,211 @@ static inline int bit_unpacker_read_next_code(int num_bits,
 #define LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent_t) (exponent_t - ((((int)t)+exponent_t)&1))
 
 
+
+
+
+
+/*
+  least_bits(residual, min_exponent):
+
+  Returns least n >= min_exponent such that:
+    -2^n <= value * 2 < 2^n
+
+  Note: the "* 2" part of the formulation may seem odd, but:
+  (1) It means that the number of bits can include the bit
+  needed for the sign (2s complement encoding..), and
+  (2) It allows us to save on even using the sign bit in
+  the case where value == 0, i.e. that equation works
+  with n == 0 in that case.
+
+  @param [in] value  Value to be encoded, there is no limitation
+                  except that it has to fit in int32_t.
+  @param [in] min_bits  A value in [0, 30] that will be a lower limit
+                  on the returned value.
+*/
+static inline int least_bits(int32_t value,
+                             int min_bits) {
+  int bits = min_bits;
+  int limit = 1 << bits;
+  while (value*2 < -limit || value*2 >= limit) {
+    limit <<= 1;
+    bits++;
+  }
+  return bits;
+}
+
+
+/**
+   Does the central part of encoding a value (`value` would typically be
+   a residual).
+      @param [in] value      The value to be encoded
+      @param [in] min_bits   The minimum number of bits that we are
+                     allowed to use to encode `value`... suppose the
+                     power-of-two is n, that means our encoding will be capable
+                     of encoding values s.t. -2^n <= v*2 < 2^n.
+                     [Note: this num-bits does not include the bit for the
+                     exponent.]  min_bits will be determined by constraints
+                     on how we encode the exponent.
+      @param [in] max_bits_encoded   A user-specified value that says the
+                     maximum number of bits we'll use in `encoded_value`..
+                     this means something quite different from `min_bits`,
+                     it means that once the num-bits exceeds this value,
+                     we will not encode the least significant bits.
+                     It must be >1, but it is allowed to be less than
+                     min_bits.
+      @param [out] num_bits   A number >= min_bits that will
+                    dictate the encoding.  Note: this may be > max_bits,
+                    but if so the lower-order bits won't be included,
+                    see `num_bits_encoded`
+      @param [out] num_bits_encoded  This will just equal
+                    min(*num_bits, max_bits_encoded).
+      @param [out] encoded_value  The value which will get written
+                   to the bit stream; only the lowest-order
+                   `*num_bits_encoded` of this will get written,
+                   but the higher-order-than-that bits will be
+                   all 0 or 1 according to the sign.
+                   encoded_value << (*num_bits - *num_bits_encoded)
+                   will be a close approximation to `value`, and
+                   it will be exact if num_bits == num_bits_encoded.
+
+   See also "decode_signed_value" which reverses this process.
+ */
+static inline void encode_signed_value(int32_t value,
+                                       int min_bits,
+                                       int max_bits_encoded,
+                                       int *num_bits,
+                                       int *num_bits_encoded,
+                                       int32_t *encoded_value) {
+  assert(min_bits >= 0 && max_bits_encoded > 1);
+  *num_bits = least_bits(value, min_bits);
+  if (*num_bits <= max_bits_encoded) {
+    *num_bits_encoded = *num_bits;
+    *encoded_value = value;  /* Only the lowest-order *num_bits_encoded are to
+                              * be used */
+  } else {
+    *num_bits_encoded = max_bits_encoded;
+    int rshift = *num_bits - max_bits_encoded;
+    *encoded_value = value >> rshift;
+  }
+}
+
+
+/**
+   This function does the (approximate) reverse of what `encode_signed_value()` does.
+
+     @param [in] code   The code, as retrieved from the bit stream.
+                        Only the lowest-order `num_bits_encoded` bits are
+                        inspected by this function; the rest may have
+                        any value.
+     @param [in] num_bits  The number of bits used in the code prior
+                        to discarding the lower-order bits
+     @param [in] num_bits_encoded  This is equal to
+                        min(num_bits, max_bits_encoded), where max_bits_encoded
+                        will ultimately be user specified (e.g. bits-per-sample - 1),
+                        where bits-per-sample is user-specified.
+ */
+static inline int32_t decode_signed_value(int32_t code,
+                                          int num_bits,
+                                          int num_bits_encoded) {
+  if (num_bits == 0) {
+    return 0;
+  } else {
+    int32_t full_code = code << (num_bits - num_bits_encoded);
+
+    /**
+       non_sign_part is the lowest-order `num_bits - 1` bits of the code.
+       sign_part is the `num_bits - 1`'th bit, repeated at that
+       and higher-order positions by multiplying by -1.
+     */
+    int32_t non_sign_part = (full_code & ((1 << (num_bits - 1)) - 1)),
+        sign_part = (((int32_t)-1)) * (full_code & ((1 << (num_bits - 1)))),
+        rounding_part = (1 << num_bits) >> (num_bits_encoded + 1);
+    return non_sign_part | sign_part | rounding_part;
+  }
+}
+
+
+/**
+   Encodes the residual, returning the least number of bits required to do so
+   subject to a caller-specified floor.
+
+      @param [in] residual  The residual that we are trying to encode,
+                     meaning: the observed value minus the value that was
+                     predicted by the linear prediction.  This is a
+                     difference of int16_t's, but such differences cannot
+                     always be represented as int16_t, so it's represented
+                     as an int32_t.
+      @param [in] predicted   The predicted sample (so the residual
+                     is the observed sample minus this).  The only reason
+                     this needs to be specified is to detect situations
+                     where, due to quantization effects, the next decompressed
+                     sample would exceed the range of int16_t; in those
+                     cases, we need to reduce the magnitude of the encoded value to
+                     stay within the allowed range of int16_t (this avoids us
+                     having to implement extra checks in the decoder).
+       @param [in] min_bits   A caller-supplied floor on the number of bits
+                     we will use to encode the residual (the max of this
+                     and what least_bits() returns will be used.)
+                     It must be in the range [0, 16].
+       @param [in] max_bits_encoded  This is a user-specified maximum
+                     on the number of bits to use (it will be the
+                     bits-per-sample minus one, since the exponent takes one
+                     bit.)  It must be >= 2.  Note: It is allowed to be less
+                     than min_bits; if the number of bits needed exceeds
+                     max_bits_encoded, we discard lower-order bits.
+       @param [out]  num_bits  The number of bits used to encode this
+                     value before truncation.  Will be the smallest
+                     integer n such that n >= min_bits and
+                     -2^n <= 2 * residual < 2^n.
+       @param [out] num_bits_encoded  Will contain min(num_bits,
+                     max_bits_encoded) at exit.
+       @param [out]  encoded_value   A signed integer which can be
+                     encoded in `num_bits_encoded` bits.
+       @param [out] next_decompressed_value  Will contain
+                     residual + decode_signed_value(*encoded_value,
+                                  *num_bits, *num_bits_encoded).
+                    It just happens to be convenient to compute it
+                    here.
+*/
+static inline void encode_residual(int32_t residual,
+                                   int16_t predicted,
+                                  int min_bits,
+                                  int max_bits_encoded,
+                                  int *num_bits,
+                                  int *num_bits_encoded,
+                                  int32_t *encoded_value,
+                                  int16_t *next_decompressed_value) {
+  assert(min_bits >= 0 && min_bits <= 16 && max_bits_encoded >= 2);
+
+  encode_signed_value(residual, min_bits, max_bits_encoded,
+                      num_bits, num_bits_encoded, encoded_value);
+
+
+  int32_t decoded_residual = decode_signed_value(*encoded_value, *num_bits,
+                                                 *num_bits_encoded),
+      next_value = (int32_t)predicted + decoded_residual;
+
+  {
+    int32_t max_error = (((int32_t)1) << *num_bits) >> (*num_bits_encoded + 1);
+    assert(lilcom_abs(decoded_residual - residual) <= max_error);
+  }
+
+  if (((int16_t)next_value) != next_value) {
+    /* This should be very rare; it means that we have exceeded the range of
+       int16_t due to rounding effects, so we have to decrease the
+       magnitude of *encoded_value by 1. */
+    *encoded_value += (*encoded_value > 0 ? -1 : 1);
+    decoded_residual = decode_signed_value(*encoded_value, *num_bits,
+                                           *num_bits_encoded);
+    next_value = (int32_t)predicted + decoded_residual;
+    assert(((int16_t)next_value) == next_value);
+  }
+  *next_decompressed_value = next_value;
+}
+
+
+
+
 /**
    Computes the least exponent subject to a caller-specified floor*, i.e. which
    is sufficient to encode (an approximation of) this residual; also computes
@@ -743,7 +948,7 @@ static inline int bit_unpacker_read_next_code(int num_bits,
      (-(2M+2) << e) <= residual * 2 <= (2M-1) << e)
 
 */
-static inline void least_exponent(int32_t residual,
+static inline int least_exponent(int32_t residual,
                                  int16_t predicted,
                                  int min_exponent,
                                  int mantissa_limit,
@@ -3243,7 +3448,59 @@ void lilcom_test_get_max_abs_float_value() {
   assert(max_abs_float_value(array, 100, 1) == lilcom_abs(array[99]));
 }
 
+void lilcom_test_encode_decode_signed() {
+  for (int value = -1000; value <= 1000; value++) {
+    for (int min_bits = 0; min_bits < 4; min_bits++) {
+      for (int max_bits_encoded = 2; max_bits_encoded <= 6; max_bits_encoded++) {
+        int num_bits, num_bits_encoded;
+        int32_t encoded;
+        encode_signed_value(value, min_bits, max_bits_encoded,
+                            &num_bits, &num_bits_encoded, &encoded);
 
+        int32_t decoded = decode_signed_value(encoded, num_bits,
+                                              num_bits_encoded);
+        printf("Value=%d, min-bits=%d, max-bits=%d, num-bits{,enc}=%d,%d, encoded=%d, decoded=%d\n",
+               (int)value, (int)min_bits, (int)max_bits_encoded,
+               (int)num_bits,
+               (int)num_bits_encoded, (int)encoded, (int)decoded);
+        int max_error = (num_bits == num_bits_encoded ? 0 :
+                         1 << (num_bits - num_bits_encoded - 1));
+        assert(lilcom_abs(decoded - value) <= max_error);
+
+      }
+    }
+  }
+}
+
+void lilcom_test_encode_residual() {
+  for (int source = 0; source < 1000; source++)  {
+    for (int min_bits = 0; min_bits < 4; min_bits++) {
+      for (int max_bits_encoded = 2; max_bits_encoded <= 6; max_bits_encoded++) {
+        int num_bits, num_bits_encoded;
+        int32_t encoded;
+
+        int16_t predicted = (source * 23456) % 65535,
+            next_value = (source * 12345) % 65535;
+        int32_t residual = next_value - (int32_t)predicted;
+        int16_t next_decompressed_value;
+        encode_residual(residual, predicted,
+                        min_bits, max_bits_encoded,
+                        &num_bits, &num_bits_encoded,
+                        &encoded,
+                        &next_decompressed_value);
+        int32_t decoded = decode_signed_value(encoded,
+                                              num_bits,
+                                              num_bits_encoded),
+            decompressed_check = predicted + decoded;
+        assert(next_decompressed_value == decompressed_check);
+        printf("residual = %d, predicted = %d, next-value = %d, max-bits=%d, "
+               "num-bits{,enc}=%d,%d encoded = %d,  next{,decompressed}=%d,%d\n",
+               residual, predicted, next_value, max_bits_encoded, num_bits,
+               num_bits_encoded, encoded, next_value, next_decompressed_value);
+      }
+    }
+  }
+}
 
 int main() {
   lilcom_check_constants();
@@ -3254,5 +3511,7 @@ int main() {
   lilcom_test_compress_float();
   lilcom_test_compute_conversion_exponent();
   lilcom_test_get_max_abs_float_value();
+  lilcom_test_encode_decode_signed();
+  lilcom_test_encode_residual();
 }
 #endif
