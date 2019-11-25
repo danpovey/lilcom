@@ -3459,10 +3459,11 @@ void lilcom_test_encode_decode_signed() {
 
         int32_t decoded = decode_signed_value(encoded, num_bits,
                                               num_bits_encoded);
+        /*
         printf("Value=%d, min-bits=%d, max-bits=%d, num-bits{,enc}=%d,%d, encoded=%d, decoded=%d\n",
                (int)value, (int)min_bits, (int)max_bits_encoded,
                (int)num_bits,
-               (int)num_bits_encoded, (int)encoded, (int)decoded);
+               (int)num_bits_encoded, (int)encoded, (int)decoded); */
         int max_error = (num_bits == num_bits_encoded ? 0 :
                          1 << (num_bits - num_bits_encoded - 1));
         assert(lilcom_abs(decoded - value) <= max_error);
@@ -3493,10 +3494,11 @@ void lilcom_test_encode_residual() {
                                               num_bits_encoded),
             decompressed_check = predicted + decoded;
         assert(next_decompressed_value == decompressed_check);
+        /*
         printf("residual = %d, predicted = %d, next-value = %d, max-bits=%d, "
                "num-bits{,enc}=%d,%d encoded = %d,  next{,decompressed}=%d,%d\n",
                residual, predicted, next_value, max_bits_encoded, num_bits,
-               num_bits_encoded, encoded, next_value, next_decompressed_value);
+               num_bits_encoded, encoded, next_value, next_decompressed_value);*/
       }
     }
   }
