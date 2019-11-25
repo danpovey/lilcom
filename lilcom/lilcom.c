@@ -295,13 +295,8 @@
 
 
 
-/** returns the sign of 'val', i.e. +1 if is is positive, -1 if
-    it is negative, and 0 if it is zero.  */
-static inline int lilcom_sgn(int val) {
-  return (0 < val) - (val < 0);
-}
-
 #define lilcom_abs(a) ((a) > 0 ? (a) : -(a))
+#define lilcom_min(a, b) ((a) > (b) ? (b) : (a))
 
 
 
@@ -725,7 +720,7 @@ static inline int least_bits(int32_t value,
                     min(*num_bits, max_bits_encoded).
       @param [out] encoded_value  The value which will get written
                    to the bit stream; only the lowest-order
-                   `*num_bits_encoded` of this will get written,
+                   `*num_bits_encoded` of this are valid.
                    but the higher-order-than-that bits will be
                    all 0 or 1 according to the sign.
                    encoded_value << (*num_bits - *num_bits_encoded)
@@ -810,7 +805,7 @@ static inline int32_t decode_signed_value(int32_t code,
        @param [in] min_bits   A caller-supplied floor on the number of bits
                      we will use to encode the residual (the max of this
                      and what least_bits() returns will be used.)
-                     It must be in the range [0, 16].
+                     It must be in the range [0, 17].
        @param [in] max_bits_encoded  This is a user-specified maximum
                      on the number of bits to use (it will be the
                      bits-per-sample minus one, since the exponent takes one
@@ -833,17 +828,16 @@ static inline int32_t decode_signed_value(int32_t code,
 */
 static inline void encode_residual(int32_t residual,
                                    int16_t predicted,
-                                  int min_bits,
-                                  int max_bits_encoded,
-                                  int *num_bits,
-                                  int *num_bits_encoded,
-                                  int32_t *encoded_value,
-                                  int16_t *next_decompressed_value) {
-  assert(min_bits >= 0 && min_bits <= 16 && max_bits_encoded >= 2);
+                                   int min_bits,
+                                   int max_bits_encoded,
+                                   int *num_bits,
+                                   int *num_bits_encoded,
+                                   int32_t *encoded_value,
+                                   int16_t *next_decompressed_value) {
+  assert(min_bits >= 0 && min_bits <= 17 && max_bits_encoded >= 2);
 
   encode_signed_value(residual, min_bits, max_bits_encoded,
                       num_bits, num_bits_encoded, encoded_value);
-
 
   int32_t decoded_residual = decode_signed_value(*encoded_value, *num_bits,
                                                  *num_bits_encoded),
@@ -856,238 +850,20 @@ static inline void encode_residual(int32_t residual,
 
   if (((int16_t)next_value) != next_value) {
     /* This should be very rare; it means that we have exceeded the range of
-       int16_t due to rounding effects, so we have to decrease the
-       magnitude of *encoded_value by 1. */
-    *encoded_value += (*encoded_value > 0 ? -1 : 1);
-    decoded_residual = decode_signed_value(*encoded_value, *num_bits,
-                                           *num_bits_encoded);
+       int16_t due to rounding effects, so we have to decrease the magnitude of
+       *encoded_value by 1.  Note: there is a reason why it's >= 0 and not > 0.
+       *encoded_value of zero will, if *num_bits > num_bits_encoded, be decoded as
+       a positive number (search for `rounding_part` in decode_signed_value()),
+       so if this is overshooting we have to turn it into -1.
+    */
+    *encoded_value += (*encoded_value >= 0 ? -1 : 1);
+    int fixed_decoded_residual = decode_signed_value(*encoded_value, *num_bits,
+                                                     *num_bits_encoded);
+    decoded_residual = fixed_decoded_residual;
     next_value = (int32_t)predicted + decoded_residual;
     assert(((int16_t)next_value) == next_value);
   }
   *next_decompressed_value = next_value;
-}
-
-
-
-
-/**
-   Computes the least exponent subject to a caller-specified floor*, i.e. which
-   is sufficient to encode (an approximation of) this residual; also computes
-   the associated mantissa and the next predicted value.
-
-      @param [in] residual  The residual that we are trying to encode,
-                     meaning: the observed value minus the value that was
-                     predicted by the linear prediction.  This is a
-                     difference of int16_t's, but such differences cannot
-                     always be represented as int16_t, so it's represented
-                     as an int32_t.
-
-      @param [in] predicted   The predicted sample (so the residual
-                     is the observed sample minus this).  The only reason
-                     this needs to be specified is to detect situations
-                     where, due to quantization effects, the next decompressed
-                     sample would exceed the range of int16_t; in those
-                     cases, we need to reduce the magnitude of the mantissa to
-                     stay within the allowed range of int16_t (this avoids us
-                     having to implement extra checks in the decoder).
-
-       @param [in] min_exponent  A caller-supplied floor on the exponent;
-                     must be in the range [0, 15].  This function will
-                     never return a value less than this.  min_exponent will
-                     normally be the maximum of zero and the previous sample's
-                     exponent minus 1, but may be more than that if we are
-                     backtracking (because future samples need a larger
-                     exponent).
-
-       @param [in]  mantissa_limit  A power of 2 in [4,8,16,32,64],
-                     equal to 1 << (bits_per_sample - 1).  The allowed
-                     range of the mantissa is [-mantissa_limit.. mantissa_limit-1]
-
-       @param [out] mantissa  This function will write an integer in
-                    the range [-mantissa_limit.. mantissa_limit-1]
-                    to here, such that
-                    (mantissa << exponent) is a close approximation
-                    of `residual` and satisfies the property that
-                    `predicted + (mantissa << exponent)` does not
-                    exceed the range of int16_t.
-
-       @param [out] next_compressed_value  The next compressed value
-                    will be written to here; at exit this will contain
-                    `predicted + (mantissa << exponent)`.
-
-    @return  Returns the exponent chosen, a value in the range [min_exponent..11].
-
-
-   The intention of this function is to return the exponent in the range
-   [min_exponent..15] which gives the closest approximation to `residual` that
-   we could get with any exponent, while choosing the lower exponent in case of
-   ties.  This is largely what it does, although it may not always do so in the
-   corner cases where we needed to modify the mantissa to not exceed the range
-   of int16_t.  The details of how the integer mantissa is chosen (especially
-   w.r.t. rounding and ties) is explained in a comment inside the function.
-
-   The following explains how this function chooses the exponent.
-
-   Define the exact mantissa m(e), which is a function of the exponent e,
-   as:
-            m(e) =  residual / (2^e),
-   viewed as an exact mathematical expresion, not as an integer.
-   Let M be shorthand for mantissa_limit (a power of 2).
-   We want to return the smallest value of e such that
-
-      -(M+1) <= m(e) <= (M-0.5).
-
-   This inequality ensures that there will be no loss of accuracy by choosing e
-   instead of e+1 as the exponent.  (If we had a larger exponent, the closest
-   points we'd be able to reach would be equivalent to m(e) = -(M+2) or +M; and if
-   m(e) satisfies the inequality above we'd have no loss of precision by using e
-   rather than e + 1 as the exponent.  (Notice that -(M+1) is the midpoint of
-   [-(M+2),-M] and (M-0.5) is the midpoint of [M-1,M]).  Multiplying by two, we can
-   express the above in integer math as:
-
-     (-(2M+2) << e) <= residual * 2 <= (2M-1) << e)
-
-*/
-static inline int least_exponent(int32_t residual,
-                                 int16_t predicted,
-                                 int min_exponent,
-                                 int mantissa_limit,
-                                 int *mantissa,
-                                 int16_t *next_decompressed_value) {
-  assert (min_exponent >= 0 && min_exponent <= 15); /* TODO: remove this? */
-  int exponent = min_exponent;
-  int32_t residual2 = residual * 2,
-      minimum = -(2*mantissa_limit + 2) << exponent,
-      maximum = (2*mantissa_limit - 1) << exponent;
-  while (residual2 < minimum || residual2 > maximum) {
-    minimum *= 2;
-    maximum *= 2;
-    exponent++;
-  }
-  {
-    /**
-       This code block computes 'mantissa', the integer mantissa which we call
-       which should be a value in the range [-M, M-1] where M is
-       mantissa_limit
-
-       The mantissa will be the result of rounding (residual /
-       (float)2^exponent) to the nearest integer (see below for the rounding
-       behavior in case of ties, which we randomize); and then, if the result is
-       -(M+1) or +M, changing it to -M or M-1 respectively.
-
-       What we'd like to do, approximately, is to compute
-
-           mantissa = residual >> exponent
-
-       where >> can be interpreted, roughly, as division by 2^exponent; but we
-       want some control of the rounding behavior; we need to make sure it is
-       well defined according to the C standard (I don't think it guarantees
-       consistent results on different platforms for negative arguments).  To
-       maximize accuracy we choose to round to the closest, like what round()
-       does for floating point expressions; but we want some control of what
-       happens in case of ties.  I am concerned that always rounding towards
-       zero might cause a bias that might matter for some purposes, so it is
-       desired to round in a random direction (up or down).  We choose to round
-       up or down, pseudo-randomly.
-
-       We'll use (predicted%2) as the source of randomness.  This will be
-       sufficiently random for loud signals (varying by more than about 1 or 2
-       from sample to sample); and for very quiet signals (magnitude close to 1)
-       we'll be exactly coding it anyway so it won't matter.
-
-       Consider the expression below, which can be considered as an attempt to
-       get the rounding behavior described above:
-
-          mantissa = (residual*2 + offset) >> (exponent + 1)
-
-       (and assume >> is the same as division by a power of 2 but rounding
-       towards -infinity; the C standard coesn't guarantee this behavior but
-       we'll fix that in a different way).
-
-        and consider two possibilities for `offset`.
-       (a)  offset = (1<<exponent)
-       (b)  offset = ((1<<exponent) - 1)
-
-       In case (a) it rounds up in case of ties (e.g. if the residual is 6 and
-       exponent is 2 so we're rounding to a multiple of 4).  In case (b)
-       it rounds down.  By using:
-         offset = ((1<<exponent) - (predicted&1))
-       we are randomly choosing (a) or (b) based on randomness in the
-       least significant bit of `predicted`.
-
-       OK, imagine the code was as follows:
-
-       int offset = ((1 << exponent) - (predicted&1)),
-        local_mantissa = (residual2 + offset) >> (exponent + 1);
-
-       The above code would do what we want on almost all platforms (since >> on
-       a signed number is normally arithmetic right-shift in practice, which is
-       what we want).  But we're going to modify it to guarantee correct
-       behavior for negative numbers, since the C standard says right shift of
-       negative signed numbers is undefined.
-
-       The way we ensure consistent right-shift behavior is to cast to int32_t,
-       then cast to uint32_t and right-shift as unsigned (this will leave up to
-       MAX_POSSIBLE_EXPONENT == 15 zeros in the most significant bits), then
-       cast to int16_t which will get rid of those zeros and to to interpret it
-       as a signed number as we wanted, then cast to int (which may or may not
-       be int16).  This won't be portable to systems that don't use twos-complement
-       representation of signed integers (if they still exist).
-    */
-    int32_t offset = (1 << exponent) - (predicted&1);
-
-    int local_mantissa = (int)(int16_t)(((uint32_t)(residual2 + (int32_t)offset)) >> (exponent + 1));
-
-    assert(local_mantissa >= -(mantissa_limit+1) && local_mantissa <= mantissa_limit);
-
-    /*
-       We can't actually represent -(mantissa_limit+1) in the number of bits
-       we're using for the mantissa, but we choose to retain this exponent, in
-       this case, because -(mantissa_limit+1) is as close to -mantissa_limit as
-       it is to -(mantissa_limit+2) which is what we'd be able to use if we used
-       a one-larger exponent.  */
-    if (local_mantissa == -(mantissa_limit+1))
-      local_mantissa = -mantissa_limit;
-    /*  The following could happen if we really wanted the mantissa to be
-        exactly mantissa_limit-0.5, and `predicted` was even so we rounded up.
-        This would only happen in case of ties, so we lose no accuracy by doing
-        this. */
-    if (local_mantissa == mantissa_limit)
-      local_mantissa = mantissa_limit-1;
-
-    int32_t next_signal_value =
-        ((int32_t)predicted) + (((int32_t)local_mantissa) << exponent);
-
-    {
-      /* Just a check.  I will remove this block after it's debugged.
-         Checking that the error is in the expected range.  */
-      int16_t error = (int16_t)(next_signal_value - (predicted + residual));
-      if (error < 0) error = -error;
-      if (local_mantissa > -mantissa_limit) {
-        assert(error <= ((1 << exponent) >> 1));
-      } else {
-        /** If local_mantissa is -mantissa_limit, the desired mantissa might have been
-            -(mantissa_limit+1), meaning the error is twice as large as it could
-            normally be, so we need to make the assert different. */
-        assert(error <= (1 << exponent));
-      }
-    }
-
-    if (next_signal_value != (int16_t)next_signal_value) {
-      /** The next signal exceeds the range of int16_t; this can in principle
-        happen if the predicted signal was close to the edge of the range
-        [-32768..32767] and quantization effects took us over the edge.  We
-        need to reduce the magnitude of the mantissa by one in this case. */
-      local_mantissa -= lilcom_sgn(local_mantissa);
-      next_signal_value =
-          ((int32_t)predicted) + (((int32_t)local_mantissa) << exponent);
-      assert(next_signal_value == (int16_t)next_signal_value);
-    }
-
-    *next_decompressed_value = next_signal_value;
-    *mantissa = local_mantissa;
-  }
-  return exponent;
 }
 
 
@@ -1231,8 +1007,7 @@ inline static int backtracking_encoder_encode(int32_t residual,
   int exponent_t1 = encoder->exponents[t1_mod],
       min_codable_exponent =
       LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_t1),
-      exponent_floor = (min_codable_exponent < 0 ? 0 : min_codable_exponent),
-      exponent, mantissa;
+      exponent_floor = (min_codable_exponent < 0 ? 0 : min_codable_exponent);
   if (t <= t_most_recent) {
     /* We are backtracking, so there will be limitations on the
        exponent. (encoder->exponents[t_mod] represents a floor
@@ -1247,11 +1022,15 @@ inline static int backtracking_encoder_encode(int32_t residual,
     encoder->most_recent_attempt = t;
   }
 
-  if ((exponent = least_exponent(residual, predicted,
-                                 exponent_floor,
-                                 encoder->mantissa_limit,
-                                 &mantissa, next_value))
-      <= min_codable_exponent + 1) {
+  int exponent, /* note: exponent is not any more the exponent, it is the
+                 * num-bits; must rename. */
+      num_bits_encoded, mantissa;
+  encode_residual(residual, predicted,
+                  exponent_floor,  /* min_bits */
+                  encoder->bits_per_sample - 1,
+                  &exponent, &num_bits_encoded,
+                  &mantissa, next_value);
+  if (exponent <= min_codable_exponent + 1) {
     /* Success. */
     int exponent_delta = exponent - min_codable_exponent;
     /* The following is a checks (non-exhaustively) that exponent_delta is 0 or 1. */
@@ -1379,7 +1158,9 @@ static inline int decoder_decode(ssize_t t,
       min_codable_exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(
           t, decoder->exponent),
       mantissa = extract_mantissa(code, decoder->bits_per_sample),
-      exponent = min_codable_exponent + exponent_bit;
+      exponent = min_codable_exponent + exponent_bit,
+      num_bits_encoded = lilcom_min(decoder->bits_per_sample,
+                                    exponent);
   decoder->exponent = exponent;
 
   if (((unsigned int)exponent) > MAX_POSSIBLE_EXPONENT) {
@@ -1389,7 +1170,9 @@ static inline int decoder_decode(ssize_t t,
 #endif
     return 1;
   } else {
-    *value = (mantissa << exponent);
+    /* TODO: don't need to extract the mantissa. */
+    *value = decode_signed_value(mantissa, exponent,
+                                 num_bits_encoded);
     return 0;
   }
 }
