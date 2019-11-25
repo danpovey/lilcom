@@ -666,9 +666,9 @@ static inline int bit_unpacker_read_next_code(int num_bits,
 
 
 /**
-   Computes the least exponent (subject to a caller-specified floor) which
-   is sufficient to encode (an approximation of) this residual; also
-   computes the associated mantissa and the next predicted value.
+   Computes the least exponent subject to a caller-specified floor*, i.e. which
+   is sufficient to encode (an approximation of) this residual; also computes
+   the associated mantissa and the next predicted value.
 
       @param [in] residual  The residual that we are trying to encode,
                      meaning: the observed value minus the value that was
@@ -743,7 +743,7 @@ static inline int bit_unpacker_read_next_code(int num_bits,
      (-(2M+2) << e) <= residual * 2 <= (2M-1) << e)
 
 */
-static inline int least_exponent(int32_t residual,
+static inline void least_exponent(int32_t residual,
                                  int16_t predicted,
                                  int min_exponent,
                                  int mantissa_limit,
@@ -1007,6 +1007,8 @@ void backtracking_encoder_init(int bits_per_sample,
              (while still satisfying encoder->most_recent_attempt -
              encoder->next_sample_to_encode < (2*MAX_POSSIBLE_EXPONENT + 1)).
 
+     See also decoder_decode(), which you can think of as the reverse
+     of this.
  */
 inline static int backtracking_encoder_encode(int32_t residual,
                                               int16_t predicted,
