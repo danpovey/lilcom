@@ -1,12 +1,22 @@
 #include <assert.h>
 #include <stdlib.h>  /* for malloc */
 #include <math.h>  /* for frexp and frexpf and pow, used in floating point compression. */
+
+#undef NDEBUG  /* setup.py adds -DNDEBUG and it's hard to remove it. */
+
 #ifndef NDEBUG
 #include <stdio.h>  /* print statements are only made if NDEBUG is not defined. */
 #endif
 #include <float.h>  /* for FLT_MAX */
 
 #include "lilcom.h"
+
+
+#ifndef NDEBUG
+#define debug_fprintf(...) fprintf(__VA_ARGS__)
+#else
+#define debug_fprintf(...) while (0)  /* does nothing and allows termination by ';' */
+#endif
 
 
 #ifdef LILCOM_TEST
@@ -195,7 +205,7 @@
    65535 is 65536, and the lowest exponent that can generate that number is 15:
    (65536 = 2 << 15)
  */
-#define MAX_POSSIBLE_EXPONENT 15
+#define MAX_POSSIBLE_EXPONENT 17
 
 /**
    MAX_BACKTRACK is a convenient way of saying 'the maximum number of samples we
@@ -286,7 +296,7 @@
    8, hence a whole number of bytes.
 
    It should be at least twice the maximum number of time steps we might backtrack
-   (which is MAX_POSSIBLE_EXPONENT*2 = 30).  We choose to make it 16 bytes,
+   (which is MAX_POSSIBLE_EXPONENT+1 = 18).  We choose to make it 32 bytes,
    meaning the entire staging area contains 64 bytes.
 
    There are 2 staging blocks in the buffer.
@@ -987,6 +997,8 @@ void backtracking_encoder_init(int bits_per_sample,
              encoder->next_sample_to_encode will be decreased
              (while still satisfying encoder->most_recent_attempt -
              encoder->next_sample_to_encode < (2*MAX_POSSIBLE_EXPONENT + 1)).
+             [Note: this type of failure happens in the normal course
+             of compression, it is part of backtracking.]
 
      See also decoder_decode(), which you can think of as the reverse
      of this.
@@ -1164,10 +1176,8 @@ static inline int decoder_decode(ssize_t t,
   decoder->exponent = exponent;
 
   if (((unsigned int)exponent) > MAX_POSSIBLE_EXPONENT) {
-#ifndef NDEBUG
-    fprintf(stderr, "Decompression failed, bad exponent %d at t=%d\n",
-            (int)exponent, (int)t);
-#endif
+    debug_fprintf(stderr, "Decompression failed, bad exponent %d at t=%d\n",
+                  (int)exponent, (int)t);
     return 1;
   } else {
     /* TODO: don't need to extract the mantissa. */
@@ -1883,9 +1893,7 @@ void lilcom_compute_lpc(int lpc_order,
   return;
 
 panic:
-#ifndef NDEBUG
-  fprintf(stderr, "Lilcom: warning: panic code reached.\n");
-#endif
+  debug_fprintf(stderr, "Lilcom: warning: panic code reached.\n");
   lpc->lpc_coeffs[0] = (1 << LPC_APPLY_LEFT_SHIFT);
   for (int i = 0; i < lpc_order; i++)
     lpc->lpc_coeffs[0] = 0;
@@ -2210,8 +2218,11 @@ int lilcom_compress(
       lpc_order < 0 || lpc_order > MAX_LPC_ORDER ||
       bits_per_sample < LILCOM_MIN_BPS || bits_per_sample > LILCOM_MAX_BPS ||
       conversion_exponent < -127 || conversion_exponent > 128 ||
-      num_bytes != lilcom_get_num_bytes(num_samples, bits_per_sample))
+      num_bytes != lilcom_get_num_bytes(num_samples, bits_per_sample)) {
+    debug_fprintf(stderr, "[lilcom] failure in compression: something "
+                  "wrong with args.");
     return 1;  /* error */
+  }
 
   struct CompressionState state;
   lilcom_init_compression(num_samples, input, input_stride,
@@ -2250,10 +2261,8 @@ int lilcom_compress(
 
   bit_packer_flush(&state.packer);
 
-#ifndef NDEBUG
-  fprintf(stderr, "Backtracked %f%% of the time\n",
+  debug_fprintf(stderr, "Backtracked %f%% of the time\n",
           ((state.num_backtracks * 100.0) / num_samples));
-#endif
 
   return 0;
 }
@@ -2330,10 +2339,8 @@ static inline int lilcom_decompress_one_sample(
   if (((new_sample + 32768) & ~(int32_t)65535) != 0) {
     /** If `new_sample` is outside the range [-32768 .. 32767], it
         is an error; we should not be generating such samples. */
-#ifndef NDEBUG
-    fprintf(stderr, "lilcom: decompression failure (corruption?), t = %d\n",
-            (int)t);
-#endif
+    debug_fprintf(stderr, "lilcom: decompression failure (corruption?), t = %d\n",
+                  (int)t);
     return 1;
   }
   output_sample[0] = new_sample;
@@ -2369,13 +2376,11 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
   if (num_samples <= 0 || input_stride == 0 || output_stride == 0 ||
       !lilcom_header_plausible(input, input_stride) ||
       num_samples != lilcom_get_num_samples(input, num_bytes, input_stride)) {
-#ifndef NDEBUG
-    fprintf(stderr,
-            "lilcom: Warning: bad header, num-bytes=%d, num-samples=%d, "
-            "input-stride=%d, plausible=%d\n",
-            (int)num_bytes, (int)num_samples, (int)input_stride,
-            (int)lilcom_header_plausible(input, input_stride));
-#endif
+    debug_fprintf(stderr,
+                  "lilcom: Warning: bad header, num-bytes=%d, num-samples=%d, "
+                  "input-stride=%d, plausible=%d\n",
+                  (int)num_bytes, (int)num_samples, (int)input_stride,
+                  (int)lilcom_header_plausible(input, input_stride));
     return 1;  /** Error */
   }
 
@@ -2422,9 +2427,7 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
         lilcom_decompress_one_sample(t, lpc_order,
                                      lpc.lpc_coeffs, residual,
                                      &(output_buffer[MAX_LPC_ORDER + t])) != 0) {
-#ifndef NDEBUG
-      fprintf(stderr, "lilcom: decompression failure for t=%d\n", (int)t);
-#endif
+      debug_fprintf(stderr, "lilcom: decompression failure for t=%d\n", (int)t);
       return 1;  /** Error */
     }
     output[t * output_stride] = output_buffer[MAX_LPC_ORDER + t];
@@ -2475,10 +2478,8 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
         if (decoder_decode(t, code, &decoder, &residual) != 0 ||
             lilcom_decompress_one_sample(t, lpc_order, lpc.lpc_coeffs, residual,
                                          output + t) != 0) {
-#ifndef NDEBUG
-          fprintf(stderr, "lilcom: decompression failure for t=%d\n",
-                  (int)t);
-#endif
+          debug_fprintf(stderr, "lilcom: decompression failure for t=%d\n",
+                        (int)t);
           return 1;  /** Error */
         }
       }
@@ -2528,10 +2529,8 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
             lilcom_decompress_one_sample(
                 t,lpc_order, lpc.lpc_coeffs, residual,
                 output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1))) != 0) {
-#ifndef NDEBUG
-          fprintf(stderr, "lilcom: decompression failure for t=%d\n",
-                  (int)t);
-#endif
+          debug_fprintf(stderr, "lilcom: decompression failure for t=%d\n",
+                        (int)t);
           return 1;  /** Error */
         }
 
@@ -2683,10 +2682,8 @@ int compute_conversion_exponent(float max_abs_value) {
 
   if (i == 1000 || i == -1000) {
     /** This point should never be reached. */
-#ifndef NDEBUG
-    fprintf(stderr, "lilcom: warning: something went wrong while "
-            "finding the exponent: i=%d\n", i);
-#endif
+    debug_fprintf(stderr, "lilcom: warning: something went wrong while "
+                  "finding the exponent: i=%d\n", i);
     return -256;
   }
 
@@ -2722,15 +2719,18 @@ int lilcom_compress_float(
   }
 
   float max_abs_value = max_abs_float_value(input, num_samples, input_stride);
-  if (max_abs_value - max_abs_value != 0)
+  if (max_abs_value - max_abs_value != 0) {
+    debug_fprintf(stderr, "[lilcom] Detected inf or NaN (1)\n");
     return 1;  /* Inf's or Nan's detected */
+  }
   int conversion_exponent = compute_conversion_exponent(max_abs_value);
 
   /* -256 is the error code when compute_conversion_exponent detects infinities
       or NaN's. */
-  if (conversion_exponent == -256)
+  if (conversion_exponent == -256) {
+    debug_fprintf(stderr, "[lilcom] Detected inf or NaN (2)\n");
     return 2;  /* This is the error code meaning we detected inf or NaN. */
-
+  }
   assert(conversion_exponent >= -127 && conversion_exponent <= 128);
 
   int adjusted_exponent = 15 - conversion_exponent;
@@ -2788,8 +2788,10 @@ int lilcom_decompress_float(
     const int8_t *input, ssize_t num_bytes, int input_stride,
     float *output, ssize_t num_samples, int output_stride) {
   if (num_bytes < 5 || input_stride == 0 || output_stride == 0 ||
-      num_samples != lilcom_get_num_samples(input, num_bytes, input_stride))
+      num_samples != lilcom_get_num_samples(input, num_bytes, input_stride)) {
+    debug_fprintf(stderr, "[lilcom] Error in header, decompressing float\n");
     return 1;  /* Error */
+  }
   /* Note: we re-use the output as the temporary int16_t array */
   int16_t *temp_array = (int16_t*)output;
   int temp_array_stride;
@@ -2849,9 +2851,9 @@ static inline int lilcom_check_constants() {
   /* At some point we use 1 << (LPC_APPLY_LEFT_SHIFT + 16) as an int32 and we
      want to preclude overflow. */
   assert(LPC_APPLY_LEFT_SHIFT + 16 < 31);
-  assert(STAGING_BLOCK_SIZE > 2*MAX_POSSIBLE_EXPONENT);
+  assert(STAGING_BLOCK_SIZE > MAX_POSSIBLE_EXPONENT+1);
   assert((STAGING_BLOCK_SIZE & (STAGING_BLOCK_SIZE - 1)) == 0);
-  assert(EXPONENT_BUFFER_SIZE > 2*MAX_POSSIBLE_EXPONENT);
+  assert(EXPONENT_BUFFER_SIZE > MAX_POSSIBLE_EXPONENT+1);
   assert((LPC_ROLLING_BUFFER_SIZE - 1) * AUTOCORR_BLOCK_SIZE > 24);
   assert(MAX_LPC_ORDER >> LPC_ORDER_BITS == 0);
   assert(MAX_LPC_ORDER % 2 == 0);
@@ -2968,7 +2970,7 @@ void lilcom_test_compress_sine() {
     if (lilcom_decompress(compressed, num_bytes, 1,
                           decompressed, 999, 1,
                           &exponent2) != 0) {
-      fprintf(stderr, "Decompression failed\n");
+      debug_fprintf(stderr, "Decompression failed\n");
     }
     assert(exponent2 == exponent);
     fprintf(stderr, "Bits-per-sample=%d, sine snr (dB) = %f\n",
