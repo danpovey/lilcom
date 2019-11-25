@@ -932,7 +932,7 @@ struct BacktrackingEncoder {
      @param [in,out] exponent_m1   Address to write the exponent
                   for time t == -1 (this allows it to initialize
                   the sequence of exponents).  This address is
-                  stored inside the encoder and it will be
+                  stored inside the encoder and its contents will be
                   modified as needed.
      @param [out] encoder  The encoder to be initialized
 
@@ -1171,7 +1171,7 @@ static inline int decoder_decode(ssize_t t,
           t, decoder->exponent),
       mantissa = extract_mantissa(code, decoder->bits_per_sample),
       exponent = min_codable_exponent + exponent_bit,
-      num_bits_encoded = lilcom_min(decoder->bits_per_sample,
+      num_bits_encoded = lilcom_min(decoder->bits_per_sample - 1,
                                     exponent);
   decoder->exponent = exponent;
 
