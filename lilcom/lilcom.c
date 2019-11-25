@@ -743,7 +743,7 @@ static inline int bit_unpacker_read_next_code(int num_bits,
      (-(2M+2) << e) <= residual * 2 <= (2M-1) << e)
 
 */
-static inline void least_exponent(int32_t residual,
+static inline int least_exponent(int32_t residual,
                                  int16_t predicted,
                                  int min_exponent,
                                  int mantissa_limit,
