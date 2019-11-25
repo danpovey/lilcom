@@ -582,7 +582,7 @@ static inline int bit_unpacker_read_next_code(int num_bits,
         have currently. */
     unsigned char code = *unpacker->next_compressed_code;
     unpacker->next_compressed_code += unpacker->compressed_code_stride;
-    remaining_bits |= (((uint32_t)((unsigned char)(code))) << num_bits);
+    remaining_bits |= (((uint32_t)((unsigned char)(code))) << remaining_num_bits);
     remaining_num_bits += 8;
   }
   /* CAUTION: only the lowest-order `num_bits` bits of `ans` are valid; the rest
