@@ -313,6 +313,7 @@
    process is reversed.
  */
 struct BitPacker {
+  int max_bits_per_sample;
   /** num_samples_to_write is the total number of samples which we intend to
       write out. Used only for checking purposes. */
   ssize_t num_samples_to_write;
@@ -367,7 +368,7 @@ struct BitPacker {
 /**
    Init the bit-packer object.
       @param [in] bits_per_sample  The user-specified bits per sample, must be
-                         in the range [4..8]
+                        in the range [4..17].. only used for checking purposes.
       @param [in] num_samples_to_write  The number of samples that will be
                          written to this buffer; each will take up
                          `bits_per_sample` bits.
@@ -378,10 +379,12 @@ struct BitPacker {
       @param [in] compressed_code_stride  Spacing between elements of
                           compressed code; will normally be 1.  Must be nonzero.
  */
-void bit_packer_init(ssize_t num_samples_to_write,
+void bit_packer_init(int bits_per_sample,
+                     ssize_t num_samples_to_write,
                      int8_t *compressed_code,
                      int compressed_code_stride,
                      struct BitPacker *packer) {
+  packer->max_bits_per_sample = bits_per_sample;
   packer->num_samples_to_write = num_samples_to_write;
   packer->num_samples_committed = 0;
   packer->num_samples_committed_mod = 0;
@@ -497,6 +500,15 @@ void bit_packer_flush(struct BitPacker *packer) {
     }
     bit_packer_commit_block(packer->num_samples_committed, new_end,
                             flush, packer);
+  }
+  {
+    ssize_t num_bits_written = (8 * (packer->next_compressed_code - packer->compressed_code_start)) /
+        packer->compressed_code_stride;
+    float real_bits_per_sample = num_bits_written * 1.0 / packer->num_samples_to_write;
+    debug_fprintf(stderr,
+                  "Over %d samples, avg bits-per-sample is %.2f bits vs. max of %d bits\n",
+                  (int)packer->num_samples_to_write, (float)real_bits_per_sample,
+                  (int)packer->max_bits_per_sample);
   }
 }
 
@@ -1057,9 +1069,8 @@ inline static int backtracking_encoder_encode(int32_t residual,
        the bit-packer object deals with backtracking.
     */
     bit_packer_write_code(t, ((mantissa << 1) + exponent_delta),
-                          encoder->bits_per_sample,
+                          num_bits_encoded + 1,
                           packer);
-
     return 0;
   } else {
     /* Failure: the exponent required to most accurately
@@ -1188,9 +1199,9 @@ static inline int decoder_decode(ssize_t t,
       num_bits_encoded = lilcom_min(decoder->bits_per_sample - 1,
                                     exponent),
       mantissa = extend_sign_bit(
-          bit_unpacker_read_next_code(decoder->bits_per_sample - 1,
+          bit_unpacker_read_next_code(num_bits_encoded,
                                       unpacker),
-          decoder->bits_per_sample - 1);
+          num_bits_encoded);
 
   decoder->exponent = exponent;
 
@@ -2170,7 +2181,8 @@ static inline void lilcom_init_compression(
     int conversion_exponent,
     struct CompressionState *state) {
 
-  bit_packer_init(num_samples,
+  bit_packer_init(bits_per_sample,
+                  num_samples,
                   output + LILCOM_HEADER_BYTES * output_stride,
                   output_stride,
                   &state->packer);
