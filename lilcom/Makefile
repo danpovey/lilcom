@@ -18,3 +18,7 @@ lilcom: lilcom.c
 
 fixed_math: fixed_math.c
 	gcc -O0 -Wall -g -o fixed_math -DFIXED_MATH_TEST=1 fixed_math.c -o fixed_math -lm # -ftrapv
+
+
+prediction_math: prediction_math.c fixed_math.c
+	gcc -O0 -Wall -g -o fixed_math -DFIXED_MATH_TEST=1 fixed_math.c prediction_math.c -o prediction_math -lm # -ftrapv
