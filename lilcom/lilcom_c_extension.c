@@ -6,8 +6,6 @@
 /* The core library */
 #include "lilcom.h"
 
-
-
 /**
    Recursive internal implementation of lilcom_compress_int16
    @param [in] num_axes   The number of axes in the arrays (which must be the same, and
@@ -109,8 +107,7 @@ static int compress_int16_internal(int num_axes, int axis,
      """
  */
 
-static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject * keywds)
-{
+static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject *keywds) {
   PyObject *input; /* The input signal, passed as a numpy array. */
   PyObject *output; /* The output signal, passed as a numpy array. */
   int lpc_order = 4,
@@ -123,7 +120,7 @@ static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject * keywd
      objects.
   */
   static char *kwlist[] = {"input", "output",
-                           "lpc_order","bits_per_sample",
+                           "lpc_order", "bits_per_sample",
                            "conversion_exponent", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO|iii", kwlist,
                                    &input, &output,
@@ -131,8 +128,8 @@ static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject * keywd
                                    &conversion_exponent))
     goto error_return;
 
-  const int16_t *input_data = (const int16_t*)PyArray_DATA(input);
-  int8_t *output_data = (int8_t*) PyArray_DATA(output);
+  const int16_t *input_data = (const int16_t *) PyArray_DATA(input);
+  int8_t *output_data = (int8_t *) PyArray_DATA(output);
   if (!input_data || !output_data)
     goto error_return;
 
@@ -140,17 +137,15 @@ static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject * keywd
   if (PyArray_NDIM(output) != num_axes)
     goto error_return;
 
-
   int ret = compress_int16_internal(num_axes, 0,
                                     input_data, output_data,
                                     input, output, lpc_order,
                                     bits_per_sample,
                                     conversion_exponent);
   return PyLong_FromLong(ret);
-error_return:
+  error_return:
   return PyLong_FromLong(3);
 }
-
 
 /**
    Recursive internal implementation of lilcom_decompress_int16
@@ -194,7 +189,7 @@ static int decompress_int16_internal(int num_axes, int axis,
   assert(axis >= 0 && axis < num_axes);
 
   int input_dim = PyArray_DIM(input, axis),
-      output_dim =  PyArray_DIM(output, axis),
+      output_dim = PyArray_DIM(output, axis),
       input_stride = PyArray_STRIDE(input, axis) / sizeof(int8_t),
       output_stride = PyArray_STRIDE(output, axis) / sizeof(int16_t);
 
@@ -227,7 +222,6 @@ static int decompress_int16_internal(int num_axes, int axis,
       return conversion_exponent;
   }
 }
-
 
 /**
    The following will document this function as if it were a native
@@ -285,8 +279,8 @@ static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keyw
 
     goto error_return;
 
-  const int8_t *input_data = (const int8_t*)PyArray_DATA(input);
-  int16_t *output_data = (int16_t*) PyArray_DATA(output);
+  const int8_t *input_data = (const int8_t *) PyArray_DATA(input);
+  int16_t *output_data = (int16_t *) PyArray_DATA(output);
   if (!input_data || !output_data)
     goto error_return;
 
@@ -298,10 +292,9 @@ static PyObject *decompress_int16(PyObject *self, PyObject *args, PyObject *keyw
                                       input_data, output_data,
                                       input, output);
   return PyLong_FromLong(ret);
-error_return:
+  error_return:
   return PyLong_FromLong(3);
 }
-
 
 /**
    Recursive internal implementation of lilcom_compress_float
@@ -372,7 +365,6 @@ static int compress_float_internal(int num_axes, int axis,
   return 0;  /** Success */
 }
 
-
 /**
    The following will document this function as if it were a native
    Python function.
@@ -403,8 +395,7 @@ static int compress_float_internal(int num_axes, int axis,
                in this function.
      """
  */
-static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keywds)
-{
+static PyObject *compress_float(PyObject *self, PyObject *args, PyObject *keywds) {
   PyObject *input; /* The input signal, passed as a numpy array. */
   PyObject *output; /* The output signal, passed as a numpy array. */
   int lpc_order = 4,
@@ -424,8 +415,8 @@ static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keyw
                                    &bits_per_sample))
     goto error_return;
 
-  const float *input_data = (const float*)PyArray_DATA(input);
-  int8_t *output_data = (int8_t*) PyArray_DATA(output);
+  const float *input_data = (const float *) PyArray_DATA(input);
+  int8_t *output_data = (int8_t *) PyArray_DATA(output);
   if (!input_data || !output_data)
     goto error_return;
 
@@ -445,12 +436,11 @@ static PyObject *compress_float(PyObject *self, PyObject * args, PyObject * keyw
                                     bits_per_sample, temp_space);
   free(temp_space);
   return PyLong_FromLong(ret);
-error_return:
+  error_return:
   if (temp_space != NULL)
     free(temp_space);
   return PyLong_FromLong(5);
 }
-
 
 /**
    The following will document this function as if it were a native
@@ -468,7 +458,7 @@ error_return:
        or -1 if an error was encountered.
       """
  */
-static PyObject *get_num_bytes(PyObject *self, PyObject * args, PyObject * keywds) {
+static PyObject *get_num_bytes(PyObject *self, PyObject *args, PyObject *keywds) {
   int num_samples, bits_per_sample;
 
   static char *kwlist[] = {"num_samples", "bits_per_sample", NULL};
@@ -478,11 +468,10 @@ static PyObject *get_num_bytes(PyObject *self, PyObject * args, PyObject * keywd
 
   int64_t num_bytes = lilcom_get_num_bytes(num_samples, bits_per_sample);
   return PyLong_FromLong(num_bytes);
-error_return:
+  error_return:
   return PyLong_FromLong(-1);
 
 }
-
 
 /**
    The following will document this function as if it were a native
@@ -511,15 +500,15 @@ error_return:
       """
  */
 static PyObject *get_time_axis_info(
-    PyObject *self, PyObject * args, PyObject *keywds) {
+    PyObject *self, PyObject *args, PyObject *keywds) {
   PyObject *input; /* The compressed data, as a NumPy array of int8 */
 
-  static char *kwlist[] = { "input", NULL};
+  static char *kwlist[] = {"input", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "O", kwlist,
                                    &input))
     goto error_return;
 
-  const int8_t *input_data = (const int8_t*)PyArray_DATA(input);
+  const int8_t *input_data = (const int8_t *) PyArray_DATA(input);
   if (!input_data) goto error_return;
   int num_axes = PyArray_NDIM(input);
   int time_axis = -1;
@@ -527,10 +516,10 @@ static PyObject *get_time_axis_info(
   for (int axis = 0; axis < num_axes; axis++) {
     int dim = PyArray_DIM(input, axis),
         stride = PyArray_STRIDE(input, axis);
-    int64_t uncompressed_dim  = lilcom_get_num_samples(input_data, dim, stride);
+    int64_t uncompressed_dim = lilcom_get_num_samples(input_data, dim, stride);
     if (uncompressed_dim != -1) {
       assert(time_axis < 0 && "There appear to be two time axes; "
-             "this shouldn't be possible.");
+                              "this shouldn't be possible.");
       num_samples = uncompressed_dim;
       time_axis = axis;
     }
@@ -540,11 +529,10 @@ static PyObject *get_time_axis_info(
   return PyTuple_Pack(2,
                       PyLong_FromLong(time_axis),
                       PyLong_FromLong(num_samples));
-error_return:
+  error_return:
   Py_RETURN_NONE;
 
 }
-
 
 /**
    Internal implementation of decompress_float().
@@ -598,37 +586,33 @@ int decompress_float_internal(int num_axes, int axis,
   }
 }
 
+/**
+  NOTE: the documentation below will document this function AS IF it were
+  a Python function.
 
-
-
- /**
-   NOTE: the documentation below will document this function AS IF it were
-   a Python function.
-
-   def decompress_float(input, output):
-   """
-   This function decompresses data from int8_t to float.  The data is assumed
-   to have previously been compressed by `compress_float`.
-
-   Args:
-   input     Must be of type numpy.ndarray, with dtype=int8.  The
-   last axis is assumed to be the time axis, and the last
-   axis must have dimension > 4.
-   output    Must be of type numpy.ndarray, with dtype=int16.  Must
-   be of the same shape as `input`, except the dimension on
-   the last axis must be less than that of `input` by 4.
-
-   Return:
-       0 on success
-       1 on failure in the decompression routine (e.g. if the data was corrupted
-           or was not lilcom-compressed data)
-       2 if there was some dimension mismatch between the input and output
-         arrays
-       3 If the inputs did not have the correct types or had different num-axes.
+  def decompress_float(input, output):
   """
+  This function decompresses data from int8_t to float.  The data is assumed
+  to have previously been compressed by `compress_float`.
+
+  Args:
+  input     Must be of type numpy.ndarray, with dtype=int8.  The
+  last axis is assumed to be the time axis, and the last
+  axis must have dimension > 4.
+  output    Must be of type numpy.ndarray, with dtype=int16.  Must
+  be of the same shape as `input`, except the dimension on
+  the last axis must be less than that of `input` by 4.
+
+  Return:
+      0 on success
+      1 on failure in the decompression routine (e.g. if the data was corrupted
+          or was not lilcom-compressed data)
+      2 if there was some dimension mismatch between the input and output
+        arrays
+      3 If the inputs did not have the correct types or had different num-axes.
+ """
 */
-static PyObject *decompress_float(PyObject *self, PyObject *args, PyObject *keywds)
-{
+static PyObject *decompress_float(PyObject *self, PyObject *args, PyObject *keywds) {
   PyObject *input; /* The input signal, passed as a numpy array. */
   PyObject *output; /* The output signal, passed as a numpy array. */
 
@@ -638,8 +622,8 @@ static PyObject *decompress_float(PyObject *self, PyObject *args, PyObject *keyw
                                    &input, &output))
     goto error_return;
 
-  const int8_t *input_data = (const int8_t*)PyArray_DATA(input);
-  float *output_data = (float*) PyArray_DATA(output);
+  const int8_t *input_data = (const int8_t *) PyArray_DATA(input);
+  float *output_data = (float *) PyArray_DATA(output);
   if (!input_data || !output_data) goto error_return;
 
   int num_axes = PyArray_NDIM(input);
@@ -651,24 +635,24 @@ static PyObject *decompress_float(PyObject *self, PyObject *args, PyObject *keyw
                                       input, output);
 
   return PyLong_FromLong(ret);
-error_return:
+  error_return:
   return PyLong_FromLong(3);
 }
 
 static PyMethodDef LilcomMethods[] = {
-  { "compress_int16", (PyCFunction)compress_int16, METH_VARARGS | METH_KEYWORDS,
-    "Lossily compresses samples of int16 sequence data (e.g. audio data) int8_t."},
-  { "compress_float", (PyCFunction)compress_float, METH_VARARGS | METH_KEYWORDS,
-    "Lossily compresses samples of float sequence data (e.g. audio data) int8_t."},
-  { "decompress_int16", (PyCFunction)decompress_int16, METH_VARARGS | METH_KEYWORDS,
-    "Decompresses a compressed signal to int16"  },
-  { "decompress_float", (PyCFunction)decompress_float, METH_VARARGS | METH_KEYWORDS,
-    "Decompresses a compressed signal to float16"  },
-  { "get_num_bytes", (PyCFunction)get_num_bytes, METH_VARARGS | METH_KEYWORDS,
-    "Returns the number of bytes needed to compress a sequence" },
-  { "get_time_axis_info", (PyCFunction)get_time_axis_info, METH_VARARGS | METH_KEYWORDS,
-    "Returns the number of bytes needed to compress a sequence" },
-  { NULL, NULL, 0, NULL }
+    {"compress_int16", (PyCFunction) compress_int16, METH_VARARGS | METH_KEYWORDS,
+     "Lossily compresses samples of int16 sequence data (e.g. audio data) int8_t."},
+    {"compress_float", (PyCFunction) compress_float, METH_VARARGS | METH_KEYWORDS,
+     "Lossily compresses samples of float sequence data (e.g. audio data) int8_t."},
+    {"decompress_int16", (PyCFunction) decompress_int16, METH_VARARGS | METH_KEYWORDS,
+     "Decompresses a compressed signal to int16"},
+    {"decompress_float", (PyCFunction) decompress_float, METH_VARARGS | METH_KEYWORDS,
+     "Decompresses a compressed signal to float16"},
+    {"get_num_bytes", (PyCFunction) get_num_bytes, METH_VARARGS | METH_KEYWORDS,
+     "Returns the number of bytes needed to compress a sequence"},
+    {"get_time_axis_info", (PyCFunction) get_time_axis_info, METH_VARARGS | METH_KEYWORDS,
+     "Returns the number of bytes needed to compress a sequence"},
+    {NULL, NULL, 0, NULL}
 };
 
 static struct PyModuleDef lilcom =
@@ -680,8 +664,7 @@ static struct PyModuleDef lilcom =
     LilcomMethods
 };
 
-PyMODINIT_FUNC PyInit_lilcom_c_extension(void)
-{
-    import_array();
-    return PyModule_Create(&lilcom);
+PyMODINIT_FUNC PyInit_lilcom_c_extension(void) {
+  import_array();
+  return PyModule_Create(&lilcom);
 }

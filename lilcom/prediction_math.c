@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include "prediction_math.h"
 
-
 /**
 Below is the working Python code that ToeplitzSolve is based on.
 
