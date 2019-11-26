@@ -193,18 +193,10 @@
 #define LPC_COMPUTE_INTERVAL 64
 
 /**
-   This is a literal 17 in the code in many places.  It's the maximum possible
-   value of an exponent in our coding scheme (the compressed values are
-   of the form mantissa << exponent).
-
    The mantissas encode prediction residuals.  The largest-magnitude residual is
-   65535, which is 13767 - (-13768).  smallest allowed value of the
-   bits_per_sample is 4, meaning there are 3 bits for the mantissa so the
-   mantissas must be in the range [-4,3].  Of the numbers representable by
-   (mantissa in [-4,3]) << (integer exponent), the closest approximation of
-   65535 is 65536, and the lowest exponent that can generate that number is 15:
-   (65536 = 2 << 15)
- */
+   65535, which is 13767 - (-13768); and the least number of bits we'd need
+   to encode this as a signed integer is 17.
+*/
 #define MAX_POSSIBLE_NBITS 17
 
 /**
