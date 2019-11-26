@@ -193,7 +193,7 @@
 #define LPC_COMPUTE_INTERVAL 64
 
 /**
-   This is a literal 15 in the code in many places.  It's the maximum possible
+   This is a literal 17 in the code in many places.  It's the maximum possible
    value of an exponent in our coding scheme (the compressed values are
    of the form mantissa << exponent).
 
@@ -205,7 +205,7 @@
    65535 is 65536, and the lowest exponent that can generate that number is 15:
    (65536 = 2 << 15)
  */
-#define MAX_POSSIBLE_EXPONENT 17
+#define MAX_POSSIBLE_NBITS 17
 
 /**
    MAX_BACKTRACK is a convenient way of saying 'the maximum number of samples we
@@ -220,13 +220,13 @@
 
    If we require the exponent to have a certain value E on a particular time t
    (and suppose, for the worst case, that this corresponds to a black square on
-   our board and E == MAX_POSSIBLE_EXPONENT), then it can achieve that if at a
+   our board and E == MAX_POSSIBLE_NBITS), then it can achieve that if at a
    particular time t-(E+1) it was zero.  The exponent is not allowed to be less
    than zero, so the maximumum number of frames we might have to go back in time
-   is MAX_POSSIBLE_EXPONENT+1.  (Actually the +1 might not even be needed because
+   is MAX_POSSIBLE_NBITS+1.  (Actually the +1 might not even be needed because
    that exponent at time t-(E+1) wouldn't have to be changed.)
  */
-#define MAX_BACKTRACK (MAX_POSSIBLE_EXPONENT+1)
+#define MAX_BACKTRACK (MAX_POSSIBLE_NBITS+1)
 
 /**
    This rolling-buffer size determines how far back in time we keep the
@@ -240,7 +240,7 @@
    This must be a power of 2 due to a trick used to compute a modulus, which
    dictates 32.
  */
-#define EXPONENT_BUFFER_SIZE 32
+#define NBITS_BUFFER_SIZE 32
 
 
 /**
@@ -264,12 +264,12 @@
    satisfy:
 
     SIGNAL_BUFFER_SIZE >
-       AUTOCORR_BLOCK_SIZE + (MAX_POSSIBLE_EXPONENT*2) + MAX_LPC_ORDER
+       AUTOCORR_BLOCK_SIZE + (MAX_POSSIBLE_NBITS*2) + MAX_LPC_ORDER
 
    (currently: 128 > 16 + (15*2) + 14).
 
    That is: it needs to store a whole autocorrelation-stats block's worth of
-   data, plus the farthest we might backtrack (MAX_POSSIBLE_EXPONENT * 2),
+   data, plus the farthest we might backtrack (MAX_POSSIBLE_NBITS * 2),
    plus enough context to process the first sample of the block
    (i.e. MAX_LPC_ORDER).  This backtracking is because there may be situations
    where we need to recompute the autocorrelation coefficients of a block if
@@ -296,7 +296,7 @@
    8, hence a whole number of bytes.
 
    It should be at least twice the maximum number of time steps we might backtrack
-   (which is MAX_POSSIBLE_EXPONENT+1 = 18).  We choose to make it 32 bytes,
+   (which is MAX_POSSIBLE_NBITS+1 = 18).  We choose to make it 32 bytes,
    meaning the entire staging area contains 64 bytes.
 
    There are 2 staging blocks in the buffer.
@@ -641,7 +641,7 @@ static inline int bit_unpacker_read_next_code(int num_bits,
                          the preceding time (t-1).
         @param [in] exponent_t  An exponent for time t, where the caller says
                          they want an exponent at least this large.  Must be
-                         in the range [0..MAX_POSSIBLE_EXPONENT].
+                         in the range [0..MAX_POSSIBLE_NBITS].
         @return  Returns the smallest value that the exponent could have on
                          time t-1 such that the exponent on time t will be
                          at least exponent_t.  This may be -1 if exponent_t
@@ -895,12 +895,17 @@ struct BacktrackingEncoder {
 
   /* The exponent for t == -1 will be written to here by this
      object whenever needed. */
-  int8_t *exponent_m1;
+  int8_t *nbits_m1;
 
-  /* exponents is a rolling buffer of the exponents used, for t <
-     num_samples_success, or the minimum usable exponents for
-     num_samples_success <= t <= most_recent_attempt.  */
-  int exponents[EXPONENT_BUFFER_SIZE];
+  /* nbits is a rolling buffer of the number of bits present
+     in the mantissa (before any truncation by bits_per_sample - 1).
+     We use it for a couple of different purposes.
+     For t < num_samples_success, it contains the number of bits
+     used; for num_samples_success <= t <= most_recent_attempt,
+     it contains the minimum usable exponents for those times.
+     (would be present during backtracking.)
+  */
+  int nbits[NBITS_BUFFER_SIZE];
   /* `most_recent_attempt` records the most recent t value for which the user
      has so far called `backtracking_encoder_encode()`.
   */
@@ -910,7 +915,7 @@ struct BacktrackingEncoder {
      required to call backtracking_encoder_encode().  This may go
      backwards as well as forwards, but it will never be the case
      that
-       most_recent_attempt - next_sample_to_encode > (2*MAX_POSSIBLE_EXPONENT + 1 == 31).
+       most_recent_attempt - next_sample_to_encode > (2*MAX_POSSIBLE_NBITS + 1 == 31).
   */
   ssize_t next_sample_to_encode;
 
@@ -929,7 +934,7 @@ struct BacktrackingEncoder {
      @param [in] bits_per_sample   User-specified configuration value
                   in the range [LILCOM_MIN_BPS .. LILCOM_MAX_BPS],
                   currently [4..16]
-     @param [in,out] exponent_m1   Address to write the exponent
+     @param [in,out] nbits_m1   Address to write the exponent
                   for time t == -1 (this allows it to initialize
                   the sequence of exponents).  This address is
                   stored inside the encoder and its contents will be
@@ -939,14 +944,14 @@ struct BacktrackingEncoder {
  */
 static
 void backtracking_encoder_init(int bits_per_sample,
-                               int8_t *exponent_m1,
+                               int8_t *nbits_m1,
                                struct BacktrackingEncoder *encoder) {
   assert(bits_per_sample >= LILCOM_MIN_BPS &&
          bits_per_sample <= LILCOM_MAX_BPS);
   encoder->bits_per_sample = bits_per_sample;
   encoder->mantissa_limit = 1 << (bits_per_sample - 2);
-  encoder->exponent_m1 = exponent_m1;
-  encoder->exponents[EXPONENT_BUFFER_SIZE-1] = (*exponent_m1 = 0);
+  encoder->nbits_m1 = nbits_m1;
+  encoder->nbits[NBITS_BUFFER_SIZE-1] = (*nbits_m1 = 0);
   encoder->most_recent_attempt = -1;
   encoder->next_sample_to_encode = 0;
 #ifndef NDEBUG
@@ -996,7 +1001,7 @@ void backtracking_encoder_init(int bits_per_sample,
              was increased by 1.  On failure,
              encoder->next_sample_to_encode will be decreased
              (while still satisfying encoder->most_recent_attempt -
-             encoder->next_sample_to_encode < (2*MAX_POSSIBLE_EXPONENT + 1)).
+             encoder->next_sample_to_encode < (2*MAX_POSSIBLE_NBITS + 1)).
              [Note: this type of failure happens in the normal course
              of compression, it is part of backtracking.]
 
@@ -1010,22 +1015,22 @@ inline static int backtracking_encoder_encode(int32_t residual,
                                               struct BacktrackingEncoder *encoder) {
   ssize_t t = encoder->next_sample_to_encode,
       t_most_recent = encoder->most_recent_attempt;
-  size_t t_mod = (t & (EXPONENT_BUFFER_SIZE - 1)), /* t % buffer_size */
+  size_t t_mod = (t & (NBITS_BUFFER_SIZE - 1)), /* t % buffer_size */
       /* t1_mod is (t-1) % buffer_size using mathematical modulus, not C modulus,
          so -1 % buffer_size is positive.
        */
-      t1_mod = ((t-1) & (EXPONENT_BUFFER_SIZE - 1));
+      t1_mod = ((t-1) & (NBITS_BUFFER_SIZE - 1));
 
-  int exponent_t1 = encoder->exponents[t1_mod],
+  int exponent_t1 = encoder->nbits[t1_mod],
       min_codable_exponent =
       LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_t1),
       exponent_floor = (min_codable_exponent < 0 ? 0 : min_codable_exponent);
   if (t <= t_most_recent) {
     /* We are backtracking, so there will be limitations on the
-       exponent. (encoder->exponents[t_mod] represents a floor
+       exponent. (encoder->nbits[t_mod] represents a floor
        on the exponent). */
-    if (encoder->exponents[t_mod] > min_codable_exponent) {
-      exponent_floor = encoder->exponents[t_mod];
+    if (encoder->nbits[t_mod] > min_codable_exponent) {
+      exponent_floor = encoder->nbits[t_mod];
       /* If the following assert fails it means the logic of the
          backtracking_encoder's routines has failed somewhere. */
       assert(exponent_floor == min_codable_exponent + 1);
@@ -1053,14 +1058,14 @@ inline static int backtracking_encoder_encode(int32_t residual,
            mantissa < encoder->mantissa_limit);
 
     *code = ((mantissa << 1) + exponent_delta);
-    encoder->exponents[t_mod] = exponent;
+    encoder->nbits[t_mod] = exponent;
     encoder->next_sample_to_encode = t + 1;
     return 0;
   } else {
     /* Failure: the exponent required to most accurately
        approximate this residual is too large; we will need
        to backtrack. */
-    encoder->exponents[t_mod] = exponent;
+    encoder->nbits[t_mod] = exponent;
     while (1) {
       exponent = LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent);
       t--;
@@ -1068,8 +1073,8 @@ inline static int backtracking_encoder_encode(int32_t residual,
       encoder->num_backtracks++;
 #endif
       /* Now `exponent` is the minimum exponent we'll allow for time t-1. */
-      t_mod = t & (EXPONENT_BUFFER_SIZE - 1);
-      if (encoder->exponents[t_mod] >= exponent) {
+      t_mod = t & (NBITS_BUFFER_SIZE - 1);
+      if (encoder->nbits[t_mod] >= exponent) {
         /* The exponent value we used for this time satsifes our limit, so we will
            next be encoding the value at time t + 1.  */
         encoder->next_sample_to_encode = t + 1;
@@ -1078,11 +1083,11 @@ inline static int backtracking_encoder_encode(int32_t residual,
         /* The following will set a floor on the allowed
            exponent, which this function will inspect when
            it is asked to encode the sample at t-1.. */
-        encoder->exponents[t_mod] = exponent;
+        encoder->nbits[t_mod] = exponent;
         /* TODO: maybe change the code so the following if-statement is no
          * longer necessary? */
         if (t < 0) {  /* t == -1 */
-          *(encoder->exponent_m1) = exponent;
+          *(encoder->nbits_m1) = exponent;
           encoder->next_sample_to_encode = 0;
           return 1;
         }
@@ -1108,16 +1113,16 @@ struct Decoder {
         @param [in] bits_per_sample   The number of bits per sample
                  (user-specified but stored in the compressed header).
                  Must be in [4..8].
-        @param [in] exponent_m1  The exponent for time t == -1,
+        @param [in] nbits_m1  The exponent for time t == -1,
                  as stored in the compressed file (you could view
                  this as part of the header).
         @param [out] decoder  The object to be initialized.
  */
 void decoder_init(int bits_per_sample,
-                  int exponent_m1,
+                  int nbits_m1,
                   struct Decoder *decoder) {
   decoder->bits_per_sample = bits_per_sample;
-  decoder->exponent = exponent_m1;
+  decoder->exponent = nbits_m1;
 }
 
 /**  This function extracts a signed mantissa from an integer compressed code
@@ -1175,7 +1180,7 @@ static inline int decoder_decode(ssize_t t,
                                     exponent);
   decoder->exponent = exponent;
 
-  if (((unsigned int)exponent) > MAX_POSSIBLE_EXPONENT) {
+  if (((unsigned int)exponent) > MAX_POSSIBLE_NBITS) {
     debug_fprintf(stderr, "Decompression failed, bad exponent %d at t=%d\n",
                   (int)exponent, (int)t);
     return 1;
@@ -1629,7 +1634,7 @@ struct CompressionState {
  */
 
 
-#define LILCOM_HEADER_EXPONENT_M1_OFFSET 4
+#define LILCOM_HEADER_NBITS_M1_OFFSET 4
 
 
 /** Set the conversion_exponent in the header.
@@ -2169,7 +2174,7 @@ static inline void lilcom_init_compression(
 
   backtracking_encoder_init(
       bits_per_sample,
-      output + (LILCOM_HEADER_EXPONENT_M1_OFFSET * output_stride),
+      output + (LILCOM_HEADER_NBITS_M1_OFFSET * output_stride),
       &(state->encoder));
 
   state->input_signal = input;
@@ -2415,7 +2420,7 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
 
   struct Decoder decoder;
   decoder_init(bits_per_sample,
-               input[LILCOM_HEADER_EXPONENT_M1_OFFSET * input_stride],
+               input[LILCOM_HEADER_NBITS_M1_OFFSET * input_stride],
                &decoder);
 
   output_buffer[MAX_LPC_ORDER] = output[0];
@@ -2851,9 +2856,9 @@ static inline int lilcom_check_constants() {
   /* At some point we use 1 << (LPC_APPLY_LEFT_SHIFT + 16) as an int32 and we
      want to preclude overflow. */
   assert(LPC_APPLY_LEFT_SHIFT + 16 < 31);
-  assert(STAGING_BLOCK_SIZE > MAX_POSSIBLE_EXPONENT+1);
+  assert(STAGING_BLOCK_SIZE > MAX_POSSIBLE_NBITS+1);
   assert((STAGING_BLOCK_SIZE & (STAGING_BLOCK_SIZE - 1)) == 0);
-  assert(EXPONENT_BUFFER_SIZE > MAX_POSSIBLE_EXPONENT+1);
+  assert(NBITS_BUFFER_SIZE > MAX_POSSIBLE_NBITS+1);
   assert((LPC_ROLLING_BUFFER_SIZE - 1) * AUTOCORR_BLOCK_SIZE > 24);
   assert(MAX_LPC_ORDER >> LPC_ORDER_BITS == 0);
   assert(MAX_LPC_ORDER % 2 == 0);
@@ -2876,17 +2881,17 @@ static inline int lilcom_check_constants() {
   assert((LPC_COMPUTE_INTERVAL & (LPC_COMPUTE_INTERVAL-1)) == 0);  /* Power of 2. */
   /* The y < x / 2 below just means "y is much less than x". */
   assert(LPC_COMPUTE_INTERVAL < (AUTOCORR_BLOCK_SIZE << AUTOCORR_DECAY_EXPONENT) / 2);
-  assert((EXPONENT_BUFFER_SIZE-1)*2 > 12);
-  assert((EXPONENT_BUFFER_SIZE & (EXPONENT_BUFFER_SIZE-1)) == 0);  /* Power of 2. */
-  assert(EXPONENT_BUFFER_SIZE > (12/2) + 1); /* should exceed maximum range of exponents,
+  assert((NBITS_BUFFER_SIZE-1)*2 > 12);
+  assert((NBITS_BUFFER_SIZE & (NBITS_BUFFER_SIZE-1)) == 0);  /* Power of 2. */
+  assert(NBITS_BUFFER_SIZE > (12/2) + 1); /* should exceed maximum range of exponents,
                                                 divided by  because that's how much they can
                                                 change from time to time.  The + 1 is
                                                 in case I missed something. */
 
-  assert((EXPONENT_BUFFER_SIZE & (EXPONENT_BUFFER_SIZE-1)) == 0);  /* Power of 2. */
+  assert((NBITS_BUFFER_SIZE & (NBITS_BUFFER_SIZE-1)) == 0);  /* Power of 2. */
   assert(SIGNAL_BUFFER_SIZE % AUTOCORR_BLOCK_SIZE == 0);
   assert((SIGNAL_BUFFER_SIZE & (SIGNAL_BUFFER_SIZE - 1)) == 0);  /* Power of 2. */
-  assert(SIGNAL_BUFFER_SIZE > AUTOCORR_BLOCK_SIZE + EXPONENT_BUFFER_SIZE + MAX_LPC_ORDER);
+  assert(SIGNAL_BUFFER_SIZE > AUTOCORR_BLOCK_SIZE + NBITS_BUFFER_SIZE + MAX_LPC_ORDER);
 
   return 1;
 }
