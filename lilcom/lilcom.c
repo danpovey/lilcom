@@ -989,13 +989,13 @@ void backtracking_encoder_init(int bits_per_sample,
       Requires that encoder->next_sample_to_encode >= 0.
 
       @return  Returns 0 on success, 1 on failure.  Success means
-             a code was created and encoder->next_sample_to_encode
-             was increased by 1.  On failure,
-             encoder->next_sample_to_encode will be decreased
-             (while still satisfying encoder->most_recent_attempt -
+             a code was created, encoder->next_sample_to_encode
+             was increased by 1, and the code was written to `packer`.  On
+             failure, encoder->next_sample_to_encode will be decreased (while
+             still satisfying encoder->most_recent_attempt -
              encoder->next_sample_to_encode < (2*MAX_POSSIBLE_NBITS + 1)).
-             [Note: this type of failure happens in the normal course
-             of compression, it is part of backtracking.]
+             [Note: this type of failure happens in the normal course of
+             compression, it is part of backtracking.]
 
      See also decoder_decode(), which you can think of as the reverse
      of this.
@@ -1003,8 +1003,8 @@ void backtracking_encoder_init(int bits_per_sample,
 inline static int backtracking_encoder_encode(int32_t residual,
                                               int16_t predicted,
                                               int16_t *next_value,
-                                              int *code,
-                                              struct BacktrackingEncoder *encoder) {
+                                              struct BacktrackingEncoder *encoder,
+                                              struct BitPacker *packer) {
   ssize_t t = encoder->next_sample_to_encode,
       t_most_recent = encoder->most_recent_attempt;
   size_t t_mod = (t & (NBITS_BUFFER_SIZE - 1)), /* t % buffer_size */
@@ -1048,10 +1048,18 @@ inline static int backtracking_encoder_encode(int32_t residual,
         path. */
     assert(mantissa >= -encoder->mantissa_limit &&
            mantissa < encoder->mantissa_limit);
-
-    *code = ((mantissa << 1) + exponent_delta);
     encoder->nbits[t_mod] = exponent;
     encoder->next_sample_to_encode = t + 1;
+
+    /* Actually write the code.  Note: this is as if we had written
+       first the exponent bit and then the mantissa.  We do it in
+       one call, which actually matters because of the way
+       the bit-packer object deals with backtracking.
+    */
+    bit_packer_write_code(t, ((mantissa << 1) + exponent_delta),
+                          encoder->bits_per_sample,
+                          packer);
+
     return 0;
   } else {
     /* Failure: the exponent required to most accurately
@@ -2258,15 +2266,13 @@ int lilcom_compress(
     /** cast to int32 when computing the residual because a difference of int16's may
         not fit in int16. */
     int32_t residual = ((int32_t)observed_value) - ((int32_t)predicted_value);
-    int code;
     int16_t *next_value =
         &(state.decompressed_signal[MAX_LPC_ORDER+(t&(SIGNAL_BUFFER_SIZE-1))]);
-    if (backtracking_encoder_encode(residual,
-                                    predicted_value, next_value,
-                                    &code, &state.encoder) == 0)
-      bit_packer_write_code(t, code, bits_per_sample, &state.packer);
-    /* If it returns 1 (failure) it is not an error; it just means we have to
-       backtrack. */
+
+    backtracking_encoder_encode(residual,
+                                predicted_value, next_value,
+                                &state.encoder, &state.packer);
+    /* We are actually ignoring the return status of backtracking_encoder_encode. */
   }
 
 
