@@ -1158,7 +1158,12 @@ static inline int extract_mantissa(int code, int bits_per_sample) {
    Converts this code into a signed int32 value (which will typically represent
    a residual).  Must be called exactly in sequence for t = 0, t = 1 and so on.
 
-           @param [in] code  The encoded value; only the lower-order
+           @param [in] unpacker  The BitUnpacker object from which to
+                       read codes.  (Actually we read exponents and mantissas
+                       separately because we need the exponent to know the
+                       size of the mantissa.)
+
+           code  The encoded value; only the lower-order
                           `decoder->bits_per_sample` bits will be inspected.
            @param [in,out] decoder  The decoder object
            @param [out]  value  The decoded value will be written here.
@@ -1168,10 +1173,12 @@ static inline int extract_mantissa(int code, int bits_per_sample) {
                        in lilcom code.)
  */
 static inline int decoder_decode(ssize_t t,
-                                 int code,
+                                 struct BitUnpacker *unpacker,
                                  struct Decoder *decoder,
                                  int32_t *value) {
-  int exponent_bit = (code & 1),
+  int code = bit_unpacker_read_next_code(decoder->bits_per_sample,
+                                         unpacker),
+      exponent_bit = (code & 1),
       min_codable_exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(
           t, decoder->exponent),
       mantissa = extract_mantissa(code, decoder->bits_per_sample),
@@ -2426,9 +2433,8 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
   output_buffer[MAX_LPC_ORDER] = output[0];
   int t;
   for (t = 0; t < AUTOCORR_BLOCK_SIZE && t < num_samples; t++) {
-    int code = bit_unpacker_read_next_code(bits_per_sample, &unpacker);
     int32_t residual;
-    if (decoder_decode(t, code, &decoder, &residual) != 0 ||
+    if (decoder_decode(t, &unpacker, &decoder, &residual) != 0 ||
         lilcom_decompress_one_sample(t, lpc_order,
                                      lpc.lpc_coeffs, residual,
                                      &(output_buffer[MAX_LPC_ORDER + t])) != 0) {
@@ -2478,9 +2484,8 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
       ssize_t local_max_t = (t + AUTOCORR_BLOCK_SIZE < num_samples ?
                              t + AUTOCORR_BLOCK_SIZE : num_samples);
       for (; t < local_max_t; t++) {
-        int code = bit_unpacker_read_next_code(bits_per_sample, &unpacker);
         int32_t residual;
-        if (decoder_decode(t, code, &decoder, &residual) != 0 ||
+        if (decoder_decode(t, &unpacker, &decoder, &residual) != 0 ||
             lilcom_decompress_one_sample(t, lpc_order, lpc.lpc_coeffs, residual,
                                          output + t) != 0) {
           debug_fprintf(stderr, "lilcom: decompression failure for t=%d\n",
@@ -2528,9 +2533,8 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
       ssize_t local_max_t = (t + AUTOCORR_BLOCK_SIZE < num_samples ?
                              t + AUTOCORR_BLOCK_SIZE : num_samples);
       for (; t < local_max_t; t++) {
-        int code = bit_unpacker_read_next_code(bits_per_sample, &unpacker);
         int32_t residual;
-        if (decoder_decode(t, code, &decoder, &residual) != 0 ||
+        if (decoder_decode(t, &unpacker, &decoder, &residual) != 0 ||
             lilcom_decompress_one_sample(
                 t,lpc_order, lpc.lpc_coeffs, residual,
                 output_buffer + MAX_LPC_ORDER + (t&(SIGNAL_BUFFER_SIZE-1))) != 0) {
