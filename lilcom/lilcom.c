@@ -1125,37 +1125,42 @@ void decoder_init(int bits_per_sample,
   decoder->exponent = nbits_m1;
 }
 
-/**  This function extracts a signed mantissa from an integer compressed code
+/**  This function returns `code`, interpreted as a 2s-complement
+     signed integer with `num_bits` bits, with the format changed
+     to a 2s-complement signed integer that fits in type `int`.
 
-       @param [in] code  The lowest-order `bits_per_sample` bits of `code`
-                     are the compressed code, which is the lowest-order
-                     `bits_per_sample` bits of (exponent_bit | (mantissa << 1)).
-                     Thus, the bits numbered 1 through bits_per_sample - 1
-                     of code are to be interpreted as a 2s-complement
-                     integer with `bits_per_sample - 1` bits in it.
-                     The higher-order bits of `code` are undefined and may
-                     have any value.
+     Specifically this means that its bits [0..num_bits - 2] are unchanged and
+     the bit numbered [num_bits - 1] is duplicated at all higher-ordered
+     positions.  (All bit numberings here are from lowest-to-highest order, so
+     position 0 is the ones bit.)
 
-       @param [in] bits_per_sample  The bits per sample of our code in [4..8].
-
-    @return  Returns the mantissa.
+       @param [in] code  The integer code to be manipulated.
+                         Note: only its bits 0 through num_bits - 1
+                         will affect the return value.
+       @param [in] num_bits  The number of bits in the code.
+                         The code is interpreted as a 2s-complement
+                         signed integer with `num_bits` bits.
+    @return  Returns the code extended to be a signed int.
 */
-static inline int extract_mantissa(int code, int bits_per_sample) {
+static inline int extend_sign_bit(int code, int num_bits) {
   /*
-     The first term in the outer-level 'or' is all the `bits_per_sample-1` of
+     The first term in the outer-level 'or' is all the `num_bits` bits
      the mantissa, which will be correct for positive mantissa but for
      negative mantissa we need all the higher-order-than-bits_per_sample bits
      to be set as well.  That's what the second term in the or is for.  The
      big number is 2^31 - 1, which means that we duplicate that bit (think of
      it as the sign bit), at its current position and at all positions to its
      left.  */
-  return ((((unsigned int)code) >> 1) & ((1<<(bits_per_sample - 1)) - 1)) |
-      ((((unsigned int)code) & (1<<(bits_per_sample-1)))*2147483647);
+  if (num_bits == 0) {
+    return 0;
+  } else {
+    return (((unsigned int)code) & ((1<<(num_bits)) - 1)) |
+        ((((unsigned int)code) & (1<<(num_bits - 1)))*2147483647);
+  }
 }
 
-
 /**
-   Converts this code into a signed int32 value (which will typically represent
+   Converts one sample's code into a signed int32 value (which will typically represent
    a residual).  Must be called exactly in sequence for t = 0, t = 1 and so on.
 
            @param [in] unpacker  The BitUnpacker object from which to
@@ -1176,15 +1181,17 @@ static inline int decoder_decode(ssize_t t,
                                  struct BitUnpacker *unpacker,
                                  struct Decoder *decoder,
                                  int32_t *value) {
-  int code = bit_unpacker_read_next_code(decoder->bits_per_sample,
-                                         unpacker),
-      exponent_bit = (code & 1),
+  int exponent_bit = 1 & bit_unpacker_read_next_code(1, unpacker),
       min_codable_exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(
           t, decoder->exponent),
-      mantissa = extract_mantissa(code, decoder->bits_per_sample),
       exponent = min_codable_exponent + exponent_bit,
       num_bits_encoded = lilcom_min(decoder->bits_per_sample - 1,
-                                    exponent);
+                                    exponent),
+      mantissa = extend_sign_bit(
+          bit_unpacker_read_next_code(decoder->bits_per_sample - 1,
+                                      unpacker),
+          decoder->bits_per_sample - 1);
+
   decoder->exponent = exponent;
 
   if (((unsigned int)exponent) > MAX_POSSIBLE_NBITS) {
@@ -2403,7 +2410,10 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
       input, input_stride);
 
   struct BitUnpacker unpacker;
-  bit_unpacker_init(num_samples,
+  /*  The reason we set the num-samples to num_samples * 2 is that
+     the code actually reads the exponent bit and the mantissa separately.
+   */
+  bit_unpacker_init(num_samples * 2,
                     input + (input_stride * LILCOM_HEADER_BYTES), input_stride,
                     &unpacker);
 
@@ -2947,8 +2957,9 @@ void lilcom_test_extract_mantissa() {
         for (int random = -3; random <= 3; random++) {
           int code = (((mantissa << 1) + exponent_bit) & ((1<<bits_per_sample)-1)) +
               (random << bits_per_sample);
-          assert(extract_mantissa(code, bits_per_sample) == mantissa &&
-                 (code&1) == exponent_bit);
+          assert((code & 1) == exponent_bit);
+          code >>= 1;
+          assert(extend_sign_bit(code, bits_per_sample - 1) == mantissa);
         }
       }
     }
