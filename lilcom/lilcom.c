@@ -2,7 +2,7 @@
 #include <stdlib.h>  /* for malloc */
 #include <math.h>  /* for frexp and frexpf and pow, used in floating point compression. */
 
-#undef NDEBUG  /* setup.py adds -DNDEBUG and it's hard to remove it. */
+/*#undef NDEBUG  */
 
 #ifndef NDEBUG
 #include <stdio.h>  /* print statements are only made if NDEBUG is not defined. */
