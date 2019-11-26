@@ -471,7 +471,7 @@ inline static int CheckSize(uint64_t value, int size) {
       ((value == 0 && size == 0) ||
        (value & (((uint64_t)1) << (size - 1) )) != 0);
   if (!ok) {
-    fprintf(stderr, "Error: value=%lld size=%d\n", value, size);
+    fprintf(stderr, "Error: value=%llu size=%d\n", value, size);
     return 0;
   } else {
     return 1;
@@ -628,6 +628,10 @@ int VectorsOverlap(const Vector64 *vec1, const Vector64 *vec2){
              vec1_last > vec2_first &&
              vec1_last > vec2_last);
   }
+}
+
+void DivideScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y) {
+
 }
 
 double Scalar64ToDouble(const Scalar64 *a) {
