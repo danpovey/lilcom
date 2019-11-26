@@ -30,39 +30,6 @@ defaultDataset = "OpenSLR81"
 defaultDownloadLink = "http://www.openslr.org/resources/81/samples.tar.gz"
 
 
-def PSNR(originalArray, reconstructedArray):
-    """ This function calculates the peak signal to noise ratio between a
-    signal and its reconstruction
-
-       Args:
-        originalArray: A numpy array which should be the original array
-        before compression and reconstruction.
-        reconstructedArray: A numpy array which in this case should be an
-        array which is reconstructed from the compression function.
-       Returns:
-           A rational number which is the result of psnr between two given
-    """
-    # Convert both to float.
-    if originalArray.dtype == np.int16:
-        originalArray = originalArray.astype(np.float32) / 32768
-    if reconstructedArray.dtype == np.int16:
-        reconstructedArray = reconstructedArray.astype(np.float32) / 32768
-
-    # Correct for any differences in dynamic range, which might be caused
-    # by attempts of compression libraries like mp3 to avoid overflow.
-    reconstructedArray *= np.sqrt((originalArray ** 2).sum() /
-                                  (reconstructedArray ** 2).sum())
-
-    max_value = float(np.max(np.abs(originalArray)))
-    mean_square_error = (((originalArray - reconstructedArray) ** 2).sum() /
-                         originalArray.size)
-    if mean_square_error != 0:
-        psnr = 20 * math.log10(max_value) - 10 * math.log10(mean_square_error)
-    else:
-        psnr = math.inf
-
-    return psnr
-
 
 def toeplitz_solve(autocorr, y):
     """
@@ -611,14 +578,6 @@ def test_prediction(array):
 
 
 
-# Suppose we are minimizing f(x) = 0.5 x^2.   2nd deriv is 1.
-#  x <== x - d/dx f(x)   is:    x <=== x - x = 0.
-
-
-
-def hash(array):
-    return int(np.sum(np.abs(array))*2000) % int((2**16) - 1)
-
 
 def logger(logmod="initialization", reportList=None):
     """ This function prints out the log given the initialization mode or
@@ -880,55 +839,10 @@ if args.samplerate:
 else:
     settings["sample-rate"] = 0
 
-if args.releasedf:
-    settings["release-df"] = args.releasedf
-    csvOpener = open(settings["release-df"], "w+")
-    settings["release-df"] = csvOpener
-else:
-    settings["release-df"] = None
-
-if (args.releaselog):
-    settings["release-log"] = args.releaselog
-    fileOpener = open(settings["release-log"], "w+")
-    settings["release-log"] = fileOpener
-
-else:
-    settings["release-log"] = None
-
-
-evaulators = [
-    {
-        "algorithm": "lilcom",
-        "additionalParam": 4
-    },
-    {
-        "algorithm": "MP3",
-        "additionalParam": "320k"
-    },
-    {
-        "algorithm": "MP3",
-        "additionalParam": "256k"
-    },
-    {
-        "algorithm": "MP3",
-        "additionalParam": "224k"
-    },
-    {
-        "algorithm": "MP3",
-        "additionalParam": "192k"
-    },
-    {
-        "algorithm": "MP3",
-        "additionalParam": "160k"
-    }
-]
 
 fileList = [settings["dataset-dir"] + "/" + item
             for item in os.listdir(settings["dataset-dir"])
             if ".wav" in item]
-
-# Initial prints
-logger(logmod="initialization")
 
 
 
@@ -939,14 +853,4 @@ for file in fileList:
 
     print("Shape is {}".format(audioArray.shape))
     test_prediction(audioArray[:, 0])
-
-    fileEvaluationResultList = [os.path.basename(file)]
-    for evaluator in evaulators:
-        evaluationResult = evaluate(file, audioArray,
-                                    evaluator["algorithm"],
-                                    evaluator["additionalParam"])
-        fileEvaluationResultList.append({"evaluator": evaluator,
-                                        "result": evaluationResult})
-
-    logger("result", fileEvaluationResultList)
 
