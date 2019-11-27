@@ -13,6 +13,7 @@
 #include "lilcom_common.h"
 #include "bit_packer.h"
 #include "encoder.h"
+#include "encoder.c"
 
 /**
    This contains information related to the computation of the linear prediction

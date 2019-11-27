@@ -1,3 +1,6 @@
+#ifndef LILCOM_ENCODER_H_INCLUDED_
+#define LILCOM_ENCODER_H_INCLUDED_
+
 #include <stdint.h>
 #include <sys/types.h>
 #include <assert.h>
@@ -192,3 +195,5 @@ void lilcom_test_encode_decode_signed();
 void lilcom_test_encode_residual();
 #endif
 
+
+#endif  /* LILCOM_ENCODER_H_INCLUDED_ */
