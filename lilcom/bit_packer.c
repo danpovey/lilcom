@@ -1,7 +1,15 @@
-#include <assert.h>
-#define INCLUDED_FROM_BIT_PACKER_C 1
-#include "bit_packer.h"
+/**
+   CAUTION: although this has the .c suffix, it is actually included from
+   lilcom.c as if it were a header.  This is so that we can do "static inline"
+   and avoid the possibility of multiply defined symbols.  Regular "inline" or
+   "extern inline" seems not to give as much speed improvement.
 
+   But aside from inlining issues, interface-wise this does behave like
+   a .c file that you could compile independently.
+ */
+
+#include <assert.h>
+#include "bit_packer.h"
 
 
 

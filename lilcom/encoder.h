@@ -131,12 +131,12 @@ void backtracking_encoder_init(int8_t *nbits_m1,
      See also decoder_decode(), which you can think of as the reverse
      of this.
  */
-int backtracking_encoder_encode(int max_bits_in_sample,
-                                int32_t residual,
-                                int16_t predicted,
-                                int16_t *next_value,
-                                struct BacktrackingEncoder *encoder,
-                                struct BitPacker *packer);
+static inline int backtracking_encoder_encode(int max_bits_in_sample,
+                                              int32_t residual,
+                                              int16_t predicted,
+                                              int16_t *next_value,
+                                              struct BacktrackingEncoder *encoder,
+                                              struct BitPacker *packer);
 
 
 struct Decoder {
@@ -184,10 +184,10 @@ void decoder_init(int bits_per_sample,
                        would normally indicate data corruption or an error
                        in lilcom code.)
  */
-int decoder_decode(ssize_t t,
-                   struct BitUnpacker *unpacker,
-                   struct Decoder *decoder,
-                   int32_t *value);
+static inline int decoder_decode(ssize_t t,
+                                 struct BitUnpacker *unpacker,
+                                 struct Decoder *decoder,
+                                 int32_t *value);
 
 #ifdef LILCOM_TEST
 void lilcom_test_extract_mantissa();

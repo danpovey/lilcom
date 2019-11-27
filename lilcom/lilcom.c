@@ -12,6 +12,7 @@
 #include "lilcom.h"
 #include "lilcom_common.h"
 #include "bit_packer.h"
+#include "bit_packer.c"
 #include "encoder.h"
 #include "encoder.c"
 
