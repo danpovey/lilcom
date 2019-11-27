@@ -1,3 +1,6 @@
+#ifndef __LILCOM__PREDICTION_MATH_H__
+#define __LILCOM__PREDICTION_MATH_H__
+
 #include "fixed_math.h"
 
 /*
@@ -57,3 +60,5 @@
  */
 int ToeplitzSolve(const Vector64 *autocorr, const Vector64 *y, Vector64 *x,
                   Vector64 *temp1, Vector64 *temp2);
+
+#endif

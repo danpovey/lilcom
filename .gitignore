@@ -5,3 +5,6 @@
 build/
 dist/ 
 lilcom.egg-info/
+*.so
+__pycache__/
+*.dSYM/

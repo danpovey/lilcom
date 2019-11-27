@@ -1,6 +1,5 @@
+#include <stdio.h>
 #include "prediction_math.h"
-
-
 
 /**
 Below is the working Python code that ToeplitzSolve is based on.
@@ -45,13 +44,13 @@ def toeplitz_solve(autocorr, y):
  */
 int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x_in,
                   Vector64 *temp1, Vector64 *temp2) {
-  assert(autocorr->dim == y->dim && autocorr->dim == x->dim);
+  assert(autocorr_in->dim == y_in->dim && autocorr_in->dim == x_in->dim);
   /* All regions should be distinct, except possibly autocorr and y. */
   assert(y_in->region != x_in->region && temp1->region != x_in->region &&
-         temp1->region != y_in->region && temp2->region != temp1->region &&
-         temp2->region != x_in_>region && temp2->region != y_in->region &&
-         autocorr_in->region != x_in->region && autocorr_in->region != temp1->region
-         && autocorr_in->region != temp2->region);
+      temp1->region != y_in->region && temp2->region != temp1->region &&
+      temp2->region != x_in->region && temp2->region != y_in->region &&
+      autocorr_in->region != x_in->region && autocorr_in->region != temp1->region
+             && autocorr_in->region != temp2->region);
   /* CAUTION: this N  is not the same as the N mentioned in the header.
      For consistency with the literature, all the vectors are of size
      N+1 (this is done for reasons I don't understand) and I set
@@ -67,15 +66,15 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
       x = *x_in,
       b = *temp1,
       b_temp = *temp2;
-  int N = autocorr.dim - 1;
+  int N = autocorr_in->dim - 1;
 
   SetVector64ElemToInt(0, 1, 1, &b);  /* b[0] = 1.0 */
   Scalar64 epsilon, x0, y0;
-  CopyVectorElemToScalar64(r, 0, &epsilon);  /* epsilon = r[0] */
+  CopyVectorElemToScalar64(&r, 0, &epsilon);  /* epsilon = r[0] */
 
-  CopyVectorElemToScalar64(y, 0, &y0); /* next 3 lines: x[0] = y[0] / epsilon. */
+  CopyVectorElemToScalar64(&y, 0, &y0); /* next 3 lines: x[0] = y[0] / epsilon. */
   DivideScalar64(&y0, &epsilon, &x0);
-  CopyScalar64ToVectorElem(&x0, 0, x);
+  CopyScalar64ToVectorElem(&x0, 0, &x);
 
   for (int n = 1; n <= N; n++) {  /* for n in range(1, N+1): */
 
@@ -87,7 +86,7 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
     InitSubVector64(&r, 1, n, 1, &r1n1);
     InitSubVector64(&b, 0, n, 1, &bn);
     Scalar64 product, nu_n;
-    DotVector64(r1n1, bn, &product);
+    DotVector64(&r1n1, &bn, &product);
     DivideScalar64(&product, &epsilon, &nu_n);
     NegateScalar64(&nu_n);
 
@@ -98,36 +97,38 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
     Vector64 b_temp_n; /* == b[0:n] */
     InitSubVector64(&b_temp, 0, n, 1, &b_temp_n);
     Vector64 b_n_flip; /* == np.flip(b[:n]) */
-    InitSubVector64(&b, n-1, n, -1, &b_n_flip);
+    InitSubVector64(&b, n - 1, n, -1, &b_n_flip);
     AddScalarVector64(&nu_n, &b_n_flip, &b_temp_n); /* b_temp[:n] += nu_n * np.flip(b[:n]) */
 
     {
       double d = Scalar64ToDouble(&nu_n);
       if (d <= -1 || d >= 1) {
-        fprintf(stderr: "Error:, nu_n out of range %f\n", d);
+        fprintf(stderr, "Error:, nu_n out of range %f\n", d);
       }
     }
     Scalar64 nu_n2,  /* nu_n^2 */
         factor;
     MulScalar64(&nu_n, &nu_n, &nu_n2);
-    NegateScalar64(&nn_n2);
+    NegateScalar64(&nu_n2);
     InitScalar64FromInt(1, &factor);
     AddScalar64(&factor, &nu_n2, &factor);  /*
                                              */
-  /*
+    /*
 
-        b[:n+1] = b_temp[:n+1]
+          b[:n+1] = b_temp[:n+1]
 
-        # Eq. 2.8
-        epsilon *= (1.0 - nu_n * nu_n)
-        assert abs(nu_n) < 1.0
+          # Eq. 2.8
+          epsilon *= (1.0 - nu_n * nu_n)
+          assert abs(nu_n) < 1.0
 
-        # The following is an unnumbered formula below Eq. 2.9
-        lambda_n = y[n] - sum([ r[n-j] * x[j] for j in range(n)])
-        x[:n+1] += (lambda_n / epsilon) * b[:n+1];
+          # The following is an unnumbered formula below Eq. 2.9
+          lambda_n = y[n] - sum([ r[n-j] * x[j] for j in range(n)])
+          x[:n+1] += (lambda_n / epsilon) * b[:n+1];
 
-    return x
-*/
+      return x
+  */
+  }
+  return 0;
 }
 
 

@@ -1,7 +1,6 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-
 /**
    Returns the number of bytes we'd need to compress a sequence with this
    many samples and the provided bits_per_sample.
@@ -19,7 +18,6 @@
 */
 ssize_t lilcom_get_num_bytes(ssize_t num_samples,
                              int bits_per_sample);
-
 
 /**
    Lossily compresses 'num_samples' samples of int16 sequence data (e.g. audio
@@ -140,8 +138,6 @@ int lilcom_compress_float(
     int8_t *output, ssize_t num_bytes, int output_stride,
     int lpc_order, int bits_per_sample, int16_t *temp_space);
 
-
-
 /**
    Returns the number of samples in the signal that was compressed
    to this sequence of bytes.
@@ -167,8 +163,6 @@ int lilcom_compress_float(
 ssize_t lilcom_get_num_samples(const int8_t *input,
                                ssize_t num_bytes,
                                int input_stride);
-
-
 
 /**
    Uncompress a sequence of data that was previously compressed by

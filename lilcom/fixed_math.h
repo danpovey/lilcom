@@ -1,8 +1,9 @@
+#ifndef __LILCOM__FIXED_MATH_H__
+#define __LILCOM__FIXED_MATH_H__
+
 #include <math.h>
 #include <stdint.h>
 #include <assert.h>
-
-
 
 /*
   Defines a region of memory underlying a Vector64 or Matrix64.  The
@@ -60,7 +61,6 @@ typedef struct {
   int64_t *data;
 } Matrix64;
 
-
 typedef struct {
   /* exponent defines what the data means as a floating point number
      (multiply data by pow(2.0, exponent) to get the float value). */
@@ -76,10 +76,9 @@ typedef struct {
 } Elem64;  /* Elem64 is like Scalar64 but it is part of an existing region. */
 
 
-inline extern uint64_t FM_ABS(int64_t a) {
-  return (uint64_t)(a > 0 ? a : -a);
+static inline uint64_t FM_ABS(int64_t a) {
+  return (uint64_t) (a > 0 ? a : -a);
 }
-
 
 /*
   Initializes a Region64.
@@ -95,7 +94,6 @@ inline extern uint64_t FM_ABS(int64_t a) {
  */
 void InitRegion64(int64_t *data, int dim, int exponent, int size_hint, Region64 *region);
 
-
 /**
    Zeros the contents of a `Region64`, setting the exponent and size to zero.
    Good to call occasionally if you keep a region around for a while, since otherwise
@@ -104,34 +102,32 @@ void InitRegion64(int64_t *data, int dim, int exponent, int size_hint, Region64 
  */
 void ZeroRegion64(Region64 *region);
 
-
-extern inline void InitVector64(Region64 *region, int dim, int stride, int64_t *data, Vector64 *vec) {
+static inline void InitVector64(Region64 *region, int dim, int stride, int64_t *data, Vector64 *vec) {
   vec->region = region;
   vec->dim = dim;
   vec->stride = stride;
   vec->data = data;
   assert(dim > 0 && dim <= region->dim && stride != 0 &&
-         data >= region->data && data < region->data + region->dim &&
-         data + ((dim-1)*stride) >= region->data &&
-         data + ((dim-1)*stride) < region->data + region->dim);
+      data >= region->data && data < region->data + region->dim &&
+      data + ((dim - 1) * stride) >= region->data &&
+      data + ((dim - 1) * stride) < region->data + region->dim);
 }
 
-extern inline void InitSubVector64(const Vector64 *src, int offset, int dim, int stride, Vector64 *dest) {
-  assert(offset >= 0 && offset + (dim-1) * stride < src->dim && stride != 0 &&
-         offset < dim && offset + (dim-1) * stride >= 0);
+static inline void InitSubVector64(const Vector64 *src, int offset, int dim, int stride, Vector64 *dest) {
+  assert(offset >= 0 && offset + (dim - 1) * stride < src->dim && stride != 0 &&
+      offset < dim && offset + (dim - 1) * stride >= 0);
   dest->region = src->region;
   dest->dim = dim;
   dest->stride = stride * src->stride;
   dest->data = src->data + offset * src->stride;
 }
 
-
 /**
    Zeros the region's data, setting size and exponent to zero.
  */
 void ZeroRegion64(Region64 *region);
 
-extern inline void InitMatrix64(Region64 *region,
+static inline void InitMatrix64(Region64 *region,
                                 int num_rows, int row_stride,
                                 int num_cols, int col_stride,
                                 int64_t *data, Matrix64 *mat) {
@@ -145,10 +141,10 @@ extern inline void InitMatrix64(Region64 *region,
   mat->data = data;
   // TODO: the following assertions would need to change
   // if we choose to allow negative row-stride and col-stride != 1.
-  int max_offset = (num_rows-1) * row_stride + (num_cols-1) * col_stride;
+  int max_offset = (num_rows - 1) * row_stride + (num_cols - 1) * col_stride;
   assert(num_rows > 0 && num_cols > 0 && col_stride == 1 &&
-         row_stride >= num_cols * col_stride &&
-         data >= region->data && data + max_offset <  region->data + region->dim);
+      row_stride >= num_cols * col_stride &&
+      data >= region->data && data + max_offset < region->data + region->dim);
 }
 
 /* Returns 1 if vectors overlap in memory, 0 if they do not.
@@ -159,11 +155,10 @@ extern inline void InitMatrix64(Region64 *region,
 */
 int VectorsOverlap(const Vector64 *vec1, const Vector64 *vec2);
 
-extern inline void InitElem64(Region64 *region, int64_t *data, Elem64 *elem) {
+static inline void InitElem64(Region64 *region, int64_t *data, Elem64 *elem) {
   elem->region = region;
   elem->data = data;
 }
-
 
 /* Shift the data elements right by this many bits and adjust the exponent so
    the number it represents is unchanged.
@@ -212,13 +207,8 @@ void Vector64AddScalar(const Scalar64 *a, Vector64 *y);
 /* does y[i] := a for each element of y. */
 void Vector64SetScalar(const Scalar64 *a, Vector64 *y);
 
-
 /* y := a * b.  It is OK if some of the pointer args are the same.  */
 void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
-
-/* y := a + b.  It is OK if some of the pointer args are the same.  */
-void AddScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
-
 
 /* Sets the elements of this vector to zero.  Does touch the `size`
    or exponent.  Currently intended for use inside implementation functions.
@@ -231,11 +221,14 @@ void ZeroVector64(Vector64 *a);
 */
 void SetRegion64Size(int size_hint, Region64 *r);
 
-inline void NegateScalar64(Scalar64 *a) { a->data *= -1; }
+static inline void NegateScalar64(Scalar64 *a) { a->data *= -1; }
+
+static inline void SetVector64ElemToInt(int a, int b, int c, Vector64 *r) {
+
+}
 
 /* Sets this scalar to an integer. */
 void InitScalar64FromInt(int64_t i, Scalar64 *a);
-
 
 /*
   a[i] = value:
@@ -251,7 +244,6 @@ void InitScalar64FromInt(int64_t i, Scalar64 *a);
  */
 void CopyIntToVector64Elem(int i, int64_t value, int size_hint, Vector64 *a);
 
-
 /* Computes dot product between two Vector64's:
    y := a . b */
 void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
@@ -261,7 +253,6 @@ void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
 */
 void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
                        Vector64 *y);
-
 
 /* Copies the data in the scalar to the `elem`. */
 void CopyScalarToElem64(const Scalar64 *scalar, Elem64 *elem);
@@ -283,7 +274,7 @@ void CopyFromScalar64(const Scalar64 *a, int i, Vector64 *y);
 void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 
 /* does: y := a.  Just copies all the elements of the struct. */
-extern inline void CopyScalar64(const Scalar64 *a, Scalar64 *y) {
+static inline void CopyScalar64(const Scalar64 *a, Scalar64 *y) {
   y->size = a->size;
   y->exponent = a->exponent;
   y->data = a->data;
@@ -298,8 +289,6 @@ void InvertScalar64(const Scalar64 *a, Scalar64 *b);
    does: y := a + b. The pointers do not have to be different. */
 void AddScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 
-
-
 /* Subtracts two 64-bit scalars. Must all be different pointers.
    does: y := a - b. */
 void SubtractScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
@@ -307,21 +296,15 @@ void SubtractScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 /*  Divides scalars:  y := a / b. */
 void DivideScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 
-/* Does: y := 1.0 / a */
-void InvertScalar64(const Scalar64 *a,  Scalar64 *y);
-
 /* Convert to double- needed only for testing. */
 double Scalar64ToDouble(const Scalar64 *a);
 
 /* Converts element i of vector `vec` to double and returns it. */
 double Vector64ElemToDouble(int i, const Vector64 *vec);
 
-
-
 /* Returns nonzero if a and b are similar within a tolerance.  Intended mostly
    for checking code.*/
 int Scalar64ApproxEqual(const Scalar64 *a, const Scalar64 *b, float tol);
-
 
 /*
   Returns the smallest integer i >= 0 such that
@@ -335,3 +318,5 @@ int Scalar64ApproxEqual(const Scalar64 *a, const Scalar64 *b, float tol);
                     range.  If it's close to the true value it will be faster.
  */
 int FindSize(uint64_t value, int guess);
+
+#endif
