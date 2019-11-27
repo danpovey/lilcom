@@ -1064,7 +1064,11 @@ int lilcom_compress(
     /* We are actually ignoring the return status of backtracking_encoder_encode. */
   }
 
-  float bits_written_per_sample = bit_packer_flush(&state.packer);
+  float bits_written_per_sample;
+  int8_t *next_free_byte;  /* Unused currently. */
+  bit_packer_flush(&state.packer,
+                   &bits_written_per_sample,
+                   &next_free_byte);
   debug_fprintf(stderr,
                 "Avg bits-per-sample is %.2f bits vs. max of %d bits\n",
                 (float) bits_written_per_sample, (int) bits_per_sample);

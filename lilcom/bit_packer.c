@@ -63,7 +63,9 @@ void bit_packer_commit_block(ssize_t begin_t,
   packer->next_compressed_code = next_compressed_code;
 }
 
-float bit_packer_flush(struct BitPacker *packer) {
+void bit_packer_flush(struct BitPacker *packer,
+                      float *avg_bits_per_sample,
+                      int8_t **next_free_byte) {
   ssize_t T = packer->num_samples_to_write;
   while (packer->num_samples_committed < T) {
     ssize_t new_end = packer->num_samples_committed + STAGING_BLOCK_SIZE;
@@ -80,7 +82,8 @@ float bit_packer_flush(struct BitPacker *packer) {
   ssize_t num_bits_written = (8 * (packer->next_compressed_code - packer->compressed_code_start)) /
       packer->compressed_code_stride;
   float real_bits_per_sample = num_bits_written * 1.0 / packer->num_samples_to_write;
-  return real_bits_per_sample;
+  *avg_bits_per_sample = real_bits_per_sample;
+  *next_free_byte = packer->next_compressed_code;
 }
 
 

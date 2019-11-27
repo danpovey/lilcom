@@ -145,9 +145,15 @@ static void bit_packer_write_code(ssize_t t,
    Flushes remaining samples from the bit-packer object.  Assumes you have
    called write_compressed_code() for all t in 0 .. packer->num_samples_to_write
 
-   Returns the average number of bits written per sample.
+    @param [out] avg_bits_per_sample  The average number of bits written
+                            per sample will be written to here.
+    @param [out] next_free_byte  Points to one past the last element
+                            written to (taking into account the stride,
+                            of course.)
  */
-float bit_packer_flush(struct BitPacker *packer);
+void bit_packer_flush(struct BitPacker *packer,
+                      float *avg_bits_per_sample,
+                      int8_t **next_free_byte);
 
 
 
