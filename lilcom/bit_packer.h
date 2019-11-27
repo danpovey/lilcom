@@ -1,3 +1,6 @@
+#ifndef LILCOM_BIT_PACKER_H_
+#define LILCOM_BIT_PACKER_H_ 1
+
 #include <stdint.h>
 #include <sys/types.h>
 #include "lilcom_common.h"
@@ -117,9 +120,12 @@ void bit_packer_commit_block(ssize_t begin_t,
      @param [in,out] packer  The BitPacker object we are using to
                  write the code.
  */
-static void bit_packer_write_code(ssize_t t,
-                                  int code, int num_bits,
-                                  struct BitPacker *packer) {
+#ifdef INCLUDED_FROM_BIT_PACKER_C
+extern
+#endif
+inline void bit_packer_write_code(ssize_t t,
+                           int code, int num_bits,
+                           struct BitPacker *packer) {
   ssize_t t_mod = t & (STAGING_BLOCK_SIZE * 2 - 1);
   if (t % STAGING_BLOCK_SIZE == 0) {
     /* If t is a multiple of STAGING_BLOCK_SIZE, check whether we
@@ -213,8 +219,11 @@ void bit_unpacker_finish(struct BitUnpacker *unpacker);
                   `num_bits` bits coincide with the code that was originally
                   written; the higher order bits are undefined.
  */
-static inline int bit_unpacker_read_next_code(int num_bits,
-                                              struct BitUnpacker *unpacker) {
+#ifdef INCLUDED_FROM_BIT_PACKER_C
+extern
+#endif
+inline int bit_unpacker_read_next_code(int num_bits,
+                                       struct BitUnpacker *unpacker) {
 #ifndef NDEBUG
   assert(unpacker->num_samples_read < unpacker->num_samples_to_read);
   unpacker->num_samples_read++;
@@ -237,4 +246,6 @@ static inline int bit_unpacker_read_next_code(int num_bits,
   unpacker->remaining_num_bits = remaining_num_bits - num_bits;
   return ans;
 }
+
+#endif /* LILCOM_BIT_PACKER_H_ */
 

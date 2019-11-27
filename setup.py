@@ -26,7 +26,9 @@ def read(fname):
 
 extension_mod = Extension("lilcom.lilcom_c_extension",
                           sources=["lilcom/lilcom_c_extension.c",
-                                   "lilcom/lilcom.c"],
+                                   "lilcom/lilcom.c",
+                                   "lilcom/encoder.c",
+                                   "lilcom/bit_packer.c"],
                           # Actually it turns out that the optimization level
                           # and debugging code makes very little difference to
                           # the speed, so we're using options designed to

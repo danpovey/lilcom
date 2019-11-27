@@ -13,7 +13,7 @@ fixed_math.o: fixed_math.c
 # I was getting mysterious "illegal instruction" errors with -ftrapv that
 # i had trouble
 lilcom: lilcom.c lilcom.h bit_packer.c bit_packer.h lilcom_common.h
-	gcc -O0 -Wall -g -DLILCOM_TEST=1 lilcom.c bit_packer.c -o lilcom -lm # -ftrapv
+	gcc -O0 -Wall -g -DLILCOM_TEST=1 lilcom.c bit_packer.c encoder.c -o lilcom -lm # -ftrapv
 
 
 fixed_math: fixed_math.c

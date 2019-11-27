@@ -1737,24 +1737,6 @@ float lilcom_compute_snr_float(ssize_t num_samples,
     return -10.0 * log10((noise_sumsq * 1.0) / signal_sumsq);
 }
 
-void lilcom_test_extract_mantissa() {
-  for (int bits_per_sample = LILCOM_MIN_BPS;
-       bits_per_sample <= LILCOM_MAX_BPS; bits_per_sample++) {
-    for (int mantissa = -(1<<(bits_per_sample-2));
-         mantissa < (1<<(bits_per_sample-2)); mantissa++) {
-      for (int exponent_bit = 0; exponent_bit < 1; exponent_bit++) {
-        for (int random = -3; random <= 3; random++) {
-          int code = (((mantissa << 1) + exponent_bit) & ((1<<bits_per_sample)-1)) +
-              (random << bits_per_sample);
-          assert((code & 1) == exponent_bit);
-          code >>= 1;
-          assert(extend_sign_bit(code, bits_per_sample - 1) == mantissa);
-        }
-      }
-    }
-  }
-}
-
 void lilcom_test_compress_sine() {
   int16_t buffer[999];
   int lpc_order = 10;
@@ -2040,62 +2022,6 @@ void lilcom_test_get_max_abs_float_value() {
   array[100] = 1000.0;  /* not part of the real array. */
 
   assert(max_abs_float_value(array, 100, 1) == lilcom_abs(array[99]));
-}
-
-void lilcom_test_encode_decode_signed() {
-  for (int value = -1000; value <= 1000; value++) {
-    for (int min_bits = 0; min_bits < 4; min_bits++) {
-      for (int max_bits_encoded = 2; max_bits_encoded <= 6; max_bits_encoded++) {
-        int num_bits, num_bits_encoded;
-        int32_t encoded;
-        encode_signed_value(value, min_bits, max_bits_encoded,
-                            &num_bits, &num_bits_encoded, &encoded);
-
-        int32_t decoded = decode_signed_value(encoded, num_bits,
-                                              num_bits_encoded);
-        /*
-        printf("Value=%d, min-bits=%d, max-bits=%d, num-bits{,enc}=%d,%d, encoded=%d, decoded=%d\n",
-               (int)value, (int)min_bits, (int)max_bits_encoded,
-               (int)num_bits,
-               (int)num_bits_encoded, (int)encoded, (int)decoded); */
-        int max_error = (num_bits == num_bits_encoded ? 0 :
-                         1 << (num_bits - num_bits_encoded - 1));
-        assert(lilcom_abs(decoded - value) <= max_error);
-
-      }
-    }
-  }
-}
-
-void lilcom_test_encode_residual() {
-  for (int source = 0; source < 1000; source++)  {
-    for (int min_bits = 0; min_bits < 4; min_bits++) {
-      for (int max_bits_encoded = 2; max_bits_encoded <= 6; max_bits_encoded++) {
-        int num_bits, num_bits_encoded;
-        int32_t encoded;
-
-        int16_t predicted = (source * 23456) % 65535,
-            next_value = (source * 12345) % 65535;
-        int32_t residual = next_value - (int32_t)predicted;
-        int16_t next_decompressed_value;
-        encode_residual(residual, predicted,
-                        min_bits, max_bits_encoded,
-                        &num_bits, &num_bits_encoded,
-                        &encoded,
-                        &next_decompressed_value);
-        int32_t decoded = decode_signed_value(encoded,
-                                              num_bits,
-                                              num_bits_encoded),
-            decompressed_check = predicted + decoded;
-        assert(next_decompressed_value == decompressed_check);
-        /*
-        printf("residual = %d, predicted = %d, next-value = %d, max-bits=%d, "
-               "num-bits{,enc}=%d,%d encoded = %d,  next{,decompressed}=%d,%d\n",
-               residual, predicted, next_value, max_bits_encoded, num_bits,
-               num_bits_encoded, encoded, next_value, next_decompressed_value);*/
-      }
-    }
-  }
 }
 
 int main() {

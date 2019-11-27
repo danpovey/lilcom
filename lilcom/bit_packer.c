@@ -1,4 +1,5 @@
 #include <assert.h>
+#define INCLUDED_FROM_BIT_PACKER_C 1
 #include "bit_packer.h"
 
 
