@@ -4,8 +4,13 @@
 
 
 /**
-   This header contains declarations for some compression code used in
-   lilcom; it is an attempt to partition away some of the complexity.
+   This header contains declarations for a BitPacker object whose job is to pack
+   codes containing variable numbers of bits into a byte stream.
+
+   There is a BitUnpacker object which reverses the process.  The lengths
+   of the codes are not encoded in the stream; the calling code has to
+   know that.
+
  */
 
 

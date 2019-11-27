@@ -291,7 +291,6 @@
 #define paranoid_assert(x) while(0)
 #endif
 
-#include "lilcom_constants.h"
 
 #define lilcom_abs(a) ((a) > 0 ? (a) : -(a))
 #define lilcom_min(a, b) ((a) > (b) ? (b) : (a))
