@@ -391,10 +391,6 @@ struct CompressionState {
   */
   int16_t decompressed_signal[MAX_LPC_ORDER + SIGNAL_BUFFER_SIZE];
 
-  /** The following object has responsibility for writing out the codes
-      (each with between 4 and 8 bits). */
-  struct BitPacker packer;
-
   /**  The input signal that we are compressing  */
   const int16_t *input_signal;
 
@@ -453,6 +449,8 @@ struct CompressionState {
  */
 
 
+/* It is essential that the `num-bits-for-sample-minus-one` is the last byte
+   of the header, as backtracking_encoder_init() assumes that. */
 #define LILCOM_HEADER_NBITS_M1_OFFSET 4
 
 /** Set the conversion_exponent in the header.
@@ -965,11 +963,6 @@ static inline void lilcom_init_compression(
     int conversion_exponent,
     struct CompressionState *state) {
 
-  bit_packer_init(num_samples,
-                  output + LILCOM_HEADER_BYTES * output_stride,
-                  output_stride,
-                  &state->packer);
-
   state->bits_per_sample = bits_per_sample;
   state->lpc_order = lpc_order;
 
@@ -982,8 +975,10 @@ static inline void lilcom_init_compression(
   }
 
   backtracking_encoder_init(
+      num_samples,
       output + (LILCOM_HEADER_NBITS_M1_OFFSET * output_stride),
-      &(state->encoder));
+      output_stride,
+      &state->encoder);
 
   state->input_signal = input;
   state->input_signal_stride = input_stride;
@@ -1062,15 +1057,15 @@ int lilcom_compress(
 
     backtracking_encoder_encode(bits_per_sample, residual,
                                 predicted_value, next_value,
-                                &state.encoder, &state.packer);
+                                &state.encoder);
     /* We are actually ignoring the return status of backtracking_encoder_encode. */
   }
 
   float bits_written_per_sample;
   int8_t *next_free_byte;  /* Unused currently. */
-  bit_packer_flush(&state.packer,
-                   &bits_written_per_sample,
-                   &next_free_byte);
+  backtracking_encoder_finish(&state.encoder,
+                              &bits_written_per_sample,
+                              &next_free_byte);
   debug_fprintf(stderr,
                 "Avg bits-per-sample is %.2f bits vs. max of %d bits\n",
                 (float) bits_written_per_sample, (int) bits_per_sample);

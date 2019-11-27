@@ -71,7 +71,7 @@ struct BitPacker {
      If this were a class, the members would be:
      bit_packer_init() == constructor
      bit_packer_write_code()
-     bit_packer_flush() == destructor
+     bit_packer_finish() == destructor
   */
 };
 
@@ -153,7 +153,7 @@ static inline void bit_packer_write_code(ssize_t t,
                             written to (taking into account the stride,
                             of course.)
  */
-void bit_packer_flush(struct BitPacker *packer,
+void bit_packer_finish(struct BitPacker *packer,
                       float *avg_bits_per_sample,
                       int8_t **next_free_byte);
 

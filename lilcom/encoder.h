@@ -23,6 +23,9 @@ struct BacktrackingEncoder {
    (allows you to extract the approximately-encoded residuals.)
   */
 
+
+  struct BitPacker bit_packer;
+
   /* bits_per_sample is a user-supplied configuration value in [4..8]. */
   int bits_per_sample;
 
@@ -63,19 +66,39 @@ struct BacktrackingEncoder {
    Initializes the backtracking-encoder object.    After this you will
    want to repeatedly call backtracking_encoder_encode().
 
-     @param [in] bits_per_sample   User-specified configuration value
-                  in the range [LILCOM_MIN_BPS .. LILCOM_MAX_BPS],
-                  currently [4..16]
-     @param [in,out] nbits_m1   Address to write the exponent
-                  for time t == -1 (this allows it to initialize
-                  the sequence of exponents).  This address is
-                  stored inside the encoder and its contents will be
-                  modified as needed.
-     @param [out] encoder  The encoder to be initialized
+     @param [in] num_samples_to_write  The number of samples that
+                  will be written to this stream.  (This is just
+                  used for checks.)
+     @param [in] compressed_code_start  Pointer to where the
+                  first bit of the compressed code will be written.
+     @param [in] compressed_code_stride  Spacing between elements of
+                   compressed code; will normally be 1.  Must be nonzero.
+     @param [out] encoder  The encoder object to be initialized
 
  */
-void backtracking_encoder_init(int8_t *nbits_m1,
+void backtracking_encoder_init(ssize_t num_samples_to_write,
+                               int8_t *compressed_code_start,
+                               int compressed_code_stride,
                                struct BacktrackingEncoder *encoder);
+
+
+/**
+   Flushes remaining samples from the bit-packer object owned by
+   BacktrackingEncoder; to be called once you have called it for all samples.
+   Assumes you have called backtracking_encoder_encode() until its
+   next_sample_to_encode equals the number of samples you were going to write.
+
+    @param [out] avg_bits_per_sample  The average number of bits written
+                            per sample will be written to here.
+    @param [out] next_free_byte  Points to one past the last element
+                            written to (taking into account the stride,
+                            of course.)
+ */
+
+void backtracking_encoder_finish(struct BacktrackingEncoder *encoder,
+                                  float *avg_bits_per_sample,
+                                  int8_t **next_free_byte);
+
 
 
 /**
@@ -135,8 +158,7 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
                                               int32_t residual,
                                               int16_t predicted,
                                               int16_t *next_value,
-                                              struct BacktrackingEncoder *encoder,
-                                              struct BitPacker *packer);
+                                              struct BacktrackingEncoder *encoder);
 
 
 struct Decoder {
