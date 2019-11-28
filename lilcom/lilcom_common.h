@@ -179,7 +179,7 @@
    65535, which is 13767 - (-13768); and the least number of bits we'd need
    to encode this as a signed integer is 17.
 */
-#define MAX_POSSIBLE_NBITS 17
+#define MAX_POSSIBLE_WIDTH 17
 
 /**
    MAX_BACKTRACK is a convenient way of saying 'the maximum number of samples we
@@ -194,13 +194,13 @@
 
    If we require the exponent to have a certain value E on a particular time t
    (and suppose, for the worst case, that this corresponds to a black square on
-   our board and E == MAX_POSSIBLE_NBITS), then it can achieve that if at a
+   our board and E == MAX_POSSIBLE_WIDTH), then it can achieve that if at a
    particular time t-(E+1) it was zero.  The exponent is not allowed to be less
    than zero, so the maximumum number of frames we might have to go back in time
-   is MAX_POSSIBLE_NBITS+1.  (Actually the +1 might not even be needed because
+   is MAX_POSSIBLE_WIDTH+1.  (Actually the +1 might not even be needed because
    that exponent at time t-(E+1) wouldn't have to be changed.)
  */
-#define MAX_BACKTRACK (MAX_POSSIBLE_NBITS+1)
+#define MAX_BACKTRACK (MAX_POSSIBLE_WIDTH+1)
 
 /**
    This rolling-buffer size determines how far back in time we keep the
@@ -214,7 +214,7 @@
    This must be a power of 2 due to a trick used to compute a modulus, which
    dictates 32.
  */
-#define NBITS_BUFFER_SIZE 32
+#define WIDTH_BUFFER_SIZE 32
 
 
 /**
@@ -238,12 +238,12 @@
    satisfy:
 
     SIGNAL_BUFFER_SIZE >
-       AUTOCORR_BLOCK_SIZE + (MAX_POSSIBLE_NBITS*2) + MAX_LPC_ORDER
+       AUTOCORR_BLOCK_SIZE + (MAX_POSSIBLE_WIDTH*2) + MAX_LPC_ORDER
 
    (currently: 128 > 16 + (15*2) + 14).
 
    That is: it needs to store a whole autocorrelation-stats block's worth of
-   data, plus the farthest we might backtrack (MAX_POSSIBLE_NBITS * 2),
+   data, plus the farthest we might backtrack (MAX_POSSIBLE_WIDTH * 2),
    plus enough context to process the first sample of the block
    (i.e. MAX_LPC_ORDER).  This backtracking is because there may be situations
    where we need to recompute the autocorrelation coefficients of a block if
@@ -270,7 +270,7 @@
    8, hence a whole number of bytes.
 
    It should be at least twice the maximum number of time steps we might backtrack
-   (which is MAX_POSSIBLE_NBITS+1 = 18).  We choose to make it 32 bytes,
+   (which is MAX_POSSIBLE_WIDTH+1 = 18).  We choose to make it 32 bytes,
    meaning the entire staging area contains 64 bytes.
 
    There are 2 staging blocks in the buffer.

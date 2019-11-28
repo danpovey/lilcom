@@ -64,7 +64,7 @@ struct BitPacker {
      remaining that didn't fit exactly into a byte.
       0 <= remaining_num_bits < 8 will be the number of those bits, and
       the actual bits will be the lowest-order bits of `remaining_bits`. */
-  uint32_t remaining_bits;
+  uint64_t remaining_bits;
   int remaining_num_bits;
 
   /**
@@ -175,7 +175,7 @@ struct BitUnpacker {
   const int8_t *next_compressed_code;
   int compressed_code_stride;
 
-  uint32_t remaining_bits;
+  uint64_t remaining_bits;
   int remaining_num_bits;
   /**
      If this were a class, the members would be:
@@ -220,31 +220,8 @@ void bit_unpacker_finish(const struct BitUnpacker *unpacker,
                   `num_bits` bits coincide with the code that was originally
                   written; the higher order bits are undefined.
  */
-
 static inline int32_t bit_unpacker_read_next_code(int num_bits,
-                                                  struct BitUnpacker *unpacker) {
-#ifndef NDEBUG
-  assert(unpacker->num_samples_read < unpacker->num_samples_to_read);
-  unpacker->num_samples_read++;
-#endif
-  uint32_t remaining_bits = unpacker->remaining_bits;
-  int remaining_num_bits = unpacker->remaining_num_bits;
-
-  while (remaining_num_bits < num_bits) {
-    /** We need more bits.  Put them above (i.e. higher-order-than) any bits we
-        have currently. */
-    unsigned char code = *unpacker->next_compressed_code;
-    unpacker->next_compressed_code += unpacker->compressed_code_stride;
-    remaining_bits |= (((uint32_t) ((unsigned char) (code))) << remaining_num_bits);
-    remaining_num_bits += 8;
-  }
-  /* CAUTION: only the lowest-order `num_bits` bits of `ans` are valid; the rest
-     are to be ignored by the caller. */
-  int32_t ans = remaining_bits;
-  unpacker->remaining_bits = remaining_bits >> num_bits;
-  unpacker->remaining_num_bits = remaining_num_bits - num_bits;
-  return ans;
-}
+                                                  struct BitUnpacker *unpacker);
 
 #endif /* LILCOM_BIT_PACKER_H_ */
 

@@ -20,76 +20,81 @@
 
        @param [in] t   The time for which we want to know the possible
                        bit-width range.  t >= -1.
-       @param [in] exponent_tm1   The exponent used for time t-1:
-                       a value in [0..15], otherwise it is an error.
-       @return min_exponent  The minimum exponent that time t
-                       will be able to use, given exponent_tm1.
-                       This equals exponent_tm1 - ((t+exponent_tm1)&1),
+       @param [in] width_tm1   The width of the number stored at time t-1:
+                       a value in [0..31], otherwise it is an error.
+       @return min_width  The minimum width that time t
+                       will be able to use, given width_tm1.
+                       This equals width_tm1 - ((t+width_tm1)&1),
                        where &1 is a way of computing mod 2.
                        It forms a checkerboard pattern.  If you draw
-                       the possible trajectories of exponents on
+                       the possible trajectories of widths on
                        a grid you'll see that this choice has nice
-                       properties that allows exponents to change
+                       properties that allows widths to change
                        quite fast when needed.  The return value is a value
-                       in [-1..15], but currently going to exponent
-                       -1 is "forbidden", meaning the encoded bit for exponent
+                       in [-1..31], but currently going to width
+                       -1 is "forbidden", meaning the encoded bit for width
                        change is bound to be 1 in this case so the
-                       exponent for time t would be zero.  We may later
-                       make excursions to negative exponents allowed,
+                       width for time t would be zero.  We may later
+                       make excursions to negative widths allowed,
                        which would allow us to save and then re-use
                        bits, e.g. for on-disk formats.
 
-   Note: the maximum exponent is just min_exponent + 1 where min_exponent is
-   what this macro returns, because we use 1 bit for the change in exponent; a
+   Note: the maximum width is just min_width + 1 where min_width is
+   what this macro returns, because we use 1 bit for the change in width; a
    bit value of 1 means we choose the max, zero means we choose the min.
  */
-#define LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_tm1) (exponent_tm1 - ((((int)t)+exponent_tm1)&1))
+#define LILCOM_COMPUTE_MIN_CODABLE_WIDTH(t, width_tm1) (width_tm1 - ((((int)t)+width_tm1)&1))
 
 /**
    This macro is defined mainly for documentation purposes.  It returns the
-   smallest value the exponent for time t-1 could be, given the constraint that
-   we require the exponent for time t to be at least a specified value.
+   smallest value the width for time t-1 could be, given the constraint that
+   we require the width for time t to be at least a specified value.
 
-        @param [in]  t   The current time, t >= 0.  We want to compute an exponent-floor for
+        @param [in]  t   The current time, t >= 0.  We want to compute an width-floor for
                          the preceding time (t-1).
-        @param [in] exponent_t  An exponent for time t, where the caller says
-                         they want an exponent at least this large.  Must be
-                         in the range [0..MAX_POSSIBLE_NBITS].
-        @return  Returns the smallest value that the exponent could have on
-                         time t-1 such that the exponent on time t will be
-                         at least exponent_t.  This may be -1 if exponent_t
+        @param [in] width_t  An width for time t, where the caller says
+                         they want an width at least this large.  Must be
+                         in the range [0..MAX_POSSIBLE_WIDTH].
+        @return  Returns the smallest value that the width could have on
+                         time t-1 such that the width on time t will be
+                         at least width_t.  This may be -1 if width_t
                          was 0, but this macro should never be called in that
                          case.  So this function returns the maximum k such that
-                         LILCOM_COMPUTE_MIN_CODABLE_COMPONENT(t, k) >= exponent_t.
-                         The answer will obviously be either exponent_t or
-                         exponent_t - 1.  We work out the formula as follows:
+                         LILCOM_COMPUTE_MIN_CODABLE_WIDTH(t, k) >= width_t.
+                         The answer will obviously be either width_t or
+                         width_t - 1.  We work out the formula as follows:
 
-                         (a) First, assume (t+exponent_t) is even, so
-                         ((((int)t)+exponent_t)&1) is zero.  Now we ask,
-                         if exponent_tm1 = exponent_t - 1, what is
-                         the greatest exponent that we can have on time t?
-                         The minimum exponent we can have on time t is given by
-                         LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, (exponent_t - 1))
+                         (a) First, assume (t+width_t) is even, so
+                         ((((int)t)+width_t)&1) is zero.  Now we ask,
+                         if width_tm1 = width_t - 1, what is
+                         the greatest width that we can have on time t?
+                         The minimum width we can have on time t is given by
+                         LILCOM_COMPUTE_MIN_CODABLE_WIDTH(t, (width_t - 1))
                          and in that case we get an odd number in the modulus
                          so there is a -1 in the formula.  That would imply the
-                         minimum exponent on time t is (exponent_t - 1) - 1 =
-                         exponent_t - 2, so the maximum is exponent_t - 1
+                         minimum width on time t is (width_t - 1) - 1 =
+                         width_t - 2, so the maximum is width_t - 1
                          (since the bit adds one).  That's a no-go, i.e.
-                         for even ((((int)t)+exponent_t)&1) the answer is
-                         just exponent_t; for odd it's exponent_t - 1.
+                         for even ((((int)t)+width_t)&1) the answer is
+                         just width_t; for odd it's width_t - 1.
                          This happens to be exactly the same formula as
-                         LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_t).
+                         LILCOM_COMPUTE_MIN_CODABLE_WIDTH(t, width_t).
  */
-#define LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent_t) (exponent_t - ((((int)t)+exponent_t)&1))
+#define LILCOM_COMPUTE_MIN_PRECEDING_WIDTH(t, width_t) (width_t - ((((int)t)+width_t)&1))
 
 
 
 
 /*
-  least_bits(residual, min_exponent):
+  least_bits(value, min_width):
 
-  Returns least n >= min_exponent such that:
+  Returns least n >= min_width such that:
     -2^n <= value * 2 < 2^n
+
+  For -2^30 <= value`  < 2^30, this is the smallest number of
+  bits we would need (as a signed 2s-complement integer) to
+  represent the value.  For `value` outside this range, it is
+  meaningless.
 
   Note: the "* 2" part of the formulation may seem odd, but:
   (1) It means that the number of bits can include the bit
@@ -98,16 +103,21 @@
   the case where value == 0, i.e. that equation works
   with n == 0 in that case.
 
-  @param [in] value  Value to be encoded, there is no limitation
-                  except that it has to fit in int32_t.
-  @param [in] min_bits  A value in [0, 30] that will be a lower limit
-                  on the returned value.
+  @param [in] value  Value to be encoded.  Must satisfy
+              -(1<<30) <= value < (1<<30), or the output is meaningless.
+  @param [in] min_bits  A value in [0, 31] that will act as a lower limit
+              on the returned value, i.e. the search will start from
+              this point.
+  @return     For `value` satisfying -(1<<30) <= value < (1<<30),
+              returns the smallest n >= min_bits which satisfies
+              -2^n <= value * 2 < 2^n.  Otherwise, returns a
+              meaningless value.
 */
 static inline int least_bits(int32_t value,
                              int min_bits) {
   int bits = min_bits;
-  int limit = 1 << bits;
-  while (value * 2 < -limit || value * 2 >= limit) {
+  int limit = -1 << bits;
+  while (value * 2 < limit || value * -2 <= limit) {
     limit <<= 1;
     bits++;
   }
@@ -123,12 +133,13 @@ static inline int least_bits(int32_t value,
                      power-of-two is n, that means our encoding will be capable
                      of encoding values s.t. -2^n <= v*2 < 2^n.
                      [Note: this num-bits does not include the bit for the
-                     exponent.]  min_bits will be determined by constraints
-                     on how we encode the exponent.
-      @param [in] max_bits_encoded   A user-specified value that says the
-                     maximum number of bits we'll use in `encoded_value`..
-                     this means something quite different from `min_bits`,
-                     it means that once the num-bits exceeds this value,
+                     width.]  min_bits will be determined by constraints
+                     on how we encode the width.
+      @param [in] max_bits_encoded   A user-specified value in [2, 31]
+                     that says the maximum number of bits we'll use in
+                     `encoded_value`.  This means something quite different
+                     from `min_bits`.
+                     it means that once the num-bits exceeds max_bits_encoded,
                      we will not encode the least significant bits.
                      It must be >1, but it is allowed to be less than
                      min_bits.
@@ -227,7 +238,7 @@ static inline int32_t decode_signed_value(int32_t code,
                      It must be in the range [0, 17].
        @param [in] max_bits_encoded  This is a user-specified maximum
                      on the number of bits to use (it will be the
-                     bits-per-sample minus one, since the exponent takes one
+                     bits-per-sample minus one, since the width takes one
                      bit.)  It must be >= 2.  Note: It is allowed to be less
                      than min_bits; if the number of bits needed exceeds
                      max_bits_encoded, we discard lower-order bits.
@@ -295,84 +306,84 @@ static inline int backtracking_encoder_encode_limited(int max_bits_in_sample,
                                                       struct BacktrackingEncoder *encoder) {
   ssize_t t = encoder->next_sample_to_encode,
       t_most_recent = encoder->most_recent_attempt;
-  size_t t_mod = (t & (NBITS_BUFFER_SIZE - 1)), /* t % buffer_size */
+  size_t t_mod = (t & (WIDTH_BUFFER_SIZE - 1)), /* t % buffer_size */
   /* t1_mod is (t-1) % buffer_size using mathematical modulus, not C modulus,
      so -1 % buffer_size is positive.
    */
-      t1_mod = ((t - 1) & (NBITS_BUFFER_SIZE - 1));
+      t1_mod = ((t - 1) & (WIDTH_BUFFER_SIZE - 1));
 
-  int exponent_t1 = encoder->nbits[t1_mod],
-      min_codable_exponent =
-      LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_t1),
-      exponent_floor = (min_codable_exponent < 0 ? 0 : min_codable_exponent);
+  int width_t1 = encoder->width[t1_mod],
+      min_codable_width =
+      LILCOM_COMPUTE_MIN_CODABLE_WIDTH(t, width_t1),
+      width_floor = (min_codable_width < 0 ? 0 : min_codable_width);
   if (t <= t_most_recent) {
     /* We are backtracking, so there will be limitations on the
-       exponent. (encoder->nbits[t_mod] represents a floor
-       on the exponent). */
-    if (encoder->nbits[t_mod] > min_codable_exponent) {
-      exponent_floor = encoder->nbits[t_mod];
+       width. (encoder->width[t_mod] represents a floor
+       on the width). */
+    if (encoder->width[t_mod] > min_codable_width) {
+      width_floor = encoder->width[t_mod];
       /* If the following assert fails it means the logic of the
          backtracking_encoder's routines has failed somewhere. */
-      assert(exponent_floor == min_codable_exponent + 1);
+      assert(width_floor == min_codable_width + 1);
     }
   } else {
     encoder->most_recent_attempt = t;
   }
 
-  int exponent, /* note: exponent is not any more the exponent, it is the
+  int width, /* note: width is not any more the width, it is the
                  * num-bits; must rename. */
       num_bits_encoded, mantissa;
   encode_residual(residual, predicted,
-                  exponent_floor,  /* min_bits */
+                  width_floor,  /* min_bits */
                   max_bits_in_sample - 1,
-                  &exponent, &num_bits_encoded,
+                  &width, &num_bits_encoded,
                   &mantissa, next_value);
-  if (exponent <= min_codable_exponent + 1) {
+  if (width <= min_codable_width + 1) {
     /* Success. */
-    int exponent_delta = exponent - min_codable_exponent;
-    /* The following is a checks (non-exhaustively) that exponent_delta is 0 or 1. */
-    assert((exponent_delta & 254) == 0);
+    int width_delta = width - min_codable_width;
+    /* The following is a checks (non-exhaustively) that width_delta is 0 or 1. */
+    assert((width_delta & 254) == 0);
     /** Success; we can represent this.  This is (hopefully) the normal code
         path. */
-    encoder->nbits[t_mod] = exponent;
+    encoder->width[t_mod] = width;
     encoder->next_sample_to_encode = t + 1;
 
     /* Actually write the code.  Note: this is as if we had written
-       first the exponent bit and then the mantissa.  We do it in
+       first the width bit and then the mantissa.  We do it in
        one call, which actually matters because of the way
        the bit-packer object deals with backtracking.
     */
-    bit_packer_write_code(t, ((mantissa << 1) + exponent_delta),
+    bit_packer_write_code(t, ((mantissa << 1) + width_delta),
                           num_bits_encoded + 1,
                           &encoder->bit_packer);
     return 0;
   } else {
-    /* Failure: the exponent required to most accurately
+    /* Failure: the width required to most accurately
        approximate this residual is too large; we will need
        to backtrack. */
-    encoder->nbits[t_mod] = exponent;
+    encoder->width[t_mod] = width;
     while (1) {
-      exponent = LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent);
+      width = LILCOM_COMPUTE_MIN_PRECEDING_WIDTH(t, width);
       t--;
 #ifndef NDEBUG
       encoder->num_backtracks++;
 #endif
-      /* Now `exponent` is the minimum exponent we'll allow for time t-1. */
-      t_mod = t & (NBITS_BUFFER_SIZE - 1);
-      if (encoder->nbits[t_mod] >= exponent) {
-        /* The exponent value we used for this time satsifes our limit, so we will
+      /* Now `width` is the minimum width we'll allow for time t-1. */
+      t_mod = t & (WIDTH_BUFFER_SIZE - 1);
+      if (encoder->width[t_mod] >= width) {
+        /* The width value we used for this time satsifes our limit, so we will
            next be encoding the value at time t + 1.  */
         encoder->next_sample_to_encode = t + 1;
         return 1;
       } else {
         /* The following will set a floor on the allowed
-           exponent, which this function will inspect when
+           width, which this function will inspect when
            it is asked to encode the sample at t-1.. */
-        encoder->nbits[t_mod] = exponent;
+        encoder->width[t_mod] = width;
         /* TODO: maybe change the code so the following if-statement is no
          * longer necessary? */
         if (t < 0) {  /* t == -1 */
-          *(encoder->nbits_m1) = exponent;
+          *(encoder->width_m1) = width;
           encoder->next_sample_to_encode = 0;
           return 1;
         }
@@ -390,84 +401,84 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
                                               struct BacktrackingEncoder *encoder) {
   ssize_t t = encoder->next_sample_to_encode,
       t_most_recent = encoder->most_recent_attempt;
-  size_t t_mod = (t & (NBITS_BUFFER_SIZE - 1)), /* t % buffer_size */
+  size_t t_mod = (t & (WIDTH_BUFFER_SIZE - 1)), /* t % buffer_size */
   /* t1_mod is (t-1) % buffer_size using mathematical modulus, not C modulus,
      so -1 % buffer_size is positive.
    */
-      t1_mod = ((t - 1) & (NBITS_BUFFER_SIZE - 1));
+      t1_mod = ((t - 1) & (WIDTH_BUFFER_SIZE - 1));
 
-  int exponent_t1 = encoder->nbits[t1_mod],
-      min_codable_exponent =
-      LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(t, exponent_t1),
-      exponent_floor = (min_codable_exponent < 0 ? 0 : min_codable_exponent);
+  int width_t1 = encoder->width[t1_mod],
+      min_codable_width =
+      LILCOM_COMPUTE_MIN_CODABLE_WIDTH(t, width_t1),
+      width_floor = (min_codable_width < 0 ? 0 : min_codable_width);
   if (t <= t_most_recent) {
     /* We are backtracking, so there will be limitations on the
-       exponent. (encoder->nbits[t_mod] represents a floor
-       on the exponent). */
-    if (encoder->nbits[t_mod] > min_codable_exponent) {
-      exponent_floor = encoder->nbits[t_mod];
+       width. (encoder->width[t_mod] represents a floor
+       on the width). */
+    if (encoder->width[t_mod] > min_codable_width) {
+      width_floor = encoder->width[t_mod];
       /* If the following assert fails it means the logic of the
          backtracking_encoder's routines has failed somewhere. */
-      assert(exponent_floor == min_codable_exponent + 1);
+      assert(width_floor == min_codable_width + 1);
     }
   } else {
     encoder->most_recent_attempt = t;
   }
 
-  int exponent, /* note: exponent is not any more the exponent, it is the
+  int width, /* note: width is not any more the width, it is the
                  * num-bits; must rename. */
       num_bits_encoded, mantissa;
   encode_signed_value(residual,
-                      exponent_floor,  /* min_bits */
+                      width_floor,  /* min_bits */
                       max_bits_in_sample - 1,
-                      &exponent, &num_bits_encoded,
+                      &width, &num_bits_encoded,
                       &mantissa);
-  if (exponent <= min_codable_exponent + 1) {
+  if (width <= min_codable_width + 1) {
     /* Success. */
-    int exponent_delta = exponent - min_codable_exponent;
-    /* The following is a checks (non-exhaustively) that exponent_delta is 0 or 1. */
-    assert((exponent_delta & 254) == 0);
+    int width_delta = width - min_codable_width;
+    /* The following is a checks (non-exhaustively) that width_delta is 0 or 1. */
+    assert((width_delta & 254) == 0);
     /** Success; we can represent this.  This is (hopefully) the normal code
         path. */
-    encoder->nbits[t_mod] = exponent;
+    encoder->width[t_mod] = width;
     encoder->next_sample_to_encode = t + 1;
 
     /* Actually write the code.  Note: this is as if we had written
-       first the exponent bit and then the mantissa.  We do it in
+       first the width bit and then the mantissa.  We do it in
        one call, which actually matters because of the way
        the bit-packer object deals with backtracking.
     */
-    bit_packer_write_code(t, ((mantissa << 1) + exponent_delta),
+    bit_packer_write_code(t, ((mantissa << 1) + width_delta),
                           num_bits_encoded + 1,
                           &encoder->bit_packer);
     return 0;
   } else {
-    /* Failure: the exponent required to most accurately
+    /* Failure: the width required to most accurately
        approximate this residual is too large; we will need
        to backtrack. */
-    encoder->nbits[t_mod] = exponent;
+    encoder->width[t_mod] = width;
     while (1) {
-      exponent = LILCOM_COMPUTE_MIN_PRECEDING_EXPONENT(t, exponent);
+      width = LILCOM_COMPUTE_MIN_PRECEDING_WIDTH(t, width);
       t--;
 #ifndef NDEBUG
       encoder->num_backtracks++;
 #endif
-      /* Now `exponent` is the minimum exponent we'll allow for time t-1. */
-      t_mod = t & (NBITS_BUFFER_SIZE - 1);
-      if (encoder->nbits[t_mod] >= exponent) {
-        /* The exponent value we used for this time satsifes our limit, so we will
+      /* Now `width` is the minimum width we'll allow for time t-1. */
+      t_mod = t & (WIDTH_BUFFER_SIZE - 1);
+      if (encoder->width[t_mod] >= width) {
+        /* The width value we used for this time satsifes our limit, so we will
            next be encoding the value at time t + 1.  */
         encoder->next_sample_to_encode = t + 1;
         return 1;
       } else {
         /* The following will set a floor on the allowed
-           exponent, which this function will inspect when
+           width, which this function will inspect when
            it is asked to encode the sample at t-1.. */
-        encoder->nbits[t_mod] = exponent;
+        encoder->width[t_mod] = width;
         /* TODO: maybe change the code so the following if-statement is no
          * longer necessary? */
         if (t < 0) {  /* t == -1 */
-          *(encoder->nbits_m1) = exponent;
+          *(encoder->width_m1) = width;
           encoder->next_sample_to_encode = 0;
           return 1;
         }
@@ -484,8 +495,8 @@ void backtracking_encoder_init(ssize_t num_samples_to_write,
                                int8_t *compressed_code_start,
                                int compressed_code_stride,
                                struct BacktrackingEncoder *encoder) {
-  encoder->nbits_m1 = compressed_code_start;
-  encoder->nbits[NBITS_BUFFER_SIZE - 1] = (encoder->nbits_m1[0] = 0);
+  encoder->width_m1 = compressed_code_start;
+  encoder->width[WIDTH_BUFFER_SIZE - 1] = (encoder->width_m1[0] = 0);
   encoder->most_recent_attempt = -1;
   encoder->next_sample_to_encode = 0;
 #ifndef NDEBUG
@@ -512,12 +523,12 @@ void decoder_init(ssize_t num_samples_to_read,
                   const int8_t *compressed_code,
                   int compressed_code_stride,
                   struct Decoder *decoder) {
-  int nbits_m1 = *compressed_code;  /* num-bits for t = -1. */
-  decoder->num_bits = nbits_m1;
+  int width_m1 = *compressed_code;  /* num-bits for t = -1. */
+  decoder->num_bits = width_m1;
   compressed_code += compressed_code_stride;
   /* we give num_samples_to_read * 2 to bit_unpacker_init because
-     we will be extracting the exponent bit and the mantissa separately.
-     (Necessary because the size of the exponent determines the num-bits
+     we will be extracting the width bit and the mantissa separately.
+     (Necessary because the size of the width determines the num-bits
      in the mantissa.) */
   bit_unpacker_init(num_samples_to_read * 2,
                     compressed_code, compressed_code_stride,
@@ -542,8 +553,9 @@ void decoder_finish(const struct Decoder *decoder,
        @param [in] code  The integer code to be manipulated.
                          Note: only its bits 0 through num_bits - 1
                          will affect the return value.
-       @param [in] num_bits  The number of bits in the code (just the number,
-                         i.e. excluding the exponent bit).  The code is
+       @param [in] num_bits  The number of bits in the code
+                         (excluding the width bit).
+                         Must satisfy 0 <= n <= 31.  The code is
                          interpreted as a 2s-complement signed integer with
                          `num_bits` bits.
 
@@ -571,26 +583,26 @@ static inline int decoder_decode(ssize_t t,
                                  int max_encoded_mantissa_bits,
                                  struct Decoder *decoder,
                                  int32_t *value) {
-  int exponent_bit = 1 & bit_unpacker_read_next_code(1, &decoder->bit_unpacker),
-      min_codable_exponent = LILCOM_COMPUTE_MIN_CODABLE_EXPONENT(
+  int width_bit = 1 & bit_unpacker_read_next_code(1, &decoder->bit_unpacker),
+      min_codable_width = LILCOM_COMPUTE_MIN_CODABLE_WIDTH(
           t, decoder->num_bits),
-      exponent = min_codable_exponent + exponent_bit,
+      width = min_codable_width + width_bit,
       num_bits_encoded = lilcom_min(max_encoded_mantissa_bits,
-                                    exponent),
+                                    width),
       mantissa = extend_sign_bit(
           bit_unpacker_read_next_code(num_bits_encoded,
                                       &decoder->bit_unpacker),
       num_bits_encoded);
 
-  decoder->num_bits = exponent;
+  decoder->num_bits = width;
 
-  if (exponent < 0) {
-    debug_fprintf(stderr, "Decompression failed, negative exponent %d at t=%d\n",
-                  (int) exponent, (int) t);
+  if (width < 0) {
+    debug_fprintf(stderr, "Decompression failed, negative width %d at t=%d\n",
+                  (int) width, (int) t);
     return 1;
   } else {
     /* TODO: don't need to extract the mantissa. */
-    *value = decode_signed_value(mantissa, exponent,
+    *value = decode_signed_value(mantissa, width,
                                  num_bits_encoded);
     return 0;
   }
@@ -598,15 +610,19 @@ static inline int decoder_decode(ssize_t t,
 
 #ifdef LILCOM_TEST
 void lilcom_test_extract_mantissa() {
-  for (int bits_per_sample = LILCOM_MIN_BPS;
-       bits_per_sample <= LILCOM_MAX_BPS; bits_per_sample++) {
-    for (int mantissa = -(1<<(bits_per_sample-2));
-         mantissa < (1<<(bits_per_sample-2)); mantissa++) {
-      for (int exponent_bit = 0; exponent_bit < 1; exponent_bit++) {
+  for (int bits_per_sample = 4;
+       bits_per_sample <= 32; bits_per_sample++) {
+    for (int i = 0; i < 1000; i++) {
+      int32_t mantissa = -(1<<(bits_per_sample-2));
+      if (i == 999)
+        mantissa = 1<<(bits_per_sample-2);
+      if (mantissa >= (1<<(bits_per_sample-2)))
+        continue;
+      for (int width_bit = 0; width_bit < 1; width_bit++) {
         for (int random = -3; random <= 3; random++) {
-          int code = (((mantissa << 1) + exponent_bit) & ((1<<bits_per_sample)-1)) +
-              (random << bits_per_sample);
-          assert((code & 1) == exponent_bit);
+          int32_t code = (((((uint64_t)mantissa) << 1) + width_bit) & ((((uint64_t)1)<<bits_per_sample)-1)) +
+              (((uint64_t)random) << bits_per_sample);
+          assert((code & 1) == width_bit);
           code >>= 1;
           assert(extend_sign_bit(code, bits_per_sample - 1) == mantissa);
         }
@@ -679,7 +695,7 @@ void lilcom_test_backtracking_encoder() {
     for (int max_bits = 4; max_bits <= 32; max_bits++) {
       if (max_bits > 16 && i == 1)
         continue;
-      /* max_bits includes the exponent bit. */
+      /* max_bits includes the width bit. */
       int prime = 111;
       int32_t to_encode[500],
           decoded[500];
@@ -724,6 +740,8 @@ void lilcom_test_backtracking_encoder() {
       assert(next_compressed_code == next_free_byte);
     }
   }
+  /* just a random small thing: */
+  assert(least_bits(((uint32_t)-1) << 31, 0) == 31);
 }
 
 #endif /* LILCOM_TEST */

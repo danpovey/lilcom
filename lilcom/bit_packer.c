@@ -37,7 +37,7 @@ void bit_packer_commit_block(ssize_t begin_t,
 
   /* `code` and `bits_in_code` are like a little buffer of bits
      that we're going to write. */
-  uint32_t code = packer->remaining_bits;
+  uint64_t code = packer->remaining_bits;
   unsigned int bits_in_code = packer->remaining_num_bits;
 
   int cur_index = begin_t % (STAGING_BLOCK_SIZE * 2),
@@ -45,8 +45,8 @@ void bit_packer_commit_block(ssize_t begin_t,
   assert(end_index <= STAGING_BLOCK_SIZE * 2);
   for (; cur_index != end_index; ++cur_index) {
     unsigned int this_num_bits = packer->staging_buffer[cur_index].num_bits;
-    uint32_t this_code = packer->staging_buffer[cur_index].code,
-        this_mask = ((((uint32_t) 1) << this_num_bits) - 1);
+    uint64_t this_code = packer->staging_buffer[cur_index].code,
+        this_mask = ((((uint64_t) 1) << this_num_bits) - 1);
     code |= (this_code & this_mask) << bits_in_code;
     bits_in_code += this_num_bits;
     while (bits_in_code >= 8) {  /* Shift off the lowest-order byte */
@@ -119,4 +119,33 @@ void bit_unpacker_finish(const struct BitUnpacker *unpacker,
   assert(unpacker->num_samples_read == unpacker->num_samples_to_read);
 #endif
   *next_compressed_code = unpacker->next_compressed_code;
+}
+
+
+/* see documentation in header. */
+static inline int32_t bit_unpacker_read_next_code(int num_bits,
+                                                  struct BitUnpacker *unpacker) {
+#ifndef NDEBUG
+  assert(unpacker->num_samples_read < unpacker->num_samples_to_read);
+  unpacker->num_samples_read++;
+#endif
+  uint64_t remaining_bits = unpacker->remaining_bits;
+  int remaining_num_bits = unpacker->remaining_num_bits;
+
+  while (remaining_num_bits < num_bits) {
+    /** We need more bits.  Put them above (i.e. higher-order-than) any bits we
+        have currently. */
+
+    /* TODO: read an int at a time. */
+    unsigned char code = *unpacker->next_compressed_code;
+    unpacker->next_compressed_code += unpacker->compressed_code_stride;
+    remaining_bits |= (((uint64_t) ((unsigned char) (code))) << remaining_num_bits);
+    remaining_num_bits += 8;
+  }
+  /* CAUTION: only the lowest-order `num_bits` bits of `ans` are valid; the rest
+     are to be ignored by the caller. */
+  int32_t ans = remaining_bits;
+  unpacker->remaining_bits = remaining_bits >> num_bits;
+  unpacker->remaining_num_bits = remaining_num_bits - num_bits;
+  return ans;
 }

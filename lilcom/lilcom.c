@@ -451,7 +451,7 @@ struct CompressionState {
 
 /* It is essential that the `num-bits-for-sample-minus-one` is the last byte
    of the header, as backtracking_encoder_init() assumes that. */
-#define LILCOM_HEADER_NBITS_M1_OFFSET 4
+#define LILCOM_HEADER_WIDTH_M1_OFFSET 4
 
 /** Set the conversion_exponent in the header.
         @param [in] header  Pointer to start of the header
@@ -976,7 +976,7 @@ static inline void lilcom_init_compression(
 
   backtracking_encoder_init(
       num_samples,
-      output + (LILCOM_HEADER_NBITS_M1_OFFSET * output_stride),
+      output + (LILCOM_HEADER_WIDTH_M1_OFFSET * output_stride),
       output_stride,
       &state->encoder);
 
@@ -1216,7 +1216,7 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
 
   struct Decoder decoder;
   decoder_init(num_samples,
-               input + (LILCOM_HEADER_NBITS_M1_OFFSET * input_stride),
+               input + (LILCOM_HEADER_WIDTH_M1_OFFSET * input_stride),
                input_stride,
                &decoder);
 
@@ -1651,9 +1651,9 @@ static inline int lilcom_check_constants() {
   /* At some point we use 1 << (LPC_APPLY_LEFT_SHIFT + 16) as an int32 and we
      want to preclude overflow. */
   assert(LPC_APPLY_LEFT_SHIFT + 16 < 31);
-  assert(STAGING_BLOCK_SIZE > MAX_POSSIBLE_NBITS+1);
+  assert(STAGING_BLOCK_SIZE > MAX_POSSIBLE_WIDTH+1);
   assert((STAGING_BLOCK_SIZE & (STAGING_BLOCK_SIZE - 1)) == 0);
-  assert(NBITS_BUFFER_SIZE > MAX_POSSIBLE_NBITS+1);
+  assert(WIDTH_BUFFER_SIZE > MAX_POSSIBLE_WIDTH+1);
   assert((LPC_ROLLING_BUFFER_SIZE - 1) * AUTOCORR_BLOCK_SIZE > 24);
   assert(MAX_LPC_ORDER >> LPC_ORDER_BITS == 0);
   assert(MAX_LPC_ORDER % 2 == 0);
@@ -1676,17 +1676,17 @@ static inline int lilcom_check_constants() {
   assert((LPC_COMPUTE_INTERVAL & (LPC_COMPUTE_INTERVAL-1)) == 0);  /* Power of 2. */
   /* The y < x / 2 below just means "y is much less than x". */
   assert(LPC_COMPUTE_INTERVAL < (AUTOCORR_BLOCK_SIZE << AUTOCORR_DECAY_EXPONENT) / 2);
-  assert((NBITS_BUFFER_SIZE-1)*2 > 12);
-  assert((NBITS_BUFFER_SIZE & (NBITS_BUFFER_SIZE-1)) == 0);  /* Power of 2. */
-  assert(NBITS_BUFFER_SIZE > (12/2) + 1); /* should exceed maximum range of exponents,
+  assert((WIDTH_BUFFER_SIZE-1)*2 > 12);
+  assert((WIDTH_BUFFER_SIZE & (WIDTH_BUFFER_SIZE-1)) == 0);  /* Power of 2. */
+  assert(WIDTH_BUFFER_SIZE > (12/2) + 1); /* should exceed maximum range of exponents,
                                                 divided by  because that's how much they can
                                                 change from time to time.  The + 1 is
                                                 in case I missed something. */
 
-  assert((NBITS_BUFFER_SIZE & (NBITS_BUFFER_SIZE-1)) == 0);  /* Power of 2. */
+  assert((WIDTH_BUFFER_SIZE & (WIDTH_BUFFER_SIZE-1)) == 0);  /* Power of 2. */
   assert(SIGNAL_BUFFER_SIZE % AUTOCORR_BLOCK_SIZE == 0);
   assert((SIGNAL_BUFFER_SIZE & (SIGNAL_BUFFER_SIZE - 1)) == 0);  /* Power of 2. */
-  assert(SIGNAL_BUFFER_SIZE > AUTOCORR_BLOCK_SIZE + NBITS_BUFFER_SIZE + MAX_LPC_ORDER);
+  assert(SIGNAL_BUFFER_SIZE > AUTOCORR_BLOCK_SIZE + WIDTH_BUFFER_SIZE + MAX_LPC_ORDER);
 
   return 1;
 }

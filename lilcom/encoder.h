@@ -29,19 +29,19 @@ struct BacktrackingEncoder {
   /* bits_per_sample is a user-supplied configuration value in [4..8]. */
   int bits_per_sample;
 
-  /* The exponent for t == -1 will be written to here by this
+  /* The width for t == -1 will be written to here by this
      object whenever needed. */
-  int8_t *nbits_m1;
+  int8_t *width_m1;
 
-  /* nbits is a rolling buffer of the number of bits present
+  /* width is a rolling buffer of the number of bits present
      in the mantissa (before any truncation by bits_per_sample - 1).
      We use it for a couple of different purposes.
      For t < num_samples_success, it contains the number of bits
      used; for num_samples_success <= t <= most_recent_attempt,
-     it contains the minimum usable exponents for those times.
+     it contains the minimum usable widths for those times.
      (would be present during backtracking.)
   */
-  int nbits[NBITS_BUFFER_SIZE];
+  int width[WIDTH_BUFFER_SIZE];
   /* `most_recent_attempt` records the most recent t value for which the user
      has so far called `backtracking_encoder_encode()`.
   */
@@ -51,7 +51,7 @@ struct BacktrackingEncoder {
      required to call backtracking_encoder_encode().  This may go
      backwards as well as forwards, but it will never be the case
      that
-       most_recent_attempt - next_sample_to_encode > (2*MAX_POSSIBLE_NBITS + 1 == 31).
+       most_recent_attempt - next_sample_to_encode > (2*MAX_POSSIBLE_WIDTH + 1 == 31).
   */
   ssize_t next_sample_to_encode;
 
@@ -107,29 +107,16 @@ void backtracking_encoder_finish(struct BacktrackingEncoder *encoder,
 /**
    Attempts to lossily compress `value` (which may be any int32_t).
 
-      @param [in] value    The signed number to be encoded.  (Will be lossless
-                           as long as it can be encoded (including a bit for the
-                           sign) in `max_bits_in_sample` bits.
       @param [in] max_bits_in_sample  The maximum number of bits that the
                            encoder is allowed to use to encode this sample,
-                           INCLUDING THE EXPONENT BIT.  Must be at least 4.  The
+                           INCLUDING THE WIDTH BIT.  Must be in [4,32].  The
                            max_bits_in_sample does not have to be the same from
                            sample to sample, but the sequence of
                            max_bits_in_sample values this is called with must be
                            the same when decoding as when encoding.
-
-      @param [out] next_value  On success, the input `predicted` plus
-                           the approximated residual will be written to here.
-      @param [out] code    On success, the code will be written to
-                           here.  (Only the lowest-order encoder->bits_per_sample
-                           bits will be relevant).  Note: later on we
-                           might extend this codebase to support writing
-                           fewer than the specified number of bits where
-                           doing so would not affect the accuracy, by allowing
-                           negative excursions of the exponent.  That
-                           would require interface changes, though.
-      @param [in,out] encoder  The encoder object.  Will be modified by
-                           this call.
+      @param [in] value    The value to be encoded.  May have any value that
+                           fits in int32_t, but bear in mind that since
+                           max_bits_in_sample has maximum value
 
       Requires that encoder->next_sample_to_encode >= 0.
 
@@ -138,7 +125,7 @@ void backtracking_encoder_finish(struct BacktrackingEncoder *encoder,
              was increased by 1, and the code was written to `packer`.  On
              failure, encoder->next_sample_to_encode will be decreased (while
              still satisfying encoder->most_recent_attempt -
-             encoder->next_sample_to_encode < (2*MAX_POSSIBLE_NBITS + 1)).
+             encoder->next_sample_to_encode < (2*MAX_POSSIBLE_WIDTH + 1)).
              [Note: this type of failure happens in the normal course of
              compression, it is part of backtracking.]
 
@@ -152,18 +139,18 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
 /**
    Attempts to lossily compress `residual` (which is allowed to be in the range
    [-(2**16-1) .. 2**16-1]) to an 8-bit code.  The encoding scheme uses an
-   exponent and a mantissa, and the exponent is stored as a single bit
-   `delta_exponent` by dint of only storing the changes in the exponent,
+   width and a mantissa, and the width is stored as a single bit
+   `delta_width` by dint of only storing the changes in the width,
    according to the formula:
-       exponent(t) := exponent(t-1) + (t % 2) + delta_exponent(t)
-   where delta_exponent in {0,1} is the only thing we encode.  When we
-   discover that we can't encode a large enough exponent to encode a particular
-   sample, we have to go back to previous samples and use a larger exponent for
+       width(t) := width(t-1) + (t % 2) + delta_width(t)
+   where delta_width in {0,1} is the only thing we encode.  When we
+   discover that we can't encode a large enough width to encode a particular
+   sample, we have to go back to previous samples and use a larger width for
    them.
 
       @param [in] max_bits_in_sample  The maximum number of bits that the
                            encoder is allowed to use to encode this sample,
-                           INCLUDING THE EXPONENT BIT.  Must be at least 4.  The
+                           INCLUDING THE WIDTH BIT.  Must be at least 4.  The
                            max_bits_in_sample does not have to be the same from
                            sample to sample, but the sequence of
                            max_bits_in_sample values this is called with must be
@@ -186,7 +173,7 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
                            might extend this codebase to support writing
                            fewer than the specified number of bits where
                            doing so would not affect the accuracy, by allowing
-                           negative excursions of the exponent.  That
+                           negative excursions of the width.  That
                            would require interface changes, though.
       @param [in,out] encoder  The encoder object.  Will be modified by
                            this call.
@@ -198,7 +185,7 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
              was increased by 1, and the code was written to `packer`.  On
              failure, encoder->next_sample_to_encode will be decreased (while
              still satisfying encoder->most_recent_attempt -
-             encoder->next_sample_to_encode < (2*MAX_POSSIBLE_NBITS + 1)).
+             encoder->next_sample_to_encode < (2*MAX_POSSIBLE_WIDTH + 1)).
              [Note: this type of failure happens in the normal course of
              compression, it is part of backtracking.]
 
@@ -215,9 +202,9 @@ static inline int32_t backtracking_encoder_encode_limited(int max_bits_in_sample
 
 
 /* View this as the reverse of struct BacktrackingDecoder.
-   It interprets the encoded exponents and mantissas as 32-bit
+   It interprets the encoded widths and mantissas as 32-bit
    numbers.  (It's very simple, actually; it just needs to
-   keep track of the exponent.)
+   keep track of the width.)
 
    See functions decoder_init(), decoder_decode(), and
    decoder_finish().
@@ -226,7 +213,7 @@ struct Decoder {
   struct BitUnpacker bit_unpacker;
 
   int num_bits;  /* num_bits is the number of bits in the signed integer for
-                    the current sample, excluding the exponent bit. */
+                    the current sample, excluding the width bit. */
 };
 
 
@@ -256,15 +243,15 @@ void decoder_finish(const struct Decoder *decoder,
    a residual).  Must be called exactly in sequence for t = 0, t = 1 and so on.
 
            @param [in] t  The time index we are decoding (its value modulo
-                         2 helps determine the exponent).
+                         2 helps determine the width).
            @param [in] max_encoded_mantissa_bits  The maximum number of bits
                          that we will use for this sample (excluding the 1-bit
-                         exponent).
+                         width).
            @param [in,out] decoder  The decoder object
            @param [out]  value  The decoded value will be written here.
 
            @return     Returns 0 on success, 1 on failure.  (Failure
-                       can happen if the exponent goes out of range
+                       can happen if the width goes out of range
                        or the decoded value exceeds the range of int16_t, and
                        would normally indicate data corruption or an error
                        in lilcom code.)
