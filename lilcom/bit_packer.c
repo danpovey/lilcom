@@ -76,6 +76,8 @@ void bit_packer_finish(struct BitPacker *packer,
                        float *avg_bits_per_sample,
                        int8_t **next_free_byte) {
   ssize_t T = packer->num_samples_to_write;
+  assert(packer->num_samples_committed <= T &&
+         packer->num_samples_committed >= T - (2 * STAGING_BLOCK_SIZE));
   while (packer->num_samples_committed < T) {
     ssize_t new_end = packer->num_samples_committed + STAGING_BLOCK_SIZE;
     int flush;
@@ -111,8 +113,10 @@ void bit_unpacker_init(ssize_t num_samples_to_read,
   unpacker->remaining_num_bits = 0;
 }
 
-void bit_unpacker_finish(struct BitUnpacker *unpacker) {
+void bit_unpacker_finish(const struct BitUnpacker *unpacker,
+                         const int8_t **next_compressed_code) {
 #ifndef NDEBUG
   assert(unpacker->num_samples_read == unpacker->num_samples_to_read);
 #endif
+  *next_compressed_code = unpacker->next_compressed_code;
 }

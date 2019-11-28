@@ -63,8 +63,11 @@ struct BacktrackingEncoder {
 
 
 /**
-   Initializes the backtracking-encoder object.    After this you will
-   want to repeatedly call backtracking_encoder_encode().
+   Initializes the backtracking-encoder object.  After this you will want to
+   repeatedly call either backtracking_encoder_encode() or
+   backtracking_encoder_encode_limited(), with the data for index
+   encoder->next_sample_to_encode, until encoder->next_sample_to_encode equals
+   encoder->num_samples_to_write.
 
      @param [in] num_samples_to_write  The number of samples that
                   will be written to this stream.  (This is just
@@ -102,31 +105,19 @@ void backtracking_encoder_finish(struct BacktrackingEncoder *encoder,
 
 
 /**
-   Attempts to lossily compress `residual` (which is allowed to be in the range
-   [-(2**16-1) .. 2**16-1]) to an 8-bit code.  The encoding scheme uses an
-   exponent and a mantissa, and the exponent is stored as a single bit
-   `delta_exponent` by dint of only storing the changes in the exponent,
-   according to the formula:
-       exponent(t) := exponent(t-1) + (t % 2) + delta_exponent(t)
-   where delta_exponent in {0,1} is the only thing we encode.  When we
-   discover that we can't encode a large enough exponent to encode a particular
-   sample, we have to go back to previous samples and use a larger exponent for
-   them.
+   Attempts to lossily compress `value` (which may be any int32_t).
 
+      @param [in] value    The signed number to be encoded.  (Will be lossless
+                           as long as it can be encoded (including a bit for the
+                           sign) in `max_bits_in_sample` bits.
       @param [in] max_bits_in_sample  The maximum number of bits that the
-                           encoder is allowed to use to encode this sample.
-                           Must be at least 4.  The max_bits_in_sample does
-                           not have to be the same from sample to sample,
-                           but the sequence of max_bits_in_sample values
-                           this is called with must be the same as in
-                           training time.
-      @param [in] residual The value to be encoded for time
-                           encoder->next_sample_to_encode.  Required to be
-                           in the range [-(2**16-1) .. 2**16-1].
-      @param [in] predicted The predicted value from which this residual is
-                           an offset.  This is needed in order to ensure that
-                           (predicted + *approx_residual) does not
-                           overflow the range of int16_t.
+                           encoder is allowed to use to encode this sample,
+                           INCLUDING THE EXPONENT BIT.  Must be at least 4.  The
+                           max_bits_in_sample does not have to be the same from
+                           sample to sample, but the sequence of
+                           max_bits_in_sample values this is called with must be
+                           the same when decoding as when encoding.
+
       @param [out] next_value  On success, the input `predicted` plus
                            the approximated residual will be written to here.
       @param [out] code    On success, the code will be written to
@@ -137,7 +128,7 @@ void backtracking_encoder_finish(struct BacktrackingEncoder *encoder,
                            doing so would not affect the accuracy, by allowing
                            negative excursions of the exponent.  That
                            would require interface changes, though.
-      @param [in,out] encoder  The encoder object.  May be modified by
+      @param [in,out] encoder  The encoder object.  Will be modified by
                            this call.
 
       Requires that encoder->next_sample_to_encode >= 0.
@@ -155,10 +146,72 @@ void backtracking_encoder_finish(struct BacktrackingEncoder *encoder,
      of this.
  */
 static inline int backtracking_encoder_encode(int max_bits_in_sample,
-                                              int32_t residual,
-                                              int16_t predicted,
-                                              int16_t *next_value,
+                                              int32_t value,
                                               struct BacktrackingEncoder *encoder);
+
+/**
+   Attempts to lossily compress `residual` (which is allowed to be in the range
+   [-(2**16-1) .. 2**16-1]) to an 8-bit code.  The encoding scheme uses an
+   exponent and a mantissa, and the exponent is stored as a single bit
+   `delta_exponent` by dint of only storing the changes in the exponent,
+   according to the formula:
+       exponent(t) := exponent(t-1) + (t % 2) + delta_exponent(t)
+   where delta_exponent in {0,1} is the only thing we encode.  When we
+   discover that we can't encode a large enough exponent to encode a particular
+   sample, we have to go back to previous samples and use a larger exponent for
+   them.
+
+      @param [in] max_bits_in_sample  The maximum number of bits that the
+                           encoder is allowed to use to encode this sample,
+                           INCLUDING THE EXPONENT BIT.  Must be at least 4.  The
+                           max_bits_in_sample does not have to be the same from
+                           sample to sample, but the sequence of
+                           max_bits_in_sample values this is called with must be
+                           the same when decoding as when encoding.
+
+                           TODO: find upper limit in max_bits_in_sample.
+
+      @param [in] residual The value to be encoded for time
+                           encoder->next_sample_to_encode.  Required to be
+                           in the range [-(2**16-1) .. 2**16-1].
+      @param [in] value    The predicted value from which this residual is
+                           an offset.  This is needed in order to ensure that
+                           (predicted + *approx_residual) does not
+                           overflow the range of int16_t.
+      @param [out] next_value  On success, the input `predicted` plus
+                           the approximated residual will be written to here.
+      @param [out] code    On success, the code will be written to
+                           here.  (Only the lowest-order encoder->bits_per_sample
+                           bits will be relevant).  Note: later on we
+                           might extend this codebase to support writing
+                           fewer than the specified number of bits where
+                           doing so would not affect the accuracy, by allowing
+                           negative excursions of the exponent.  That
+                           would require interface changes, though.
+      @param [in,out] encoder  The encoder object.  Will be modified by
+                           this call.
+
+      Requires that encoder->next_sample_to_encode >= 0.
+
+      @return  Returns 0 on success, 1 on failure.  Success means
+             a code was created, encoder->next_sample_to_encode
+             was increased by 1, and the code was written to `packer`.  On
+             failure, encoder->next_sample_to_encode will be decreased (while
+             still satisfying encoder->most_recent_attempt -
+             encoder->next_sample_to_encode < (2*MAX_POSSIBLE_NBITS + 1)).
+             [Note: this type of failure happens in the normal course of
+             compression, it is part of backtracking.]
+
+     See also decoder_decode(), which you can think of as the reverse
+     of this; and backtracking_encoder_encode(), which is a simpler
+     version of this without the logic to keep the result within
+     int16_t.
+ */
+static inline int32_t backtracking_encoder_encode_limited(int max_bits_in_sample,
+                                                          int32_t residual,
+                                                          int16_t predicted,
+                                                          int16_t *next_value,
+                                                          struct BacktrackingEncoder *encoder);
 
 
 /* View this as the reverse of struct BacktrackingDecoder.
@@ -188,10 +241,14 @@ void decoder_init(ssize_t num_samples_to_read,
                   struct Decoder *decoder);
 
 /**
-   Finishes use of the decoder object.  Just contains checks;
-   will die on failure (would indicate code bug).
+   Finishes use of the decoder object.
+      @param [in] decoder   Decoder object that we are done with
+      @param [out] next_compressed_code   The compressed-code point
+              that's one past the end of the stream.  (Should mostly
+              be needed for checking.)
  */
-void decoder_finish(struct Decoder *decoder);
+void decoder_finish(const struct Decoder *decoder,
+                    const int8_t **next_compressed_code);
 
 
 /**

@@ -47,7 +47,7 @@ struct BitPacker {
   /* An array of an anonymous struct...  See comments above about the
      constraints on STAGING_BLOCK_SIZE. */
   struct {
-    int code;
+    int32_t code;
     int num_bits;
   } staging_buffer[STAGING_BLOCK_SIZE * 2];
 
@@ -136,7 +136,7 @@ static inline void bit_packer_write_code(ssize_t t,
           packer);
     }
   }
-  assert(((num_bits - 1) & ~(int) 15) == 0);  /* check that 0 < num_bits <= 16 */
+  /* assert(((num_bits - 1) & ~(int) 15) == 0);   check that 0 < num_bits <= 16 */
   packer->staging_buffer[t_mod].code = code;
   packer->staging_buffer[t_mod].num_bits = num_bits;
 }
@@ -200,8 +200,13 @@ void bit_unpacker_init(ssize_t num_samples_to_read,
 
 /**
    Say we are done with this object.  (Only contains checks).
+      @param [in] unpacker  Unpacker object we are done with
+      @param [out] next_compressed_code   The compressed-code point
+              that's one past the end of the stream.  (Should mostly
+              be needed for checking.)
  */
-void bit_unpacker_finish(struct BitUnpacker *unpacker);
+void bit_unpacker_finish(const struct BitUnpacker *unpacker,
+                         const int8_t **next_compressed_code);
 
 
 /**
@@ -216,8 +221,8 @@ void bit_unpacker_finish(struct BitUnpacker *unpacker);
                   written; the higher order bits are undefined.
  */
 
-static inline int bit_unpacker_read_next_code(int num_bits,
-                                              struct BitUnpacker *unpacker) {
+static inline int32_t bit_unpacker_read_next_code(int num_bits,
+                                                  struct BitUnpacker *unpacker) {
 #ifndef NDEBUG
   assert(unpacker->num_samples_read < unpacker->num_samples_to_read);
   unpacker->num_samples_read++;
@@ -235,7 +240,7 @@ static inline int bit_unpacker_read_next_code(int num_bits,
   }
   /* CAUTION: only the lowest-order `num_bits` bits of `ans` are valid; the rest
      are to be ignored by the caller. */
-  int ans = remaining_bits;
+  int32_t ans = remaining_bits;
   unpacker->remaining_bits = remaining_bits >> num_bits;
   unpacker->remaining_num_bits = remaining_num_bits - num_bits;
   return ans;

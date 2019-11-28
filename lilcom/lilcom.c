@@ -1055,9 +1055,9 @@ int lilcom_compress(
     int16_t *next_value =
         &(state.decompressed_signal[MAX_LPC_ORDER + (t & (SIGNAL_BUFFER_SIZE - 1))]);
 
-    backtracking_encoder_encode(bits_per_sample, residual,
-                                predicted_value, next_value,
-                                &state.encoder);
+    backtracking_encoder_encode_limited(bits_per_sample, residual,
+                                        predicted_value, next_value,
+                                        &state.encoder);
     /* We are actually ignoring the return status of backtracking_encoder_encode. */
   }
 
@@ -1234,7 +1234,8 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
     output[t * output_stride] = output_buffer[MAX_LPC_ORDER + t];
   }
   if (t >= num_samples) {
-    decoder_finish(&decoder);
+    const int8_t *next_compressed_code;
+    decoder_finish(&decoder, &next_compressed_code);
     return 0;  /** Success */
   }
 
@@ -1337,7 +1338,8 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
             output_buffer[MAX_LPC_ORDER + (t & (SIGNAL_BUFFER_SIZE - 1))];
       }
     }
-    decoder_finish(&decoder);
+    const int8_t *next_compressed_code;
+    decoder_finish(&decoder, &next_compressed_code);
     return 0;  /** Success */
   }
 }
@@ -2025,5 +2027,6 @@ int main() {
   lilcom_test_get_max_abs_float_value();
   lilcom_test_encode_decode_signed();
   lilcom_test_encode_residual();
+  lilcom_test_backtracking_encoder();
 }
 #endif
