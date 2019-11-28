@@ -288,11 +288,11 @@ static inline void encode_residual(int32_t residual,
 
 
 /* See documentation in header */
-inline int backtracking_encoder_encode_limited(int max_bits_in_sample,
-                                               int32_t residual,
-                                               int16_t predicted,
-                                               int16_t *next_value,
-                                               struct BacktrackingEncoder *encoder) {
+static inline int backtracking_encoder_encode_limited(int max_bits_in_sample,
+                                                      int32_t residual,
+                                                      int16_t predicted,
+                                                      int16_t *next_value,
+                                                      struct BacktrackingEncoder *encoder) {
   ssize_t t = encoder->next_sample_to_encode,
       t_most_recent = encoder->most_recent_attempt;
   size_t t_mod = (t & (NBITS_BUFFER_SIZE - 1)), /* t % buffer_size */
@@ -385,9 +385,9 @@ inline int backtracking_encoder_encode_limited(int max_bits_in_sample,
 
 
 /* See documentation in header */
-inline int backtracking_encoder_encode(int max_bits_in_sample,
-                                       int32_t residual,
-                                       struct BacktrackingEncoder *encoder) {
+static inline int backtracking_encoder_encode(int max_bits_in_sample,
+                                              int32_t residual,
+                                              struct BacktrackingEncoder *encoder) {
   ssize_t t = encoder->next_sample_to_encode,
       t_most_recent = encoder->most_recent_attempt;
   size_t t_mod = (t & (NBITS_BUFFER_SIZE - 1)), /* t % buffer_size */
