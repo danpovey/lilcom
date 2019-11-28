@@ -161,53 +161,59 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
                                               struct BacktrackingEncoder *encoder);
 
 
+/* View this as the reverse of struct BacktrackingDecoder.
+   It interprets the encoded exponents and mantissas as 32-bit
+   numbers.  (It's very simple, actually; it just needs to
+   keep track of the exponent.)
+
+   See functions decoder_init(), decoder_decode(), and
+   decoder_finish().
+*/
 struct Decoder {
-  /* View this as the reverse of struct BacktrackingDecoder.
-     It interprets the encoded exponents and mantissas as 32-bit
-     numbers.  (It's very simple, actually; it just needs to
-     keep track of the exponent.)
-     See functions decoder_init() and decoder_decode().
-   */
-  int bits_per_sample;
-  int exponent;
+  struct BitUnpacker bit_unpacker;
+
+  int num_bits;  /* num_bits is the number of bits in the signed integer for
+                    the current sample, excluding the exponent bit. */
 };
 
 
 /**
    Initialize the decoder object.
-        @param [in] bits_per_sample   The number of bits per sample
-                 (user-specified but stored in the compressed header).
-                 Must be in [4..8].
-        @param [in] nbits_m1  The exponent for time t == -1,
-                 as stored in the compressed file (you could view
-                 this as part of the header).
+
         @param [out] decoder  The object to be initialized.
  */
-void decoder_init(int bits_per_sample,
-                  int nbits_m1,
+void decoder_init(ssize_t num_samples_to_read,
+                  const int8_t *compressed_code,
+                  int compressed_code_stride,
                   struct Decoder *decoder);
+
+/**
+   Finishes use of the decoder object.  Just contains checks;
+   will die on failure (would indicate code bug).
+ */
+void decoder_finish(struct Decoder *decoder);
 
 
 /**
    Converts one sample's code into a signed int32 value (which will typically represent
    a residual).  Must be called exactly in sequence for t = 0, t = 1 and so on.
 
-           @param [in] unpacker  The BitUnpacker object from which to
-                       read codes.  (Actually we read exponents and mantissas
-                       separately because we need the exponent to know the
-                       size of the mantissa.)
-
-           code  The encoded value; only the lower-order
-                          `decoder->bits_per_sample` bits will be inspected.
+           @param [in] t  The time index we are decoding (its value modulo
+                         2 helps determine the exponent).
+           @param [in] max_encoded_mantissa_bits  The maximum number of bits
+                         that we will use for this sample (excluding the 1-bit
+                         exponent).
            @param [in,out] decoder  The decoder object
            @param [out]  value  The decoded value will be written here.
+
            @return     Returns 0 on success, 1 on failure.  (Failure
-                       can happen if the exponent goes out of range, and
+                       can happen if the exponent goes out of range
+                       or the decoded value exceeds the range of int16_t, and
                        would normally indicate data corruption or an error
                        in lilcom code.)
  */
 static inline int decoder_decode(ssize_t t,
-                                 struct BitUnpacker *unpacker,
+                                 int max_encoded_mantissa_bits,
                                  struct Decoder *decoder,
                                  int32_t *value);
 
