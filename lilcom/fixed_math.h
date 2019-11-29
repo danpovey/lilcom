@@ -84,6 +84,7 @@ static inline uint64_t FM_ABS(int64_t a) {
   return (uint64_t) (a > 0 ? a : -a);
 }
 
+
 /*
   Initializes a Region64.
      @param [in]  data    data underlying the region; should be an array of at least `dim` elements

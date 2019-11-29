@@ -105,15 +105,11 @@ inline static void ShiftRegion64(int rshift, Region64 *region) {
    chooses the shifts that will lose the least precision while ensuring
    that after multiplying a and b there is no overflow
      (i.e. that a_size + b_size - a_shift - b_shift < 63).
-
-   Why 63 and not 64? (I.e 63 is normally our maximum size.)  The issue is that
-   if the number is something like -(2^n - 1), if right shifted by k >0 it
-   would become -(2^(n-k+1))
 */
 inline static void GetInputShiftsFor2ArgMultiply(
     int a_size, int b_size,
     int *a_shift, int *b_shift) {
-  if (a_size + b_size < 64) {
+  if (a_size + b_size < 63) {
     *a_shift = 0;
     *b_shift = 0;
   } else if (a_size >= 32 && b_size >= 32) {
@@ -152,20 +148,17 @@ inline static void GetInputShiftsFor2ArgMultiply(
    dim_size == FindSize(dim, ...).  (Set dim_size to 0 if there is no summation).
    We need to keep the multiplication from overflowing, which requires:
 
-     (a_size - a_shift) + (b_size - b_shift)  <= 63
-
-   subject to the larger of those two target sizes being as large as possible.
+     (a_size - a_shift) + (b_size - b_shift)  < 63
 
    We also want to choose the smallest post_shift >= 0 so that the size of the
    product after shifting and summing is <= FM_TARGET_SIZE.
 
-
   This comes down to:
       (a_size - a_shift) + (b_size - b_shift) + dim_size - post_shift <= FM_TARGET_SIZE.
 
-     @param [in] a_size  Size of one of the operands.   See doc for CheckSize()
+     @param [in] a_size  Size of one of the operands.   See doc for SizeIsCorrect()
                         for definition.  Must be in [0,63].
-     @param [in] b_size  Size of the other operand.     See doc for CheckSize()
+     @param [in] b_size  Size of the other operand.     See doc for SizeIsCorrect()
                         for definition.  Must be in [0,63.]
      @param [in] dim_size  If the products will immediately be summed over dimension
                         `dim`, then the result of calling FindSize(dim, ...).
@@ -185,7 +178,7 @@ inline static void GetShiftsFor2ArgMultiply(int a_size, int b_size, int dim_size
   GetInputShiftsFor2ArgMultiply(a_size, b_size,
                                 a_shift, b_shift);
   int prod_size = a_size - *a_shift + b_size - *b_shift;
-  assert(prod_size < 64);
+  assert(prod_size < 63);
   if (prod_size + dim_size > FM_TARGET_SIZE) {
     *post_shift = prod_size + dim_size - FM_TARGET_SIZE;
   } else {
@@ -216,7 +209,7 @@ inline static void GetShiftsFor2ArgMultiply(int a_size, int b_size, int dim_size
   else
     y[i] := y[i] + (x[i] << -in_shift)
 
-  [And if dim_size != 0, this means there is a summation of dimension `di` done
+  [And if dim_size != 0, this means there is a summation of dimension `dim` done
   on the x[i] after the shift, where dim_size == FindSize(dim, ...).]
 
 
@@ -258,13 +251,14 @@ inline static void GetShiftsForAdd(int in_size, int in_exponent,
       sum_min_size = FM_MAX(out_size, in_size + possible_in_shift),
       sum_guess_size = FM_MAX(out_size, in_size + (dim_size / 2) - possible_in_shift);
 
-  if (sum_max_size < 64 && out_size != 0 &&
+  if (sum_max_size < 63 && out_size != 0 &&
       (possible_in_shift <= 0 || sum_min_size >= FM_MIN_SIZE)) {
     /* If we can just shift the input, not shift the output, and not risk
        overflow or getting excessively low precision, then we do it.  (Shifting
        `out` might require shifting the entire region).  Reasons for the conditions:
 
-       `sum_max_size < 64` because if it's 64 it's not safe to do this.
+       `sum_max_size < 63` because if it's 63 it's not safe to do this
+       (+2^63 not reprentable as int64_t)
 
        `out_size != 0` because if out_size = 0 there is no reason going out of
        our way to avoid shifting `out`.  (The ShiftRegion operation would do no work).
@@ -319,7 +313,7 @@ inline static void GetShiftsForAssign(int in_size, int in_exponent,
       sum_min_size = FM_MAX(out_size, in_size + possible_in_shift),
       sum_guess_size = FM_MAX(out_size, in_size + (dim_size / 2) - possible_in_shift);
 
-  if (sum_max_size < 64 && out_size != 0 &&
+  if (sum_max_size < 63 && out_size != 0 &&
       (possible_in_shift <= 0 || sum_min_size >= FM_MIN_SIZE)) {
     *in_shift = possible_in_shift;
     *out_shift = 0;
@@ -398,7 +392,7 @@ inline static void GetShiftsForAssign(int in_size, int in_exponent,
   This comes down to:
       (a_size - a_shift) + (b_size - b_shift) - post_shift <= target_size
 
-     @param [in] a_size  Size of one of the operands.   See doc for CheckSize()
+     @param [in] a_size  Size of one of the operands.   See doc for SizeIsCorrect()
                         for definition.  Must be in [0,63].  Note: this is
                         not symmetric with operand b, because a is the one
                         that may get shifted left.
@@ -448,21 +442,28 @@ inline static void GetShiftsFor2ArgMultiplyAndAdd(
 }
 
 /*
-  This function is used for debugging; it checks that `size`
-  is the smallest integer >= 0 such that value < (1 << size).
+  This function is used for debugging; it checks that
+  `size` is:
+     if value == 0, then -1,
+  else the smallest integer >= 0 such that value <= (1 << size).
 
-  It does some assertions but you should check the return status
-  (returns 1 for success, 0 for failure.)
-  Would normally be called as assert(CheckSize(value, size))
+  It is an error if value > 2^62 (this function asserts that).
+
+  You should check the return status (returns 1 for success, 0 for failure.)
+  Would normally be called as assert(SizeIsCorrect(value, size))
  */
-inline static int CheckSize(uint64_t value, int size) {
-  assert((value & ((uint64_t) 1 << 63)) == 0 && "CheckSize() cannot accept input >= 2^63. "
-                                                "Inputs must be converted to positive values!");
-  int ok = (value & ~((((uint64_t) 1) << size) - 1)) == 0 &&
-      ((value == 0 && size == 0) ||
-          (value & (((uint64_t) 1) << (size - 1))) != 0);
+inline static int SizeIsCorrect(uint64_t value, int size) {
+  assert((value <= ((uint64_t) 1 << 62)) && "SizeIsCorrect() cannot accept input >= 2^62. "
+         "Inputs must be converted to positive values!");
+  int ok;
+  if (size < 0) {
+    ok = (value == 0);
+  } else {
+    ok = (value <= ((uint64_t) 1) << size) &&
+        (value*2 > ((uint64_t) 1) << size);
+  }
   if (!ok) {
-    fprintf(stderr, "Error: value=%llu size=%d\n", value, size);
+    fprintf(stderr, "Error in SizeIsCorrect(value=%llu, size=%d)\n", value, size);
     return 0;
   } else {
     return 1;
@@ -470,47 +471,66 @@ inline static int CheckSize(uint64_t value, int size) {
 }
 
 /*
-  Returns the smallest integer i >= 0 such that
-  (1 << i) > value.
+  If `value` == 0, returns -1;
+  otherwise returns the smallest integer i >= 0 such that (1 << i) >= value.
 
-  `guess` may be any value in [0,63]; it is an error if it is outside that
+  `guess` may be any value in [-1,62]; it is an error if it is outside that
   range.  If it's close to the true value it will be faster.
+
+  It may seem odd that we never allow `guess` or the answer to be 63
+  (which implies that we don't allow any `value` greater than 2^62),
+  although we can represent values from -2^63 to 2^63 - 1.
+  The issue is that we can never represent +2^63, and taking advantage
+  of the "almost one more size" between 62 and 63 would be too much
+  hassle.
  */
 int FindSize(uint64_t value, int guess) {
-  assert(guess >= 0 && guess <= 63);
+  assert(guess >= -1 && guess < 63);
+  if (value == 0) {
+    return -1;
+  } else if (guess < 0) {
+    guess = 0;
+  }
+  /* The rest of this function finds, with a decremented version of `value`,
+     the smallest integer i in [0,63] such that value < (1<<i).
+     This was previously debugged when the `size` was defined that way,
+     with a < instead of an <=.
+  */
+  uint64_t valuem1 = value - 1;
+
   int ans = guess;
   uint64_t neg_mask = ~((((uint64_t) 1) << ans) - 1);
 
-  if ((neg_mask & value) == 0) {
-    /* It's not the case that value >= (1 << guess).*/
-    if (value == 0)
+  if ((neg_mask & valuem1) == 0) {
+    /* It's not the case that valuem1 >= (1 << guess).*/
+    if (valuem1 == 0)
       return 0;
     neg_mask >>= 1;
-    while ((neg_mask & value) == 0) {
+    while ((neg_mask & valuem1) == 0) {
       ans--;
       neg_mask >>= 1;
     }
-    assert(CheckSize(value, ans));
+    assert(SizeIsCorrect(value, ans));
     /*  TEMP
     if (abs(ans - guess) > 3)
       fprintf(stderr, "Warning: FindSize: guess = %d, ans = %d\n", guess, ans);
     */
-    assert((unsigned int)ans <= 63);
+    assert((unsigned int)ans <= 62);
     return ans;
   } else {
-    /* value > (1 << guess).  Keep shifting neg_mask left till it fits. */
+    /* valuem1 > (1 << guess).  Keep shifting neg_mask left till it fits. */
     neg_mask <<= 1;
     ans++;
-    while ((neg_mask & value) != 0) {
+    while ((neg_mask & valuem1) != 0) {
       neg_mask <<= 1;
       ans++;
     }
-    assert(CheckSize(value, ans));
+    assert(SizeIsCorrect(value, ans));
     /* TEMP
     if (abs(ans - guess) > 3)
       fprintf(stderr, "Warning: FindSize: guess = %d, ans = %d\n", guess, ans);
     */
-    assert((unsigned int)ans <= 63);
+    assert((unsigned int)ans <= 62);
     return ans;
   }
 }
@@ -530,7 +550,7 @@ int FindSize(uint64_t value, int guess) {
 inline static void EnsureRegionAtLeastSizeOf(uint64_t value,
                                              int value_size_guess,
                                              Region64 *region) {
-  if ((value >> region->size) == 0)
+  if (value == 0 || (region->size >= 0 && ((value-1) >> region->size) == 0))
     return;  /* The current size is OK. */
   /* we know the size of `value` is > region->size... */
   if (value_size_guess <= region->size)
@@ -639,7 +659,7 @@ void InitScalar64FromInt(int64_t i, Scalar64 *a) {
   a->data = i;
   uint64_t i_abs = FM_ABS(i);
   a->size = FindSize(i_abs, 1);
-  assert(CheckSize(i_abs, a->size));
+  assert(SizeIsCorrect(i_abs, a->size));
 }
 
 void CopyIntToVector64Elem(int i, int64_t value, int size_hint, Vector64 *a) {
@@ -664,17 +684,17 @@ void ShiftScalar64Right(int right_shift, Scalar64 *a) {
   a->exponent += right_shift;
   a->data >>= right_shift;
   a->size -= right_shift;
-  if (a->size < 0)
-    a->size = 0;
+  if (a->size < -1)
+    a->size = -1;
 }
 
 void ShiftScalar64Left(int left_shift, Scalar64 *a) {
   assert(left_shift >= 0);
   a->exponent -= left_shift;
   a->data <<= left_shift;
-  if (a->size != 0)
+  if (a->size >= 0)
     a->size += left_shift;
-  assert(a->size < 64);
+  assert(a->size < 63);
 }
 
 void InitRegion64(int64_t *data, int dim, int exponent, int size_hint, Region64 *region) {
@@ -691,8 +711,8 @@ void ShiftRegion64Right(int right_shift, Region64 *region) {
   if (region->size == 0)
     return;  /* it's all zeros; nothing to shift. */
   region->size -= right_shift;
-  if (region->size < 0)
-    region->size = 0;
+  if (region->size < -1)
+    region->size = -1;
   int dim = region->dim;
   int64_t *data = region->data;
   for (int i = 0; i < dim; i++)
@@ -844,52 +864,59 @@ void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
 
   int x_stride = x->stride, y_stride = y->stride;
   int64_t *x_data = x->data, *y_data = y->data;
-  uint64_t tot_bits = 0;  /* `tot_bits` is a bit pattern keeping track of max size. */
+  uint64_t largest = 0;  /* largest absolute value. */
   int i;
   if (a_shift > 0 || y_shift > 0 || post_shift > 0) {
     int64_t a_shifted = a->data >> a_shift;
     for (i = 0; i + 4 <= dim; i += 4) {
-      int64_t prod1 = (a_shifted * (x_data[i * x_stride] >> x_shift)) >> post_shift,
-          prod2 = (a_shifted * (x_data[(i + 1) * x_stride] >> x_shift)) >> post_shift,
-          prod3 = (a_shifted * (x_data[(i + 2) * x_stride] >> x_shift)) >> post_shift,
-          prod4 = (a_shifted * (x_data[(i + 3) * x_stride] >> x_shift)) >> post_shift;
-      tot_bits |= ((FM_ABS(prod1) | FM_ABS(prod2)) | (FM_ABS(prod3) | FM_ABS(prod4)));
-      y_data[i * y_stride] += prod1;
-      y_data[(i + 1) * y_stride] += prod2;
-      y_data[(i + 2) * y_stride] += prod3;
-      y_data[(i + 3) * y_stride] += prod4;
+      int64_t sum1 = ((a_shifted * (x_data[i  * x_stride] >> x_shift)) >> post_shift) + y_data[(i + 0) * y_stride],
+          sum2 = ((a_shifted * (x_data[(i + 1) * x_stride] >> x_shift)) >> post_shift) + y_data[(i + 1) * y_stride],
+          sum3 = ((a_shifted * (x_data[(i + 2) * x_stride] >> x_shift)) >> post_shift) + y_data[(i + 2) * y_stride],
+          sum4 = ((a_shifted * (x_data[(i + 3) * x_stride] >> x_shift)) >> post_shift) + y_data[(i + 3) * y_stride];
+      y_data[(i + 0) * y_stride] = sum1;
+      y_data[(i + 1) * y_stride] = sum2;
+      y_data[(i + 2) * y_stride] = sum3;
+      y_data[(i + 3) * y_stride] = sum4;
+      if (FM_ABS(sum1) > largest) largest = FM_ABS(sum1);
+      if (FM_ABS(sum2) > largest) largest = FM_ABS(sum2);
+      if (FM_ABS(sum3) > largest) largest = FM_ABS(sum3);
+      if (FM_ABS(sum4) > largest) largest = FM_ABS(sum4);
     }
     for (; i < dim; i++) {
-      int64_t prod = (a_shifted * (x_data[i * x_stride] >> x_shift)) >> post_shift;
-      y_data[i * y_stride] += prod;
-      tot_bits |= FM_ABS(prod);
+      int64_t sum = ((a_shifted * (x_data[i * x_stride] >> x_shift)) >> post_shift) + y_data[i * y_stride];
+      y_data[i * y_stride] = sum;
+      if (FM_ABS(sum) > largest) largest = FM_ABS(sum);
     }
   } else {
     /* We can implement the shifting by shifting just a. */
     int64_t a_shifted = a->data << -a_shift;
     for (i = 0; i + 4 <= dim; i += 4) {
-      int64_t prod1 = a_shifted * x_data[i * x_stride],
-          prod2 = a_shifted * x_data[(i + 1) * x_stride],
-          prod3 = a_shifted * x_data[(i + 2) * x_stride],
-          prod4 = a_shifted * x_data[(i + 3) * x_stride];
-      tot_bits |= (uint64_t) ((FM_ABS(prod1) | FM_ABS(prod2)) | (FM_ABS(prod3) | FM_ABS(prod4)));
-      y_data[i * y_stride] += prod1;
-      y_data[(i + 1) * y_stride] += prod2;
-      y_data[(i + 2) * y_stride] += prod3;
-      y_data[(i + 3) * y_stride] += prod4;
+      int64_t sum1 = a_shifted * x_data[i * x_stride] + y_data[i * y_stride],
+          sum2 = a_shifted * x_data[(i + 1) * x_stride] + y_data[(i + 1) * y_stride],
+          sum3 = a_shifted * x_data[(i + 2) * x_stride] + y_data[(i + 2) * y_stride],
+          sum4 = a_shifted * x_data[(i + 3) * x_stride] + y_data[(i + 3) * y_stride];
+      y_data[i * y_stride] = sum1;
+      y_data[(i + 1) * y_stride] = sum2;
+      y_data[(i + 2) * y_stride] = sum3;
+      y_data[(i + 3) * y_stride] = sum4;
+      if (FM_ABS(sum1) > largest) largest = FM_ABS(sum1);
+      if (FM_ABS(sum2) > largest) largest = FM_ABS(sum2);
+      if (FM_ABS(sum3) > largest) largest = FM_ABS(sum3);
+      if (FM_ABS(sum4) > largest) largest = FM_ABS(sum4);
     }
     for (; i < dim; i++) {
-      int64_t prod = a_shifted * x_data[i * x_stride];
-      y_data[i * y_stride] += prod;
-      tot_bits |= FM_ABS(prod);
+      int64_t sum = a_shifted * x_data[i * x_stride] + y_data[i * y_stride];
+      y_data[i * y_stride] = sum;
+      if (FM_ABS(sum) > largest) largest = FM_ABS(sum);
     }
   }
   if (y->dim == y->region->size) {
-    y->region->size = FindSize(tot_bits, final_size_guess);
+    y->region->size = FindSize(largest, final_size_guess);
   } else {
-    EnsureRegionAtLeastSizeOf(tot_bits, final_size_guess,
+    EnsureRegionAtLeastSizeOf(largest, final_size_guess,
                               y->region);
   }
+  CheckRegion64Size(y->region);
 }
 
 /* y := a * x. */
@@ -921,7 +948,7 @@ void SetScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
 
   int x_stride = x->stride, y_stride = y->stride;
   int64_t *x_data = x->data, *y_data = y->data;
-  uint64_t tot_bits = 0;  /* `tot_bits` is a bit pattern keeping track of max size. */
+  uint64_t largest = 0;  /* largest absolute value of things we put in y. */
   int i;
   if (a_shift > 0 | x_shift > 0 || post_shift > 0) {
     int64_t a_shifted = a->data >> a_shift;
@@ -930,22 +957,24 @@ void SetScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
           prod2 = (a_shifted * (x_data[(i + 1) * x_stride] >> x_shift)) >> post_shift,
           prod3 = (a_shifted * (x_data[(i + 2) * x_stride] >> x_shift)) >> post_shift,
           prod4 = (a_shifted * (x_data[(i + 3) * x_stride] >> x_shift)) >> post_shift;
-      tot_bits |= ((FM_ABS(prod1) | FM_ABS(prod2)) | (FM_ABS(prod3) | FM_ABS(prod4)));
-      y_data[i * y_stride] = prod1;
+      y_data[(i + 0) * y_stride] = prod1;
       y_data[(i + 1) * y_stride] = prod2;
       y_data[(i + 2) * y_stride] = prod3;
       y_data[(i + 3) * y_stride] = prod4;
+      if (prod1 > largest) largest = prod1;
+      if (prod2 > largest) largest = prod2;
+      if (prod3 > largest) largest = prod3;
+      if (prod4 > largest) largest = prod4;
     }
     for (; i < dim; i++) {
       int64_t prod = (a_shifted * (x_data[i * x_stride] >> x_shift)) >> post_shift;
       y_data[i * y_stride] = prod;
-      tot_bits |= FM_ABS(prod);
+      if (FM_ABS(prod) > largest) largest = FM_ABS(prod);
     }
   } else {
     assert(x_shift == 0 && post_shift == 0);
     /* We can implement the shifting by shifting just a. */
     int64_t a_shifted = a->data << -a_shift;
-    uint64_t tot_bits = 0;  /* `tot_bits` is a bit pattern keeping track of max size. */
     int dim = x->dim, x_stride = x->stride, y_stride = y->stride;
     int64_t *x_data = x->data, *y_data = y->data;
     int i;
@@ -954,23 +983,26 @@ void SetScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
           prod2 = a_shifted * x_data[(i + 1) * x_stride],
           prod3 = a_shifted * x_data[(i + 2) * x_stride],
           prod4 = a_shifted * x_data[(i + 3) * x_stride];
-      tot_bits |= (uint64_t) ((prod1 | prod2) | (prod3 | prod4));
-      y_data[i * y_stride] += prod1;
+      y_data[(i + 0) * y_stride] += prod1;
       y_data[(i + 1) * y_stride] += prod2;
       y_data[(i + 2) * y_stride] += prod3;
       y_data[(i + 3) * y_stride] += prod4;
+      if (FM_ABS(prod1) > largest) largest = FM_ABS(prod1);
+      if (FM_ABS(prod2) > largest) largest = FM_ABS(prod2);
+      if (FM_ABS(prod3) > largest) largest = FM_ABS(prod3);
+      if (FM_ABS(prod4) > largest) largest = FM_ABS(prod4);
     }
     for (; i < dim; i++) {
       int64_t prod = a_shifted * x_data[i * x_stride];
       y_data[i * y_stride] += prod;
-      tot_bits |= prod;
+      if (FM_ABS(prod) > largest) largest = FM_ABS(prod);
     }
   }
 
   if (y->dim == y->region->size) {
-    y->region->size = FindSize(tot_bits, final_size_guess);
+    y->region->size = FindSize(largest, final_size_guess);
   } else {
-    EnsureRegionAtLeastSizeOf(tot_bits, final_size_guess,
+    EnsureRegionAtLeastSizeOf(largest, final_size_guess,
                               y->region);
   }
 }
@@ -982,16 +1014,18 @@ void Vector64AddScalar(const Scalar64 *a, Vector64 *y) {
                   0, &in_shift, &out_shift, &final_size_guess);
   ShiftRegion64(out_shift, y->region);
   int64_t a_data_shifted = ShiftInt64(a->data, in_shift);
-  uint64_t tot_bits = 0;
+  uint64_t largest = 0;
   int dim = y->dim;
   for (int i = 0; i < dim; i++) {
-    y->data[i] += a_data_shifted;
-    tot_bits |= FM_ABS(y->data[i]);
+    int64_t sum = y->data[i] = a_data_shifted;
+    y->data[i] = sum;
+    if ((sum = FM_ABS(sum)) > largest)
+      largest = sum;
   }
   if (y->dim == y->region->size) {
-    y->region->size = FindSize(tot_bits, final_size_guess);
+    y->region->size = FindSize(largest, final_size_guess);
   } else {
-    EnsureRegionAtLeastSizeOf(tot_bits, final_size_guess,
+    EnsureRegionAtLeastSizeOf(largest, final_size_guess,
                               y->region);
   }
 }
@@ -1072,7 +1106,7 @@ void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
 
   /* We haven't made much of an effort here to think about optimizations for
      memory loads . */
-  uint64_t tot_bits = 0;  /* Bit pattern to compute size of output. */
+  uint64_t largest = 0;  /* Bit pattern to compute size of output. */
   int x_dim = x->dim, x_stride = x->stride,
       y_dim = y->dim, y_stride = y->stride,
       m_row_stride = m->row_stride,
@@ -1098,7 +1132,8 @@ void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
         int64_t prod = ((mrowdata[j * m_col_stride] >> m_shift) * (xdata[j * x_stride] >> x_shift)) >> post_shift;
         y_i += prod;
       }
-      tot_bits |= FM_ABS(y_i);
+      if (FM_ABS(y_i) > largest)
+        largest = FM_ABS(y_i);
       ydata[i * y_stride] = y_i;
     }
   } else {
@@ -1120,14 +1155,15 @@ void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
       /* NOTE: the m_shift is supposed to be applied to m, but we can apply it anywhere,
          and it's more efficient to apply it after the summation. */
       y_i = y_i << -m_shift;
-      tot_bits |= FM_ABS(y_i);
+      if (FM_ABS(y_i) > largest)
+        largest = FM_ABS(y_i);
       ydata[i * y_stride] = y_i;
     }
   }
   if (y->dim == y->region->dim) {
-    y->region->size = FindSize(tot_bits, final_size_guess);
+    y->region->size = FindSize(largest, final_size_guess);
   } else {
-    EnsureRegionAtLeastSizeOf(tot_bits, final_size_guess, y->region);
+    EnsureRegionAtLeastSizeOf(largest, final_size_guess, y->region);
   }
   CheckRegion64Size(y->region);
 }
@@ -1138,18 +1174,23 @@ void SetRegion64Size(int size_hint, Region64 *r) {
   int dim = r->dim;
   int i;
 
-  uint64_t tot = 0;  /* tot will be the `or` of all the absolute values. */
+  uint64_t largest = 0;  /* will be largest absolute value. */
   for (i = 0; i + 4 <= dim; i += 4) {
     uint64_t a1 = FM_ABS(data[i]),
         a2 = FM_ABS(data[i + 1]),
         a3 = FM_ABS(data[i + 2]),
         a4 = FM_ABS(data[i + 3]);
-    tot |= (a1 | a2) | (a3 | a4);
+    if (a1 > largest) largest = a1;
+    if (a2 > largest) largest = a2;
+    if (a3 > largest) largest = a3;
+    if (a4 > largest) largest = a4;
   }
-  for (; i < dim; i++)
-    tot |= FM_ABS(data[i]);
-  /* TODO: find a more efficient way to get the size. */
-  int size = FindSize(tot, size_hint);
+  for (; i < dim; i++) {
+    uint64_t a = FM_ABS(data[i]);
+    if (a > largest)
+      largest = a;
+  }
+  int size = FindSize(largest, size_hint);
   r->size = size;
 }
 
@@ -1173,9 +1214,9 @@ void InitRegionAndVector64(int64_t *data, int dim, int exponent, int size_hint,
 
 void TestFindSize() {
   uint64_t n = 1;
-  assert(FindSize(0, 0) == 0);
-  for (int i = 1; i < 63; i++) {
-    for (int j = 0; j <= 63; j++) {
+  assert(FindSize(0, 0) == -1);
+  for (int i = 0; i < 63; i++) {
+    for (int j = 0; j < 63; j++) {
       assert(FindSize(n, j) == i);
     }
     n = n << 1;
@@ -1263,7 +1304,7 @@ void TestDivideScalar() {
     for (int shift_i = 0; shift_i < 64; shift_i ++) {
       Scalar64 ii;
       InitScalar64FromInt(i, &ii);
-      if (shift_i + ii.size >= 64)
+      if (shift_i + ii.size >= 63)
         continue;
       CheckScalar64Size(&ii);
       ShiftScalar64Left(shift_i, &ii);
@@ -1272,7 +1313,7 @@ void TestDivideScalar() {
         for (int shift_j = 0; shift_j < 64; shift_j ++) {
           Scalar64 jj;
           InitScalar64FromInt(j, &jj);
-          if (shift_j + jj.size >= 64)
+          if (shift_j + jj.size >= 63)
             continue;
           ShiftScalar64Left(shift_j, &jj);
           CheckScalar64Size(&jj);
@@ -1311,7 +1352,7 @@ void TestInitVector() {  /* Also tests InitSubVector64. */
 
   int orig_size = region.size;
 
-  for (int i = 0; i <= 63; i++) {
+  for (int i = 0; i < 63; i++) {
     SetRegion64Size(i, &region);
     assert(region.size == orig_size);
   }
@@ -1341,7 +1382,7 @@ void TestCopyIntToVector64Elem() {
 
     int orig_size = region.size;
 
-    for (int i = 0; i <= 63; i++) {
+    for (int i = 0; i < 63; i++) {
       SetRegion64Size(i, &region);
       assert(region.size == orig_size);
     }
@@ -1349,12 +1390,12 @@ void TestCopyIntToVector64Elem() {
     InitVector64(&region, 10, 1, region.data, &vec);
 
     int region_shift = source % 64;
-    if (region.size + region_shift >= 64)
+    if (region.size + region_shift >= 63)
       continue;
 
     int64_t value = -100 + (source % 200),
         value_shift = (source * 7) % 64;
-    if (value_shift + FindSize(FM_ABS(value), 0) >= 64)
+    if (value_shift + FindSize(FM_ABS(value), 0) >= 63)
       continue;
     int index = 5;
     value <<= value_shift;
@@ -1365,7 +1406,7 @@ void TestCopyIntToVector64Elem() {
 }
 
 void TestDotVector() {
-  for (int shift = 0; shift < 63 - 6; shift++) {
+  for (int shift = 0; shift < 64; shift++) {
     int64_t data[100];
     for (int i = 0; i < 100; i++)
       data[i] = i;
@@ -1375,6 +1416,8 @@ void TestDotVector() {
 
     Region64 region;
     InitRegion64(data, 100, 0, 5, &region);
+    if (region.size + shift > 62)
+      continue;
     ShiftRegion64Left(shift, &region);
 
     Vector64 vec1;
@@ -1414,19 +1457,19 @@ void TestAddVector() {
 
     Region64 region1;
     InitRegion64(data1, 100, 0, 5, &region1);
-    if (region1.size + shift1 >= 64)
+    if (region1.size + shift1 >= 63)
       continue;
     ShiftRegion64Left(shift1, &region1);
 
     Region64 region2;
     InitRegion64(data2, 100, 0, 5, &region2);
-    if (region2.size + shift2 >= 64)
+    if (region2.size + shift2 >= 63)
       continue;
     ShiftRegion64Left(shift2, &region2);
 
     Scalar64 scalar;
     InitScalar64FromInt(scalar_number, &scalar);
-    if (scalar.size + shift3 >= 64)
+    if (scalar.size + shift3 >= 63)
       continue;
     ShiftScalar64Left(shift3, &scalar);
 
@@ -1468,13 +1511,13 @@ void TestCopyVector() {
 
     Region64 region1;
     InitRegion64(data1, 10, 0, 5, &region1);
-    if (region1.size + shift1 >= 64)
+    if (region1.size + shift1 >= 63)
       continue;
     ShiftRegion64Left(shift1, &region1);
 
     Region64 region2;
     InitRegion64(data2, 10, 0, 5, &region2);
-    if (region2.size + shift2 >= 64)
+    if (region2.size + shift2 >= 63)
       continue;
     ShiftRegion64Left(shift2, &region2);
 
@@ -1523,13 +1566,13 @@ void TestSetMatrixVector64() {
 
     Region64 region1;
     InitRegion64(data1, 100, 0, 5, &region1);
-    if (region1.size + shift1 >= 64)
+    if (region1.size + shift1 >= 63)
       continue;
     ShiftRegion64Left(shift1, &region1);
 
     Region64 region2;
     InitRegion64(data2, 100, 0, 5, &region2);
-    if (region2.size + shift2 >= 64)
+    if (region2.size + shift2 >= 63)
       continue;
     ShiftRegion64Left(shift2, &region2);
 
@@ -1594,7 +1637,7 @@ void TestInvertScalar() {
     for (int shift = 0; shift < 64; shift++) {
       Scalar64 a;
       InitScalar64FromInt(i, &a);
-      if (a.size + shift >= 64)
+      if (a.size + shift >= 63)
         continue;
       ShiftScalar64Left(shift, &a);
       Scalar64 a_inv = a;
@@ -1625,11 +1668,11 @@ void TestGetShiftsForTwoArgMultiply() {
     assert(final_size2 == final_size_guess);
 
     assert(a_size + b_size + dim_size - a_shift - b_shift - post_shift <= FM_TARGET_SIZE);
-    assert(a_size + b_size - a_shift - b_shift <= 63);
+    assert(a_size + b_size - a_shift - b_shift <= 62);
     if (a_shift > 0 || b_shift > 0) {
-      assert(a_size + b_size - a_shift - b_shift == 63);
+      assert(a_size + b_size - a_shift - b_shift == 62);
       if (a_shift > 0)
-        assert(a_size - a_shift >= 32);
+        assert(a_size - a_shift >= 31);
       if (b_shift > 0)
         assert(b_size - b_shift >= 31);
     }
@@ -1726,7 +1769,7 @@ void TestGetShiftsForTwoArgMultiplyAndAdd() {
     assert(final_size2 == final_size_guess);
     assert(a_size + b_size - a_shift - b_shift < 64);
     if (a_shift > 0 || b_shift > 0) {
-      assert(a_size + b_size - a_shift - b_shift == 63);
+      assert(a_size + b_size - a_shift - b_shift == 62);
     }
     if (a_shift < 0) {
       assert(b_shift == 0 && post_shift == 0);
@@ -1746,7 +1789,7 @@ void TestCopyScalarToElem64() {
 
       Scalar64 a;
       InitScalar64FromInt(i, &a);
-      if (a.size + shift_a >= 64 || a.size + shift_b >= 64)
+      if (a.size + shift_a >= 63 || a.size + shift_b >= 63)
         continue;
       ShiftScalar64Left(shift_a, &a);
 
@@ -1792,11 +1835,11 @@ void TestCopyScalarToElem64() {
 
 
 int main() {
+  TestFindSize();
   TestGetShiftsForAdd();
   TestGetShiftsForAssign();
   TestGetShiftsForTwoArgMultiply();
   TestGetShiftsForTwoArgMultiplyAndAdd();
-  TestFindSize();
   TestSetToInt();
   TestShift();
   TestAddScalar();
