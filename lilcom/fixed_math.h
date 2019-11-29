@@ -130,12 +130,18 @@ FM_MAYBE_EXTERN inline void InitVector64(Region64 *region, int dim, int stride, 
 
 FM_MAYBE_EXTERN inline void InitSubVector64(const Vector64 *src, int offset, int dim, int stride, Vector64 *dest) {
   assert(offset >= 0 && offset + (dim - 1) * stride < src->dim && stride != 0 &&
-      offset < dim && offset + (dim - 1) * stride >= 0);
+         offset < src->dim && offset + (dim - 1) * stride >= 0);
   dest->region = src->region;
   dest->dim = dim;
   dest->stride = stride * src->stride;
   dest->data = src->data + offset * src->stride;
 }
+
+/* Prints the vector to stderr */
+void PrintVector64(Vector64 *vec);
+
+/* Prints the matrix to stderr */
+void PrintMatrix64(Matrix64 *vec);
 
 /**
    This convenience function initializes a region and vector, in the common case where
@@ -242,9 +248,6 @@ void Vector64AddScalar(const Scalar64 *a, Vector64 *y);
 /* does y[i] := a for each element of y. */
 void Vector64SetScalar(const Scalar64 *a, Vector64 *y);
 
-/* y := a * b.  It is OK if some of the pointer args are the same.  */
-void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
-
 /* Sets the elements of this vector to zero.  Does touch the `size`
    or exponent.  Currently intended for use inside implementation functions.
  */
@@ -342,6 +345,17 @@ double Vector64ElemToDouble(int i, const Vector64 *vec);
 /* Returns nonzero if a and b are similar within a tolerance.  Intended mostly
    for checking code.*/
 int Scalar64ApproxEqual(const Scalar64 *a, const Scalar64 *b, float tol);
+
+#ifndef NDEBUG
+/** Checks that the region currently has the size that it should have (or
+ * greater); dies if not.. */
+void CheckRegion64Size(const Region64 *r);
+void CheckScalar64Size(const Scalar64 *scalar_in);
+#else
+#define CheckRegion64Size(x) while(0)
+#define CheckScalar64Size(x) while(0)
+#endif
+
 
 /*
   Returns the smallest integer i >= 0 such that

@@ -82,6 +82,8 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
   DivideScalar64(&y0, &epsilon, &x0);
   CopyScalar64ToVectorElem(&x0, 0, &x);
 
+  debug_fprintf(stderr, "x[0] = %f\n",
+                (float)Vector64ElemToDouble(0, &x));
   for (int n = 1; n <= N; n++) {  /* for n in range(1, N+1): */
 
     /* New few lines:
@@ -95,6 +97,11 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
     DotVector64(&r1n1, &bn, &product);
     DivideScalar64(&product, &epsilon, &nu_n);
     NegateScalar64(&nu_n);
+
+
+    debug_fprintf(stderr, "Iter %d: epsilon=%f, nu_n=%f\n",
+                  n, (float)Scalar64ToDouble(&epsilon),
+                  (float)Scalar64ToDouble(&nu_n));
 
     CopyIntToVector64Elem(0, 0, 0, &b_temp);  /* b_temp[0] = 0.0 (3rd arg is size_hint==0). */
     Vector64 b_temp_1n1; /* == b_temp[1:n+1] */
@@ -118,11 +125,25 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
         fprintf(stderr, "Error:, nu_n out of range %f\n", d);
       }
     }
+    /* The next few lines will do:
+         epsilon *= (1.0 - nu_n * nu_n) */
     Scalar64 nu_n2,  /* nu_n^2 */
         epsilon_minus_nu_n2;
+    CheckScalar64Size(&nu_n);
     MulScalar64(&nu_n, &nu_n, &nu_n2); /* nu_n2 := nu_n * nu_n */
+    fprintf(stderr, "nu_n2 size is %d\n", nu_n2.size);
+    CheckScalar64Size(&nu_n2);
+    debug_fprintf(stderr, "Iter %d: nu_n*nu_n=%f\n",
+                  n, (float)Scalar64ToDouble(&nu_n2));
     NegateScalar64(&nu_n2);   /* nu_n2 *= -1 */
+    CheckScalar64Size(&nu_n2);
+    debug_fprintf(stderr, "Iter %d: -nu_n*nu_n=%f\n",
+                  n, (float)Scalar64ToDouble(&nu_n2));
+
     MulScalar64(&epsilon, &nu_n2, &epsilon_minus_nu_n2);
+    debug_fprintf(stderr, "Iter %d: -nu_n*nu_n*epsilon=%f\n",
+                  n, (float)Scalar64ToDouble(&epsilon_minus_nu_n2));
+
     AddScalar64(&epsilon, &epsilon_minus_nu_n2, &epsilon); /* epsilon -= mu_n*mu_n*epsilon */
     if (epsilon.data <= 0) {
       debug_fprintf(stderr, "Negative or zero epilon %f in Toeplitz computation (n=%d)\n",
@@ -137,16 +158,19 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
     Scalar64 ratio;
     {
       Scalar64 lambda_n, y_elem_n;
-      Vector64 y_n, r_1n1_flip;
-      InitSubVector64(&y, 0, n, 1, &y_n);
+      Vector64 x_n, r_1n1_flip;
+      InitSubVector64(&x, 0, n, 1, &x_n);
       InitSubVector64(&r, n, n, -1, &r_1n1_flip);
-      DotVector64(&y_n, &r_1n1_flip, &lambda_n);
+      DotVector64(&x_n, &r_1n1_flip, &lambda_n);
       NegateScalar64(&lambda_n);
       /* lambda_n is now
         - sum([ r[n-j] * x[j] for j in range(n)]) == np.dot(r[1:n+1].flip(), j[:n]) */
       CopyVectorElemToScalar64(&y, n, &y_elem_n);
       AddScalar64(&y_elem_n, &lambda_n, &lambda_n); /* lambda_n += y[n]. */
-      DivideScalar64(&lambda_n, &epsilon, &ratio);
+      debug_fprintf(stderr, "Iter %d: y_n=%f, lambda_n=%f\n",
+                    n,
+                    (float)Scalar64ToDouble(&y_elem_n),
+                    (float)Scalar64ToDouble(&lambda_n));
     }
 
     Vector64 x_n1, b_n1;
@@ -167,24 +191,23 @@ int main() {
 
   int64_t autocorr_array[4] = { 10, 5, 2, 1 },
       y_array[4]  = { 1, 2, 3, 4 },
-      b_array[4] = { 0, 0, 0, 0 },
+      x_array[4] = { 0, 0, 0, 0 },
       temp1_array[4] = { 0, 0, 0, 0 },
       temp2_array[4] = { 0, 0, 0, 0 };
   Region64 r1, r2, r3, r4, r5;
-  Vector64 autocorr, y, b, temp1, temp2;
+  Vector64 autocorr, y, x, temp1, temp2;
   int size_hint = 2;
   InitRegionAndVector64(autocorr_array, 4, 0, size_hint,
                         &r1, &autocorr);
   InitRegionAndVector64(y_array, 4, 0, size_hint,
                         &r2, &y);
-  InitRegionAndVector64(b_array, 4, 0, size_hint,
-                        &r3, &b);
+  InitRegionAndVector64(x_array, 4, 0, size_hint,
+                        &r3, &x);
   InitRegionAndVector64(temp1_array, 4, 0, size_hint,
                         &r4, &temp1);
   InitRegionAndVector64(temp2_array, 4, 0, size_hint,
                         &r5, &temp2);
-
-
+  ToeplitzSolve(&autocorr, &y, &x, &temp1, &temp2);
 }
 
 #endif

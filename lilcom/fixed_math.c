@@ -39,6 +39,21 @@ inline static int ShiftInt64(const int64_t i, int shift) {
   return (i >= 0 ? i << shift : i >> (-shift));
 }
 
+
+#ifndef NDEBUG
+/** Checks that the region currently has the size that it should have (or
+ * greater); dies if not.. */
+void CheckRegion64Size(const Region64 *r) {
+  Region64 r_copy = *r;
+  SetRegion64Size(r_copy.size, &r_copy);
+  assert(r->size >= r_copy.size && "Region had invalid size.");
+}
+void CheckScalar64Size(const Scalar64 *scalar_in) {
+  assert(scalar_in->size == FindSize(FM_ABS(scalar_in->data), scalar_in->size));
+}
+#endif
+
+
 #ifndef NDEBUG
 void PrintRegion64(Region64 *region) {
   fprintf(stderr, "{ Region64, dim = %d, exponent = %d, size = %d, data = [ ",
@@ -77,22 +92,7 @@ void PrintMatrix64(Matrix64 *mat) {
 
 #endif
 
-#ifndef NDEBUG
-/** Checks that the region currently has the size that it should have (or
- * greater); dies if not.. */
-void CheckRegion64Size(const Region64 *r) {
-  Region64 r_copy = *r;
-  SetRegion64Size(r_copy.size, &r_copy);
-  assert(r->size >= r_copy.size && "Region had invalid size.");
-}
 
-void CheckScalar64Size(const Scalar64 *scalar_in) {
-  assert(scalar_in->size == FindSize(scalar_in->data, scalar_in->size));
-}
-#else
-inline static void CheckRegion64Size(const Region64 *r) { }
-inline static void CheckScalar64Size(const Scalar64 *r) { }
-#endif
 
 /* If shift > 0 shifts right by `rshift`; if shift < 0 shift left by -rshift. */
 inline static void ShiftRegion64(int rshift, Region64 *region) {
@@ -104,7 +104,11 @@ inline static void ShiftRegion64(int rshift, Region64 *region) {
    This function, used to get right-shifts for arguments to a multiplication,
    chooses the shifts that will lose the least precision while ensuring
    that after multiplying a and b there is no overflow
-   (i.e. that a_size + b_size - a_shift - b_shift < 64).
+     (i.e. that a_size + b_size - a_shift - b_shift < 63).
+
+   Why 63 and not 64? (I.e 63 is normally our maximum size.)  The issue is that
+   if the number is something like -(2^n - 1), if right shifted by k >0 it
+   would become -(2^(n-k+1))
 */
 inline static void GetInputShiftsFor2ArgMultiply(
     int a_size, int b_size,
@@ -115,13 +119,13 @@ inline static void GetInputShiftsFor2ArgMultiply(
   } else if (a_size >= 32 && b_size >= 32) {
     // We'll definitely have to shift both of them right.  We have 63 bits
     // and we can't divide them quite evenly...
-    *a_shift = a_size - 32;
+    *a_shift = a_size - 31;
     *b_shift = b_size - 31;
   } else {
     // OK, one of them is < 32, but their sum is >= 64,
     // so the other one must be > 32.  We only have to
     // shift one of them.
-    int shift = a_size + b_size - 63;
+    int shift = a_size + b_size - 62;
     if (a_size > b_size) {
       *a_shift = shift;
       *b_shift = 0;
@@ -491,6 +495,7 @@ int FindSize(uint64_t value, int guess) {
     if (abs(ans - guess) > 3)
       fprintf(stderr, "Warning: FindSize: guess = %d, ans = %d\n", guess, ans);
     */
+    assert((unsigned int)ans <= 63);
     return ans;
   } else {
     /* value > (1 << guess).  Keep shifting neg_mask left till it fits. */
@@ -505,6 +510,7 @@ int FindSize(uint64_t value, int guess) {
     if (abs(ans - guess) > 3)
       fprintf(stderr, "Warning: FindSize: guess = %d, ans = %d\n", guess, ans);
     */
+    assert((unsigned int)ans <= 63);
     return ans;
   }
 }
@@ -666,7 +672,8 @@ void ShiftScalar64Left(int left_shift, Scalar64 *a) {
   assert(left_shift >= 0);
   a->exponent -= left_shift;
   a->data <<= left_shift;
-  a->size += left_shift;
+  if (a->size != 0)
+    a->size += left_shift;
   assert(a->size < 64);
 }
 
@@ -714,9 +721,11 @@ void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y) {
   GetShiftsFor2ArgMultiply(a_size, b_size, dim_size,
                            &a_shift, &b_shift,
                            &post_shift, &final_size_guess);
+  CheckScalar64Size(a);   CheckScalar64Size(b);
   y->data = ((a->data >> a_shift) * (b->data >> b_shift)) >> post_shift;
   y->exponent = a->exponent + b->exponent + a_shift + b_shift + post_shift;
   y->size = FindSize(FM_ABS(y->data), final_size_guess);
+  assert(y->size <= final_size_guess);
 }
 
 void InvertScalar64(const Scalar64 *a, Scalar64 *b) {
@@ -832,9 +841,6 @@ void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
                                  &a_shift, &x_shift, &post_shift,
                                  &y_shift, &final_size_guess);
   ShiftRegion64(y_shift, y->region);
-
-  fprintf(stderr, "a_shift = %d, x_shift = %d,  post_shift = %d, final_size_guess = %d\n",
-          a_shift, x_shift, post_shift, final_size_guess);
 
   int x_stride = x->stride, y_stride = y->stride;
   int64_t *x_data = x->data, *y_data = y->data;
@@ -1259,7 +1265,9 @@ void TestDivideScalar() {
       InitScalar64FromInt(i, &ii);
       if (shift_i + ii.size >= 64)
         continue;
+      CheckScalar64Size(&ii);
       ShiftScalar64Left(shift_i, &ii);
+      CheckScalar64Size(&ii);
       for (int j = -10; j < 10; j += 3) {
         for (int shift_j = 0; shift_j < 64; shift_j ++) {
           Scalar64 jj;
@@ -1267,11 +1275,13 @@ void TestDivideScalar() {
           if (shift_j + jj.size >= 64)
             continue;
           ShiftScalar64Left(shift_j, &jj);
+          CheckScalar64Size(&jj);
 
           if (j == 0)
             continue;
           Scalar64 kk;
           DivideScalar64(&ii, &jj, &kk);  /* k := i / j */
+          CheckScalar64Size(&kk);
 
           if (i == 0) {
             assert(Scalar64ToDouble(&kk) == 0.0);
@@ -1279,9 +1289,10 @@ void TestDivideScalar() {
           }
 
           DivideScalar64(&kk, &ii, &kk);  /* k := k / i   (== 1/j) */
+          CheckScalar64Size(&kk);
 
           MulScalar64(&kk, &jj, &kk);  /* k := k * j (== 1.0) */
-
+          CheckScalar64Size(&kk);
           double one = Scalar64ToDouble(&kk);
           assert(fabs(one - 1.0) <= pow(2.0, -29));
         }
