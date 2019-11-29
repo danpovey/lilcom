@@ -1,8 +1,8 @@
+#define FM_MAYBE_EXTERN extern
 #include "fixed_math.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include <assert.h>
-#define FIXED_MATH_TEST 1
 
 #ifdef FIXED_MATH_TEST
 #include <math.h>
@@ -487,8 +487,10 @@ int FindSize(uint64_t value, int guess) {
       neg_mask >>= 1;
     }
     assert(CheckSize(value, ans));
-    if (abs(ans - guess) > 3) /* TEMP */
+    /*  TEMP
+    if (abs(ans - guess) > 3)
       fprintf(stderr, "Warning: FindSize: guess = %d, ans = %d\n", guess, ans);
+    */
     return ans;
   } else {
     /* value > (1 << guess).  Keep shifting neg_mask left till it fits. */
@@ -499,8 +501,10 @@ int FindSize(uint64_t value, int guess) {
       ans++;
     }
     assert(CheckSize(value, ans));
-    if (abs(ans - guess) > 3) /* TEMP */
+    /* TEMP
+    if (abs(ans - guess) > 3)
       fprintf(stderr, "Warning: FindSize: guess = %d, ans = %d\n", guess, ans);
+    */
     return ans;
   }
 }
@@ -610,11 +614,13 @@ int VectorsOverlap(const Vector64 *vec1, const Vector64 *vec2) {
 }
 
 void DivideScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y) {
-
+  Scalar64 temp;
+  InvertScalar64(b, &temp);  /* temp := 1/b */
+  MulScalar64(a, &temp, y);  /* y := a * temp */
 }
 
 double Scalar64ToDouble(const Scalar64 *a) {
-  return a->data * pow(2.0, a->exponent);
+  return (double)a->data * pow(2.0, a->exponent);
 }
 
 double Vector64ElemToDouble(int i, const Vector64 *vec) {
@@ -733,10 +739,10 @@ void InvertScalar64(const Scalar64 *a, Scalar64 *b) {
       b->exponent = -63 - a_exponent;
     }
   } else {
-    int p = a_size + FM_TARGET_SIZE;  /* Note: is a_size < 63 - FM_TARGET_SIZE,
+    int p = a_size + FM_TARGET_SIZE;  /* Note:  a_size < 63 - FM_TARGET_SIZE,
                                          so p < 63. This guarantees that 1<<p is
                                          positive. */
-    int64_t big_number = 1 << p;
+    int64_t big_number = ((int64_t)1) << p;
     b->data = big_number / a_data;
     b->size = FindSize(FM_ABS(b->data), p - a_size);
     b->exponent = -p - a_exponent;
@@ -758,8 +764,7 @@ void AddScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y) {
       y->exponent = b_exponent;
       y->size = FindSize(FM_ABS(y->data), b_size);
     } else { // This should be an extremely rare case, so just handle by recursion.
-      Scalar64 b2;
-      CopyScalar64(a, &b2);
+      Scalar64 b2 = *a;
       ShiftScalar64Right(b_size - FM_TARGET_SIZE, &b2);
       AddScalar64(a, &b2, y);
     }
@@ -771,8 +776,7 @@ void AddScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y) {
       y->exponent = a_exponent;
       y->size = FindSize(FM_ABS(y->data), a_size);
     } else { // This should be an extremely rare case, so just handle by recursion.
-      Scalar64 a2;
-      CopyScalar64(a, &a2);
+      Scalar64 a2 = *a;
       ShiftScalar64Right(63 - FM_TARGET_SIZE, &a2);
       AddScalar64(&a2, b, y);
     }
@@ -1151,6 +1155,14 @@ void ZeroRegion64(Region64 *region) {
   region->size = 0;
 }
 
+void InitRegionAndVector64(int64_t *data, int dim, int exponent, int size_hint,
+                           Region64 *region, Vector64 *vector) {
+  InitRegion64(data, dim, exponent, size_hint, region);
+  int stride = 1;
+  InitVector64(region, dim, stride, data, vector);
+}
+
+
 #ifdef FIXED_MATH_TEST
 
 void TestFindSize() {
@@ -1239,6 +1251,45 @@ void TestMulScalar() {
     }
   }
 }
+
+void TestDivideScalar() {
+  for (int i = -10; i < 10; i += 5) {
+    for (int shift_i = 0; shift_i < 64; shift_i ++) {
+      Scalar64 ii;
+      InitScalar64FromInt(i, &ii);
+      if (shift_i + ii.size >= 64)
+        continue;
+      ShiftScalar64Left(shift_i, &ii);
+      for (int j = -10; j < 10; j += 3) {
+        for (int shift_j = 0; shift_j < 64; shift_j ++) {
+          Scalar64 jj;
+          InitScalar64FromInt(j, &jj);
+          if (shift_j + jj.size >= 64)
+            continue;
+          ShiftScalar64Left(shift_j, &jj);
+
+          if (j == 0)
+            continue;
+          Scalar64 kk;
+          DivideScalar64(&ii, &jj, &kk);  /* k := i / j */
+
+          if (i == 0) {
+            assert(Scalar64ToDouble(&kk) == 0.0);
+            continue;
+          }
+
+          DivideScalar64(&kk, &ii, &kk);  /* k := k / i   (== 1/j) */
+
+          MulScalar64(&kk, &jj, &kk);  /* k := k * j (== 1.0) */
+
+          double one = Scalar64ToDouble(&kk);
+          assert(fabs(one - 1.0) <= pow(2.0, -29));
+        }
+      }
+    }
+  }
+}
+
 
 void TestInitVector() {  /* Also tests InitSubVector64. */
   int64_t data[100];
@@ -1535,8 +1586,7 @@ void TestInvertScalar() {
       if (a.size + shift >= 64)
         continue;
       ShiftScalar64Left(shift, &a);
-      Scalar64 a_inv;
-      CopyScalar64(&a, &a_inv);
+      Scalar64 a_inv = a;
       InvertScalar64(&a_inv, &a_inv);
 
       Scalar64 one;
@@ -1729,6 +1779,7 @@ void TestCopyScalarToElem64() {
   }
 }
 
+
 int main() {
   TestGetShiftsForAdd();
   TestGetShiftsForAssign();
@@ -1738,7 +1789,7 @@ int main() {
   TestSetToInt();
   TestShift();
   TestAddScalar();
-  TestMulScalar();
+  TestDivideScalar();
   TestInitVector();
   TestDotVector();
   TestAddVector();

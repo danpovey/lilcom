@@ -21,4 +21,4 @@ fixed_math: fixed_math.c
 
 
 prediction_math: prediction_math.c fixed_math.c
-	gcc -O0 -Wall -g -o fixed_math -DFIXED_MATH_TEST=1 fixed_math.c prediction_math.c -o prediction_math -lm # -ftrapv
+	gcc -O0 -Wall -g  -DPREDICTION_MATH_TEST=1 fixed_math.c prediction_math.c -o prediction_math -lm # -ftrapv

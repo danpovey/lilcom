@@ -1,6 +1,10 @@
 #ifndef __LILCOM__FIXED_MATH_H__
 #define __LILCOM__FIXED_MATH_H__
 
+#ifndef FM_MAYBE_EXTERN
+#define FM_MAYBE_EXTERN  /* .. as empty string.  It's "extern" if this file is included from fixed_math.c */
+#endif
+
 #include <math.h>
 #include <stdint.h>
 #include <assert.h>
@@ -102,7 +106,18 @@ void InitRegion64(int64_t *data, int dim, int exponent, int size_hint, Region64 
  */
 void ZeroRegion64(Region64 *region);
 
-static inline void InitVector64(Region64 *region, int dim, int stride, int64_t *data, Vector64 *vec) {
+/**
+   Initializes a Vector64 pointing to data from a Region
+        @param [in] region   The region that the Vector64 will be part of
+        @param [in] dim      The dimension of the Vector64
+        @param [in] stride   The stride of elements of the Vector64; will
+                             normally be 1.
+        @param [in] data     The start of the data of the Vector64;
+                             must be within the data pointed to by `region`,
+                             and so must the elements up to data[stride*(dim-1)].
+        @param [out] vec     The vector to be initialized
+ */
+FM_MAYBE_EXTERN inline void InitVector64(Region64 *region, int dim, int stride, int64_t *data, Vector64 *vec) {
   vec->region = region;
   vec->dim = dim;
   vec->stride = stride;
@@ -113,7 +128,7 @@ static inline void InitVector64(Region64 *region, int dim, int stride, int64_t *
       data + ((dim - 1) * stride) < region->data + region->dim);
 }
 
-static inline void InitSubVector64(const Vector64 *src, int offset, int dim, int stride, Vector64 *dest) {
+FM_MAYBE_EXTERN inline void InitSubVector64(const Vector64 *src, int offset, int dim, int stride, Vector64 *dest) {
   assert(offset >= 0 && offset + (dim - 1) * stride < src->dim && stride != 0 &&
       offset < dim && offset + (dim - 1) * stride >= 0);
   dest->region = src->region;
@@ -123,11 +138,31 @@ static inline void InitSubVector64(const Vector64 *src, int offset, int dim, int
 }
 
 /**
+   This convenience function initializes a region and vector, in the common case where
+   the vector covers all the region's data and has stride 1.
+       @param [in]  data   Start of the array the region and vector will own
+       @param [in]  dim    Number of elements in the array the region and vector will own
+       @param [in]  exponent  Exponent that dictates the interpretation as floats of
+                           the integer elements of `data`; zero would mean just
+                           taking their integer elements directly.
+       @param [in] size_hint  May be any value in [0,63] but it will be faster if it
+                           is close to FindSize(largest_value, ...) where
+                           largest_value is the largest absolute value of any element of
+                           `data`.
+       @param [out] region  The region to be initialized
+       @param [out] vector  The vector to be initialized
+ */
+void InitRegionAndVector64(int64_t *data, int dim, int exponent, int size_hint,
+                           Region64 *region, Vector64 *vector);
+
+
+
+/**
    Zeros the region's data, setting size and exponent to zero.
  */
 void ZeroRegion64(Region64 *region);
 
-static inline void InitMatrix64(Region64 *region,
+FM_MAYBE_EXTERN inline void InitMatrix64(Region64 *region,
                                 int num_rows, int row_stride,
                                 int num_cols, int col_stride,
                                 int64_t *data, Matrix64 *mat) {
@@ -221,14 +256,13 @@ void ZeroVector64(Vector64 *a);
 */
 void SetRegion64Size(int size_hint, Region64 *r);
 
-static inline void NegateScalar64(Scalar64 *a) { a->data *= -1; }
+inline FM_MAYBE_EXTERN void NegateScalar64(Scalar64 *a) { a->data *= -1; }
 
-static inline void SetVector64ElemToInt(int a, int b, int c, Vector64 *r) {
 
-}
 
 /* Sets this scalar to an integer. */
 void InitScalar64FromInt(int64_t i, Scalar64 *a);
+
 
 /*
   a[i] = value:
@@ -273,12 +307,14 @@ void CopyFromScalar64(const Scalar64 *a, int i, Vector64 *y);
    objects. */
 void MulScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 
-/* does: y := a.  Just copies all the elements of the struct. */
-static inline void CopyScalar64(const Scalar64 *a, Scalar64 *y) {
-  y->size = a->size;
-  y->exponent = a->exponent;
-  y->data = a->data;
+
+inline void ShallowSwapVector64(Vector64 *a, Vector64 *b) {
+  Vector64 temp;
+  temp = *a;
+  *a = *b;
+  *b = temp;
 }
+
 
 /* Computes the inverse of a 64-bit scalar: does b := 1.0 / a.  The pointers do
    not have to be different.  Will die with assertion or numerical exception if
@@ -293,7 +329,8 @@ void AddScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
    does: y := a - b. */
 void SubtractScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 
-/*  Divides scalars:  y := a / b. */
+/*  Divides scalars:  y := a / b.  The pointers do not have to be
+    distinct.*/
 void DivideScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y);
 
 /* Convert to double- needed only for testing. */
