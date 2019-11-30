@@ -82,8 +82,6 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
   DivideScalar64(&y0, &epsilon, &x0);
   CopyScalar64ToVectorElem(&x0, 0, &x);
 
-  debug_fprintf(stderr, "x[0] = %f\n",
-                (float)Vector64ElemToDouble(0, &x));
   for (int n = 1; n <= N; n++) {  /* for n in range(1, N+1): */
 
     /* New few lines:
@@ -98,52 +96,34 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
     DivideScalar64(&product, &epsilon, &nu_n);
     NegateScalar64(&nu_n);
 
-
-    debug_fprintf(stderr, "Iter %d: epsilon=%f, nu_n=%f\n",
-                  n, (float)Scalar64ToDouble(&epsilon),
-                  (float)Scalar64ToDouble(&nu_n));
-
     CopyIntToVector64Elem(0, 0, 0, &b_temp);  /* b_temp[0] = 0.0 (3rd arg is size_hint==0). */
     Vector64 b_temp_1n1; /* == b_temp[1:n+1] */
     InitSubVector64(&b_temp, 1, n, 1, &b_temp_1n1);
     CopyVector64(&bn, &b_temp_1n1); /* b_temp[1:n+1] = b[:n] */
+    CheckRegion64Size(b_temp.region);
     Vector64 b_temp_n; /* == b[0:n] */
     InitSubVector64(&b_temp, 0, n, 1, &b_temp_n);
     Vector64 b_n_flip; /* == np.flip(b[:n]) */
     InitSubVector64(&b, n - 1, n, -1, &b_n_flip);
+    CheckRegion64Size(b_temp.region);
     AddScalarVector64(&nu_n, &b_n_flip, &b_temp_n); /* b_temp[:n] += nu_n * np.flip(b[:n]) */
+
     /* Shallow-swap the vectors b and b_temp.  In the equations this is
        written as:
          b[:n+1] = b_temp[:n+1]
          but we do it via shallow swap. */
     { Vector64 temp = b; b = b_temp; b_temp = temp; }
 
-
-    {
-      double d = Scalar64ToDouble(&nu_n);
-      if (d <= -1 || d >= 1) {
-        fprintf(stderr, "Error:, nu_n out of range %f\n", d);
-      }
-    }
     /* The next few lines will do:
          epsilon *= (1.0 - nu_n * nu_n) */
     Scalar64 nu_n2,  /* nu_n^2 */
         epsilon_minus_nu_n2;
     CheckScalar64Size(&nu_n);
     MulScalar64(&nu_n, &nu_n, &nu_n2); /* nu_n2 := nu_n * nu_n */
-    fprintf(stderr, "nu_n2 size is %d\n", nu_n2.size);
     CheckScalar64Size(&nu_n2);
-    debug_fprintf(stderr, "Iter %d: nu_n*nu_n=%f\n",
-                  n, (float)Scalar64ToDouble(&nu_n2));
     NegateScalar64(&nu_n2);   /* nu_n2 *= -1 */
     CheckScalar64Size(&nu_n2);
-    debug_fprintf(stderr, "Iter %d: -nu_n*nu_n=%f\n",
-                  n, (float)Scalar64ToDouble(&nu_n2));
-
     MulScalar64(&epsilon, &nu_n2, &epsilon_minus_nu_n2);
-    debug_fprintf(stderr, "Iter %d: -nu_n*nu_n*epsilon=%f\n",
-                  n, (float)Scalar64ToDouble(&epsilon_minus_nu_n2));
-
     AddScalar64(&epsilon, &epsilon_minus_nu_n2, &epsilon); /* epsilon -= mu_n*mu_n*epsilon */
     if (epsilon.data <= 0) {
       debug_fprintf(stderr, "Negative or zero epilon %f in Toeplitz computation (n=%d)\n",
@@ -164,13 +144,10 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
       DotVector64(&x_n, &r_1n1_flip, &lambda_n);
       NegateScalar64(&lambda_n);
       /* lambda_n is now
-        - sum([ r[n-j] * x[j] for j in range(n)]) == np.dot(r[1:n+1].flip(), j[:n]) */
+         - sum([ r[n-j] * x[j] for j in range(n)]) == np.dot(np.flip(r[1:n+1]), j[:n]) */
       CopyVectorElemToScalar64(&y, n, &y_elem_n);
       AddScalar64(&y_elem_n, &lambda_n, &lambda_n); /* lambda_n += y[n]. */
-      debug_fprintf(stderr, "Iter %d: y_n=%f, lambda_n=%f\n",
-                    n,
-                    (float)Scalar64ToDouble(&y_elem_n),
-                    (float)Scalar64ToDouble(&lambda_n));
+      DivideScalar64(&lambda_n, &epsilon, &ratio); /* ratio = lambda_n / epsilon */
     }
 
     Vector64 x_n1, b_n1;
@@ -179,15 +156,51 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
     /* next line: x[:n+1] += (lambda_n / epsilon) * b[:n+1] */
     AddScalarVector64(&ratio, &b_n1, &x_n1);
   }
+
+  debug_fprintf(stderr, "Output x vector is: ");
+  PrintVector64(&x);
+
   return 0;
 }
 
 
 #ifdef PREDICTION_MATH_TEST
+#include <math.h>
+
+/**
+   Construct a matrix `mat` with elements
+     mat[i,j] = vec[abs(i-j)]
+   Requires that `mat` occupy its entire region (so that
+   we can freely set its exponent and size).
+ */
+void ConstructToeplitzMatrix(Vector64 *vec,
+                             Matrix64 *mat) {
+  int size = mat->num_rows * mat->num_cols;
+  assert(size == mat->region->dim &&
+         "Matrix must occupy its whole region");
+  mat->region->size = vec->region->size;
+  mat->region->exponent = vec->region->exponent;
+  int64_t *vec_data = vec->data,
+      *mat_data = mat->data;
+  int dim = vec->dim;
+  assert(mat->num_rows == dim && mat->num_cols == dim);
+  int vec_stride = vec->stride,
+      mat_row_stride = mat->row_stride,
+      mat_col_stride = mat->col_stride;
+  for (int r = 0; r < dim; r++) {
+    for (int c = 0; c < dim; c++) {
+      int i = (r > c ? r - c : c - r);
+      mat_data[r * mat_row_stride + c * mat_col_stride] = vec_data[i * vec_stride];
+    }
+  }
+}
+
 
 int main() {
   /* Note: this mirrors code in ../test/linear_prediction.py, in
-   * test_toeplitz_solve_compare(). */
+   * test_toeplitz_solve_compare().  I'm using the same exact
+   * numbers in testing, to make it easier to debug.
+   */
 
   int64_t autocorr_array[4] = { 10, 5, 2, 1 },
       y_array[4]  = { 1, 2, 3, 4 },
@@ -208,6 +221,33 @@ int main() {
   InitRegionAndVector64(temp2_array, 4, 0, size_hint,
                         &r5, &temp2);
   ToeplitzSolve(&autocorr, &y, &x, &temp1, &temp2);
+
+
+  CheckRegion64Size(temp1.region);
+  CheckRegion64Size(temp2.region);
+
+
+
+  /* Now check that the solution is correct. */
+  int64_t mat_array[16];
+  for (int i = 0; i < 16; i++) mat_array[i] = 0;
+  Region64 mat_region;
+  Matrix64 mat;
+  InitRegionAndMatrix64(mat_array, 4, 4, 0, 0,
+                        &mat_region, &mat);
+
+  CheckRegion64Size(temp1.region);
+  /* temp1 := mat * x. */
+  SetMatrixVector64(&mat, &x, &temp1);
+  CheckRegion64Size(temp1.region);
+
+  /* temp1 -= y.   Now temp1 is the error/residual. */
+  AddIntVector64(-1, &y, &temp1);
+  double rel_error = DotVector64AsDouble(&temp1, &temp1) /
+      DotVector64AsDouble(&y, &y);
+  fprintf(stderr, "Relative error in Toeplitz inversion is %g\n", (float)sqrt(rel_error));
+  assert(rel_error < pow(2.0, -20));
+
 }
 
 #endif

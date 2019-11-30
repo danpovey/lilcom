@@ -94,6 +94,7 @@ def toeplitz_solve(autocorr, y):
 
         # The following is an unnumbered formula below Eq. 2.9
         lambda_n = y[n] - sum([ r[n-j] * x[j] for j in range(n)])
+
         x[:n+1] += (lambda_n / epsilon) * b[:n+1];
 
     return x
@@ -116,6 +117,22 @@ def test_toeplitz_solve():
         err = np.dot(A, b) - y
         relative_error = np.abs(err).sum() / np.abs(y).sum()
         print("Toeplitz solver: relative error is {}".format(relative_error))
+
+
+def test_toeplitz_solve_compare():
+    autocorr = np.array([ 10.0, 5.0, 2.0, 1.0 ])
+    y = np.array([ 1.0, 2.0, 3.0, 4.0 ])
+    b = toeplitz_solve(autocorr, y)
+    print("b is {}".format(b))
+
+#For n=1, epsilon=10.0, nu_n=-0.5
+#.y[n] = 2, .. lambda_n = 1.5
+#For n=2, epsilon=7.5, nu_n=0.06666666666666667
+#... lambda_n = 2.0
+#For n=3, epsilon=7.466666666666667, nu_n=-0.035714285714285705
+#... lambda_n = 2.5285714285714285
+# b is [0.00574713 0.0862069  0.0862069  0.33908046]
+
 
 
 def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
@@ -847,6 +864,7 @@ fileList = [settings["dataset-dir"] + "/" + item
 
 
 test_toeplitz_solve()
+test_toeplitz_solve_compare()
 
 for file in fileList:
     audioArray = waveRead(file, settings["sample-rate"])

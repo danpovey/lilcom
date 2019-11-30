@@ -64,8 +64,8 @@ void PrintRegion64(Region64 *region) {
 }
 
 void PrintVector64(Vector64 *vec) {
-  fprintf(stderr, "{ Vector64, dim = %d, stride = %d, data = [ ",
-          vec->dim, vec->stride);
+  fprintf(stderr, "{ Vector64, dim = %d, stride = %d, exponent = %d, data = [ ",
+          vec->dim, vec->stride, vec->region->exponent);
   float factor = pow(2.0, vec->region->exponent);
   for (int i = 0; i < vec->dim; i++) {
     float f = vec->data[i * vec->stride] * factor;
@@ -98,6 +98,14 @@ void PrintMatrix64(Matrix64 *mat) {
 inline static void ShiftRegion64(int rshift, Region64 *region) {
   if (rshift > 0) ShiftRegion64Right(rshift, region);
   else if (rshift < 0) ShiftRegion64Left(-rshift, region);
+}
+
+
+void NegateVector64(Vector64 *a) {
+  int stride = a->stride, dim = a->dim;
+  int64_t *data = a->data;
+  for (int i = 0; i < dim; i++)
+    data[i * stride] *= -1;
 }
 
 /**
@@ -615,7 +623,8 @@ void ZeroVector64(Vector64 *a) {
   }
   if (a->dim == a->region->dim) {
     /* Exponent won't matter. */
-    a->region->size = 0;
+    a->region->exponent = 0;
+    a->region->size = -1;
   }
 }
 
@@ -708,7 +717,7 @@ void InitRegion64(int64_t *data, int dim, int exponent, int size_hint, Region64 
 void ShiftRegion64Right(int right_shift, Region64 *region) {
   assert(right_shift >= 0);
   region->exponent += right_shift;
-  if (region->size == 0)
+  if (region->size < 0)
     return;  /* it's all zeros; nothing to shift. */
   region->size -= right_shift;
   if (region->size < -1)
@@ -723,13 +732,13 @@ void ShiftRegion64Right(int right_shift, Region64 *region) {
 void ShiftRegion64Left(int left_shift, Region64 *region) {
   assert(left_shift >= 0);
   region->exponent -= left_shift;
-  if (region->size == 0)
+  if (region->size < 0)
     return;  /* it's all zeros; nothing to shift. */
   region->size += left_shift;
   int dim = region->dim;
   int64_t *data = region->data;
   for (int i = 0; i < dim; i++)
-    data[i] <<= left_shift;
+    data[i] = data[i] << left_shift;
   CheckRegion64Size(region);
 }
 
@@ -810,6 +819,12 @@ void AddScalar64(const Scalar64 *a, const Scalar64 *b, Scalar64 *y) {
       AddScalar64(&a2, b, y);
     }
   }
+}
+
+void AddIntVector64(int64_t i, const Vector64 *x, Vector64 *y) {
+  Scalar64 s;
+  InitScalar64FromInt(i, &s);
+  AddScalarVector64(&s, x, y);
 }
 
 void CopyVector64(const Vector64 *src, Vector64 *dest) {
@@ -1017,10 +1032,10 @@ void Vector64AddScalar(const Scalar64 *a, Vector64 *y) {
   uint64_t largest = 0;
   int dim = y->dim;
   for (int i = 0; i < dim; i++) {
-    int64_t sum = y->data[i] = a_data_shifted;
+    int64_t sum = y->data[i] + a_data_shifted;
     y->data[i] = sum;
-    if ((sum = FM_ABS(sum)) > largest)
-      largest = sum;
+    if (FM_ABS(sum) > largest)
+      largest = FM_ABS(sum);
   }
   if (y->dim == y->region->size) {
     y->region->size = FindSize(largest, final_size_guess);
@@ -1070,6 +1085,12 @@ void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y) {
   y->size = FindSize(FM_ABS(sum), final_size_guess);
 }
 
+double DotVector64AsDouble(const Vector64 *a, const Vector64 *b) {
+  Scalar64 y;
+  DotVector64(a, b, &y);
+  return Scalar64ToDouble(&y);
+}
+
 /* Computes matrix-vector product:
    y := M x.   Note: y and x must not be in the same region;
    and currently, y must occupy its entire region.  (We
@@ -1088,7 +1109,7 @@ void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
   int col_size = (num_cols < 32 ? fm_num_bits[num_cols] : FindSize(num_cols, 6));
 
   if (y->dim == y->region->dim)
-    y->region->size = 0;  /* So `ShiftRegion64{Left,Right} know they doesn't
+    y->region->size = -1;  /* So `ShiftRegion64{Left,Right} know they doesn't
                              really have to shift.  y's data will be
                              overwritten.*/
 
@@ -1199,7 +1220,7 @@ void ZeroRegion64(Region64 *region) {
   for (int i = 0; i < dim; i++)
     region->data[i] = 0;
   region->exponent = 0;
-  region->size = 0;
+  region->size = -1;
 }
 
 void InitRegionAndVector64(int64_t *data, int dim, int exponent, int size_hint,
@@ -1207,6 +1228,16 @@ void InitRegionAndVector64(int64_t *data, int dim, int exponent, int size_hint,
   InitRegion64(data, dim, exponent, size_hint, region);
   int stride = 1;
   InitVector64(region, dim, stride, data, vector);
+}
+
+void InitRegionAndMatrix64(int64_t *data, int num_rows, int num_cols,
+                           int exponent, int size_hint,
+                           Region64 *region, Matrix64 *mat) {
+  assert(num_rows > 0 && num_cols > 0);
+  InitRegion64(data, num_rows * num_cols, exponent, size_hint, region);
+  int row_stride = num_cols, col_stride = 1;
+  InitMatrix64(region, num_rows, row_stride, num_cols, col_stride,
+               data, mat);
 }
 
 

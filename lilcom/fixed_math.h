@@ -163,6 +163,26 @@ void InitRegionAndVector64(int64_t *data, int dim, int exponent, int size_hint,
                            Region64 *region, Vector64 *vector);
 
 
+/**
+   This convenience function initializes a region and a matrix; the matrix will
+   be row-major.
+       @param [in]  data   Start of the array the region will own
+       @param [in]  num_rows  Number of rows in the array
+       @param [in]  num_cols  Number of columns in the array
+       @param [in]  exponent  Exponent that dictates the interpretation as floats of
+                           the integer elements of `data`; zero would mean just
+                           taking their integer elements directly.
+       @param [in] size_hint  May be any value in [0,63] but it will be faster if it
+                           is close to FindSize(largest_value, ...) where
+                           largest_value is the largest absolute value of any element of
+                           `data`.
+       @param [out] region  The region to be initialized
+       @param [out] matrix  The matrix to be initialized
+ */
+void InitRegionAndMatrix64(int64_t *data, int num_rows, int num_cols, int exponent, int size_hint,
+                           Region64 *region, Matrix64 *mat);
+
+
 
 /**
    Zeros the region's data, setting size and exponent to zero.
@@ -170,9 +190,9 @@ void InitRegionAndVector64(int64_t *data, int dim, int exponent, int size_hint,
 void ZeroRegion64(Region64 *region);
 
 FM_MAYBE_EXTERN inline void InitMatrix64(Region64 *region,
-                                int num_rows, int row_stride,
-                                int num_cols, int col_stride,
-                                int64_t *data, Matrix64 *mat) {
+                                         int num_rows, int row_stride,
+                                         int num_cols, int col_stride,
+                                         int64_t *data, Matrix64 *mat) {
   mat->region = region;
   mat->num_rows = num_rows;
   mat->row_stride = row_stride;
@@ -236,9 +256,16 @@ void CopyVector64(const Vector64 *src, Vector64 *dest);
 /* Updates the `size` field of `vec` to be accurate. */
 void FixVector64Size(const Vector64 *vec);
 
-/* like BLAS saxpy.  y := a*x + y.
+/* like BLAS saxpy.  y := a * x  +  y.
    x and y must be from different regions.   */
 void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y);
+
+/*
+  This is a wrapper for AddScalarVector64 that initializes a scalar
+  from `i`.  It does:
+           y := i * x  +  y
+ */
+void AddIntVector64(int64_t i, const Vector64 *x, Vector64 *y);
 
 /* Does y := a * x.   x and y must be from different regions. */
 void SetScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y);
@@ -263,6 +290,9 @@ void SetRegion64Size(int size_hint, Region64 *r);
 inline FM_MAYBE_EXTERN void NegateScalar64(Scalar64 *a) { a->data *= -1; }
 
 
+void NegateVector64(Vector64 *a);
+
+
 
 /* Sets this scalar to an integer. */
 void InitScalar64FromInt(int64_t i, Scalar64 *a);
@@ -285,6 +315,10 @@ void CopyIntToVector64Elem(int i, int64_t value, int size_hint, Vector64 *a);
 /* Computes dot product between two Vector64's:
    y := a . b */
 void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
+
+/* Computes dot product between a and b and returns it as double.
+   (intended for debugging and diagnostic code) */
+double DotVector64AsDouble(const Vector64 *a, const Vector64 *b);
 
 /* Computes matrix-vector product:
      y := M x.   Note: y must not be in the same region as x or m.
