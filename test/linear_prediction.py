@@ -146,6 +146,9 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
     #  then we can say we are minimizing
     #   objf = x^T A x  - 2 x b
     #  dobjf/dx = 2Ax - 2b = 0, so we are solving Ax = b.
+    #
+    #  This function actually smooths M with something derived from the
+    # autorrelation stats, dictated by `proportional_smoothing`.
 
     if order is None:
         order = quad_mat.shape[0] - 1
@@ -157,12 +160,6 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
 
 
     abs_smoothing = 1.0e-10
-    if False:  #proportional_smoothing != 0.0 or abs_smoothing != 0.0:
-        dim = quad_mat.shape[0]
-        quad_mat = quad_mat + np.eye(dim, dtype=dtype) * (abs_smoothing + proportional_smoothing * quad_mat.trace())
-        autocorr_stats = autocorr_stats.copy().astype(dtype)
-        autocorr_stats[0] += abs_smoothing + proportional_smoothing * autocorr_stats[0]
-
 
     b = quad_mat[0,1:].copy().astype(dtype)
     A = quad_mat[1:,1:].copy().astype(dtype)
@@ -183,33 +180,9 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
         #return
 
 
-    if True:
-        # use preconditioner
-        M = get_autocorr_matrix(autocorr_stats, dtype=np.float64)
-        Minv = np.linalg.inv(M)
-        abs_smoothing = 1.0e-10
-        dim = quad_mat.shape[0] - 1
-        A += proportional_smoothing * M + abs_smoothing * np.eye(dim, dtype=dtype)
-
-        w, v = np.linalg.eig(Minv)
-        if not w.min() > 0.0:
-            print("Eigs of Minv are {}".format(w))
-            sys.exit(1)
-    else:
-        Minv = np.eye(autocorr_stats.shape[0] - 1)
-
-    if False:
-        # This block would use autocorrelation-based LPC.
-        x = np.dot(Minv, b)
-        cur_coeffs[1:] = x
-        return
-
     r = b - np.dot(A, x)
     z = toeplitz_solve(autocorr_stats[:-1], r)
     assert np.dot(z, r) >= 0.0
-    if False:
-        z_test = np.dot(Minv, r)
-        print("z = {}, z_test = {}".format(z, z_test))
 
     p = z.copy()
     rsold = np.dot(r,z)
@@ -222,7 +195,6 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
         alpha = rsold / np.dot(p, Ap)
         x += alpha * p
         r -= alpha * Ap;
-        #z = np.dot(Minv, r)
         z = toeplitz_solve(autocorr_stats[:-1], r)
         rsnew = np.dot(r, z)
         assert(rsnew >= 0.0)
@@ -235,29 +207,6 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
     cur_coeffs[1:] = x
 
 
-def get_autocorr_matrix(autocorr_stats, dtype = np.float64):
-    """
-    Returns a matrix of dimension N-1 by N-1 if autocorr_stats.shape[0] == N.
-    """
-    order = autocorr_stats.shape[0] - 1
-    A = np.zeros((order, order), dtype=dtype)
-    for i in range(order):
-        for j in range(order):
-            A[i,j] = autocorr_stats[abs(i-j)]
-    return A
-
-
-def get_autocorr_preconditioner(autocorr_stats, dtype = np.float64):
-    """
-    Returns the preconditioner implied by these autocorrelation stats.
-    We're using the inverse of the Toeplitz matrix.
-    """
-    order = autocorr_stats.shape[0] - 1
-    A = np.zeros((order, order))
-    for i in range(order):
-        for j in range(order):
-            A[i,j] = autocorr_stats[abs(i-j)]
-    return np.linalg.inv(A)
 
 reflection = True
 
