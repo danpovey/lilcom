@@ -71,21 +71,31 @@ class LpcStats:
 
 
     def get_A(self, lpc_order):
+        """
+        Returns the statistics.  This is a matrix A of shape (N+1, N+1) where
+        N is self.lpc_order.  It can be expressed in Python-esque notation as:
+
+           A = sum([ (self.eta**(2*(T-t))) * np.outer(get_hist(t), get_hist(t))
+                     for t in range(self.lpc_order, T) ])
+
+        where T is the total number of samples given to the `accept_block`
+        call.
+        """
         return self._get_A_all(lpc_order) - self._get_A_plus(lpc_order) - self._get_A_minus(lpc_order)
 
 
-    def _update_autocorr_stats(self, block):
+    def _update_autocorr_stats(self, x_block):
         """
         Update the autocorrelation stats (self.autocorr)
         """
-        assert len(block.shape) == 1
-        full_block = np.concatenate((self.history, block.astype(self.dtype)))
+        assert len(x_block.shape) == 1
+        full_x_block = np.concatenate((self.history, x_block.astype(self.dtype)))
         N = self.lpc_order
         reverse_autocorr_stats = np.zeros(N + 1, dtype=self.dtype)
-        S = full_block.shape[0]
-        # Don't do *=, we don't want to modify `block` in case
+        S = full_x_block.shape[0]
+        # Don't do *=, we don't want to modify `x_block` in case
         # np.concatenate
-        x_hat = full_block * (self.eta ** (S - np.arange(S)))
+        x_hat = full_x_block * (self.eta ** (S - np.arange(S)))
         # Now `x_hat` corresponds to the weighted data
         # which we called \hat{x} in the writeup.
         for t in range(N, S):
@@ -93,25 +103,25 @@ class LpcStats:
             # would be 1.0 at one sample past the end.
             reverse_autocorr_stats += x_hat[t-N:t+1] * x_hat[t]
 
-        old_weight = self.eta ** (block.shape[0] * 2)
+        old_weight = self.eta ** (x_block.shape[0] * 2)
         self.autocorr = self.autocorr * old_weight + np.flip(reverse_autocorr_stats)
 
-    def _update_history(self, block):
+    def _update_history(self, x_block):
         """ Keeps self.history up to date (self.history is the last
           `self.lpc_order` samples).
         """
-        block_len = block.shape[0]
-        if block_len < self.lpc_order:
-            block = np.concatenate((self.history, block))
-        self.history = block[-self.lpc_order:].copy()
+        x_block_len = x_block.shape[0]
+        if x_block_len < self.lpc_order:
+            x_block = np.concatenate((self.history, x_block))
+        self.history = x_block[-self.lpc_order:].copy()
 
 
-    def _update_first_few_samples(self, block):
+    def _update_first_few_samples(self, x_block):
         if self.first_few_samples.shape[0] < self.lpc_order:
-            full_block = np.concatenate((self.first_few_samples,
-                                         block.astype(self.dtype)))
-            num_new_samples = block.shape[0]
-            self.first_few_samples = full_block[:min(num_new_samples, self.lpc_order)]
+            full_x_block = np.concatenate((self.first_few_samples,
+                                         x_block.astype(self.dtype)))
+            num_new_samples = x_block.shape[0]
+            self.first_few_samples = full_x_block[:min(num_new_samples, self.lpc_order)]
 
     def _get_A_all(self, lpc_order):
         """
