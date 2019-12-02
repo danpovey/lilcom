@@ -35,6 +35,16 @@ class LpcStats:
         Initialize the LpcStats object.  Note: it is usable to obtain stats for
         estimating LPC of lower order than the one specified.
 
+        For predicting the next sample (e.g. x(t) given x(t-1),..., )
+        `lpc_order` is the number of taps in the filter, so we predict
+        x(t) given [ x(t-1), ... , x(t-lpc_order) ].
+
+        However, if the scenario is that you want to predict y(t) given x
+        values, then we predict y(t) given [ x(t), x(t-1), ... x(t-lpc_order) ],
+        so the order of the filter would be lpc_order+1.
+        (In that case you will provide the optional `y_block` argument to
+        calls to accept_block()).
+
        Args:
          lpc_order: The LPC order, must be > 0.
          eta:       A per-sample forgetting factor, e.g. 0.99.
@@ -45,11 +55,15 @@ class LpcStats:
             - call x.accept_block() for a new block of data
             - possibly call x.get_A()
 
-            """
+         """
         self.lpc_order = lpc_order
         self.dtype=dtype
         self.autocorr = np.zeros(lpc_order + 1, dtype=dtype)
-        self.A_minus = { }  # Will be dict from lpc-order to
+        self.A_minus = { }  # Will be dict from lpc-order to matrix
+        self.b_minus = { }  # Will be dict from lpc-order to vector b_minus is
+                            # not defined in the writeup but it's analogous to
+                            # A_minus; it's something relating to start effects
+                            # that we need to subtract.
         self.eta = eta
         self.T = 0
         # Will contain the most recent history of length
@@ -59,14 +73,25 @@ class LpcStats:
 
         # will contain the first `lpc_order` samples.
         # Needed to get A^- (see writeup).
-        self.first_few_samples = np.zeros((0), dtype=dtype)
+        self.first_few_x_samples = np.zeros((0), dtype=dtype)
+        # first_few_y_samples is only needed if we are predicting
+        # something different from x_t, i.e. if the y_block
+        # argument is given to accept_block().
+        self.first_few_y_samples = np.zeros((0), dtype=dtype)
 
-    def accept_block(self, block):
-        assert len(block.shape) == 1
-        T_diff = block.shape[0]  # amount by which new T value (new num-frames) differs from old one.
-        self._update_autocorr_stats(block)
-        self._update_history(block)
-        self._update_first_few_samples(block)
+        # self.cross_correlation will only be used if the user
+        # calls accept_block with the optional `y_block` argument;
+        # this is for when you are predicting y_t from
+        # x_{t-lpc_order}, ..., x_{t-1}, x_t.
+        self.cross_correlation = np.zeros(lpc_order + 1, dtype=dtype)
+
+    def accept_block(self, x_block, y_block = None):
+        assert len(x_block.shape) == 1 and (y_block is None or len(y_block) == len(x_block))
+        T_diff = x_block.shape[0]  # amount by which new T value (new num-frames) differs from old one.
+
+        self._update_autocorr_stats(x_block, y_block)
+        self._update_history(x_block)
+        self._update_first_few_samples(x_block, y_block)
         self.T += T_diff
 
 
@@ -83,8 +108,38 @@ class LpcStats:
         """
         return self._get_A_all(lpc_order) - self._get_A_plus(lpc_order) - self._get_A_minus(lpc_order)
 
+    def get_b(self, lpc_order):
+        """
+        Returns the weighted cross-correlation between x and y for delays 0, 1, ... ,lpc_order;
+        caution, the size of the returned value is (lpc_order + 1).
+        This is only relevant if you called `accept_block` with the optional
+        y_block argument set.
+        """
+        b_all = self.cross_correlation.copy()
+        return b_all - self.get_b_minus(lpc_order)
 
-    def _update_autocorr_stats(self, x_block):
+    def get_b_minus(self, lpc_order):
+        """
+        Returns a term that we need to subtract from the weighted cross-correlation between x and y
+        to correct for start-of-sequence effects (the issue is: we need to exclude
+        the samples numbered 0, 1, .. lpc_order - 1 because they have incomplete histories.)
+        """
+        if not lpc_order in self.b_minus:
+            N = lpc_order
+            b_minus = np.zeros(N + 1)
+            x_samples = self.first_few_x_samples[:N]
+            y_samples = self.first_few_y_samples[:N]
+            # Below, the scaling factor with self.eta in it should really have
+            # T - np.arange(lpc_order) instead of -np.arange(lpc_order), but
+            # in order to make it possible to cache A_minus and have it be valid
+            # for later, we omit the factor involving T for now.
+            y_samples_weighted = y_samples * (self.eta **  (-2 * np.arange(N)))
+            for j in range(N):
+                b_minus[:j+1] += y_samples_weighted[j] * np.flip(x_samples[:j+1])
+            self.b_minus[lpc_order] = b_minus
+        return self.b_minus[lpc_order] * (self.eta ** (self.T * 2))
+
+    def _update_autocorr_stats(self, x_block, y_block = None):
         """
         Update the autocorrelation stats (self.autocorr)
         """
@@ -106,6 +161,20 @@ class LpcStats:
         old_weight = self.eta ** (x_block.shape[0] * 2)
         self.autocorr = self.autocorr * old_weight + np.flip(reverse_autocorr_stats)
 
+        if y_block is not None:
+            T = y_block.shape[0]
+            # the weighting factor below has the factor of 2; it's the
+            # weight of each sample in the objective function.
+            y_hat = y_block * (self.eta ** (2 * (T - np.arange(T))))
+            self.cross_correlation *= old_weight
+            for k in range(self.lpc_order + 1):
+                # full_x_block has `self.lpc_order` extra samples added at the
+                # beginning, it's otherwise the same as x_block.  So we are
+                # multiplying each weighted y_t by x_t delayed by k samples, and
+                # the sum gets added to self.cross_correlation[k]
+                start = self.lpc_order - k
+                self.cross_correlation[k] += np.dot(y_hat, full_x_block[start:start+T])
+
     def _update_history(self, x_block):
         """ Keeps self.history up to date (self.history is the last
           `self.lpc_order` samples).
@@ -116,12 +185,21 @@ class LpcStats:
         self.history = x_block[-self.lpc_order:].copy()
 
 
-    def _update_first_few_samples(self, x_block):
-        if self.first_few_samples.shape[0] < self.lpc_order:
-            full_x_block = np.concatenate((self.first_few_samples,
+    def _update_first_few_samples(self, x_block, y_block = None):
+        if self.first_few_x_samples.shape[0] < self.lpc_order:
+            full_x_block = np.concatenate((self.first_few_x_samples,
                                          x_block.astype(self.dtype)))
             num_new_samples = x_block.shape[0]
-            self.first_few_samples = full_x_block[:min(num_new_samples, self.lpc_order)]
+            self.first_few_x_samples = full_x_block[:min(num_new_samples, self.lpc_order)]
+
+            if y_block is None:
+                return
+            full_y_block = np.concatenate((self.first_few_y_samples,
+                                         y_block.astype(self.dtype)))
+            num_new_samples = y_block.shape[0]
+            self.first_few_y_samples = full_y_block[:min(num_new_samples, self.lpc_order)]
+
+
 
     def _get_A_all(self, lpc_order):
         """
@@ -189,7 +267,7 @@ class LpcStats:
         assert(lpc_order > 0 and lpc_order <= self.lpc_order and
                lpc_order < self.T)
         if not lpc_order in self.A_minus:
-            samples = self.first_few_samples[:lpc_order]
+            samples = self.first_few_x_samples[:lpc_order]
             # Below, the scaling factor with self.eta in it should really have
             # T - np.arange(lpc_order) instead of -np.arange(lpc_order), but
             # in order to make it possible to cache A_minus and have it be valid
@@ -209,10 +287,7 @@ class LpcStats:
 
             self.A_minus[lpc_order] = A_minus
 
-
         return self.A_minus[lpc_order] * (self.eta ** (self.T * 2))
-
-
 
 
 
@@ -375,6 +450,47 @@ def test_new_stats_accum():
         assert rel_error < 1.0e-05
 
 
+def test_new_stats_accum_cross():
+    """
+    Tests that the LpcStats object behaves as expected for 'cross-correlations',
+    i.e. when we are predicting y given (x_{t-lpc_order}, ... , x_{t-1}, x_t).
+    """
+    T = 100
+    x = np.random.rand(T)
+    y = np.random.rand(T)
+    time_constant = 32
+    eta = 0.999
+    dtype=np.float64
+    N = 2  # Order of filter
+    N1 = N+1
+    A_ref = np.zeros((N1,N1), dtype=dtype)
+    b_ref = np.zeros(N1, dtype=dtype)
+    for t in range(N, T):
+        w_t = eta ** ((T - t) * 2)
+        hist = np.flip(x[t-N:t+1])
+        A_ref += w_t * np.outer(hist, hist)
+        b_ref += w_t * y[t] * hist
+
+    if True:
+        # This block tests LpcStats for cross-correlations with 1 block, and
+        # with the same lpc_order.
+        stats = LpcStats(lpc_order=N, eta=eta, dtype=dtype)
+        stats.accept_block(x, y)
+        A_from_stats = stats.get_A(N)
+        print("New A^all is: ", stats._get_A_all(N))
+        print("New A+ is: ", stats._get_A_plus(N))
+        print("New A- is: ", stats._get_A_minus(N))
+
+        error = A_ref - A_from_stats
+        rel_error = np.abs(error).sum() / np.abs(A_ref).sum()
+        print("Relative error in LpcStats-based stats accumulation of A is {}".format(rel_error))
+        assert rel_error < 1.0e-05
+
+        b_from_stats = stats.get_b(N)
+        error = b_ref - b_from_stats
+        rel_error = np.abs(error).sum() / np.abs(b_ref).sum()
+        print("Relative error in LpcStats-based stats accumulation of b is {}, b={}, b_ref={}".format(rel_error, b_from_stats, b_ref))
+        assert rel_error < 1.0e-05
 
 
 
@@ -1159,6 +1275,7 @@ fileList = [settings["dataset-dir"] + "/" + item
 
 
 test_new_stats_accum()
+test_new_stats_accum_cross()
 test_toeplitz_solve()
 test_toeplitz_solve_compare()
 
