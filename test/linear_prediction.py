@@ -80,7 +80,7 @@ def toeplitz_solve(autocorr, y):
         # the same.  Be careful with the indexing of b.  Notice in Eq.
         # (2.3) that the elements of b are in a very strange order,
         # so you have to interpret (2.6) very carefully.
-        nu_n = (-1.0 / epsilon) * sum([r[j+1] * b[j] for j in range(n)])
+        nu_n = (-1.0 / epsilon) * np.dot(r[1:n+1], b[:n])
 
         # next few lines are Eq. 2.7
         b_temp[0] = 0.0
@@ -93,7 +93,7 @@ def toeplitz_solve(autocorr, y):
         assert abs(nu_n) < 1.0
 
         # The following is an unnumbered formula below Eq. 2.9
-        lambda_n = y[n] - sum([ r[n-j] * x[j] for j in range(n)])
+        lambda_n = y[n] - np.dot(np.flip(r[1:n+1]), x[:n])
 
         x[:n+1] += (lambda_n / epsilon) * b[:n+1];
 
@@ -439,7 +439,7 @@ def update_stats(array, t_start,
     # out when processing it.  (If this is the first block, we'll have
     # t_start == order and those will be fresh terms that we do want.)
 
-    optimize = False
+    optimize = True
     add_prev_block_terms(array, t_start, order, quad_mat,
                          optimize)
 
@@ -478,7 +478,6 @@ def test_prediction(array):
     array = array.astype(dtype)
     orderp1 = order + 1
     T = array.shape[0]
-    autocorr = np.zeros(orderp1, dtype=dtype)
 
     cur_coeffs = np.zeros(orderp1, dtype=dtype)
     cur_coeffs[0] = -1
@@ -539,10 +538,6 @@ def test_prediction(array):
                 print("For blocks till now (t={}),, pred_sumsq_tot / raw_sumsq_tot = {}".format(
                         t, pred_sumsq_tot / raw_sumsq_tot))
 
-
-        for i in range(orderp1):
-            if t-i >= 0:
-                autocorr[i] += array[t-i] * array[t]
 
 
 
