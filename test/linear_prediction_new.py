@@ -116,9 +116,43 @@ class LpcStats:
         y_block argument set.
         """
         b_all = self.cross_correlation.copy()
-        return b_all - self.get_b_minus(lpc_order)
+        return b_all - self._get_b_minus(lpc_order)
 
-    def get_b_minus(self, lpc_order):
+
+    def get_autocorr_reflected(self, lpc_order):
+        """
+        Returns a version of the autocorrelation coefficients in which we
+        imagine the exponentially-windowed signal is reflected in time T-1/2,
+        we compute the autocorrelation coefficients of that signal,
+        and then divide it by 2 to make it similar to A (A is the matrix
+        that this class returns in get_A()).
+
+        The point of the reflection is that it's a cheaper way to get more
+        "reasonable" autocorrelation coefficients that we can use for
+        preconditioning the fast update of the coefficients... without this
+        reflection we are effectively using a windowing function that has a
+        sharp discontinuity around t=T, which will tend to wash out the spectral
+        information in the coefficients.
+
+        This is explained more in the writeup.
+        """
+        T = self.history.shape[0]  # This is a kind of 'fake T', using the
+                                   # highly truncated history in `self.history`.
+                                   # It behaves in the equations like T, so we
+                                   # call it that.
+        # x_hat is like the 'tail' (last few elements of) of x_hat which
+        # is the exponentially weighted signal.
+        x_hat = self.history * self.eta ** (T - np.arange(T))
+
+        ans = self.autocorr[0:lpc_order+1]
+        # Add in some terms which involve both halves of the reflected
+        # signal.
+        for k in range(1,lpc_order + 1):
+            ans[k] += 0.5 * np.dot(x_hat[-k:], np.flip(x_hat[-k:]))
+        return ans
+
+
+    def _get_b_minus(self, lpc_order):
         """
         Returns a term that we need to subtract from the weighted cross-correlation between x and y
         to correct for start-of-sequence effects (the issue is: we need to exclude
@@ -448,6 +482,30 @@ def test_new_stats_accum():
         rel_error = np.abs(error).sum() / np.abs(A).sum()
         print("Relative error in LpcStats-based stats accumulation (diff. LPC-order, 2 blocks, one small) is {}".format(rel_error))
         assert rel_error < 1.0e-05
+
+    if True:
+        # This block tests the reflected autocorrelation stats
+        hat_x_reflected = np.concatenate((hat_x, np.flip(hat_x)))
+        autocorr_reflected_ref = np.zeros(N + 1, dtype=dtype)
+        for t in range(2*T):
+            for j in range(min(N+1, t+1)):
+                autocorr_reflected_ref[j] += hat_x_reflected[t] * hat_x_reflected[t - j]
+
+        for higher_order in range(N, N+2):
+            for tiny_blocks in [False, True]:
+                stats = LpcStats(lpc_order=higher_order, eta=eta, dtype=dtype)
+                if tiny_blocks:
+                    for t in range(T):
+                        stats.accept_block(signal[t:t+1])
+                else:
+                    stats.accept_block(signal)
+                autocorr_reflected = stats.get_autocorr_reflected(N)
+                # it actually returns half the autocorr of the reflected signal.
+                error = (0.5 * autocorr_reflected_ref) - autocorr_reflected
+                rel_error = np.abs(error).sum() / np.abs(autocorr_reflected).sum()
+                print("Relative error in accumulating reflected autocorr stats (order={},higher-order={},tiny-blocks={} is {}".format(
+                        N, higher_order, tiny_blocks, rel_error))
+                assert rel_error < 1.0e-05
 
 
 def test_new_stats_accum_cross():
