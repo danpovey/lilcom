@@ -163,6 +163,10 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
 
     b = quad_mat[0,1:].copy().astype(dtype)
     A = quad_mat[1:,1:].copy().astype(dtype)
+    for i in range(order):
+        for j in range(order):
+            A[i,j] = ((1.0 - proportional_smoothing) * A[i,j] +
+                      proportional_smoothing * autocorr_stats[abs(i-j)])
 
 
     w, v = np.linalg.eig(A)
@@ -460,9 +464,7 @@ def update_stats(array, t_start,
 
     if True: # test code
         w, v = np.linalg.eig(quad_mat)
-        threshold = 1.0e-05
-        proportional_smoothing = 1.0e-10
-        if w.min() < 0 and w.min() < proportional_smoothing * w.sum():
+        if w.min() < 0 and w.min() < 1.0e-10 * w.sum():
             print("tstart,end={},{}; WARN: after subtracting after-the-end terms, smallest eig of quad_mat is: {}, ratio={}".format(
                     t_start, t_end, w.min(), w.min() / w.sum()));
 

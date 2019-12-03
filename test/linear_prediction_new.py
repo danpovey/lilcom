@@ -324,6 +324,46 @@ class LpcStats:
         return self.A_minus[lpc_order] * (self.eta ** (self.T * 2))
 
 
+class OnlineLinearSolver:
+    """
+    This class is for solving systems of the form A x = b with A symmetric
+    positive definite, where A can be reasonably closely approximated by a
+    Toeplitz matrix that the user can supply, and A and b are changing with time
+    (so it makes sense to start the optimization from the previous value).
+
+    This class uses preconditioned conjugate gradient descent (CGD)
+    to approximately solve for x.
+
+    The main intended use is to estimate linear prediction coefficients
+    obtained from class LpcStats.
+    """
+    def __init__(self, N, num_cgd_iters = 2,
+                 num_cgd_iters_initial = 5,
+                 abs_smoothing = 1.0e-10,
+                 proportional_smoothing = 1.0e-04,
+                 dtype=np.float64):
+        """
+        Initialize the object.
+        Args:
+              N:  the dimension of the thing we are solving for
+      cgd_iters:  The number of iterations of conjugate gradient
+                  descent that we do each time we solve.
+   cgd_iters_initial:  The number of CGD iters we do the first time
+               (should be more, since we are not starting from a
+               reasonable estimate.)
+   abs_smoothing:    A value that we add to the diagonal
+               of Toeplitz approximation of A to make sure that it is
+               nonnegative
+   proportional_smoothing:  A constant that dictates how we estimate
+        """
+        self.order = lpc_order
+        self.num_cgd_iters = num_cgd_iters
+        self.num_cgd_iters_initial = num_cgd_iters_initial
+        assert num_cgd_iters <= num_cgd_iters_initial
+        assert proportional_smoothing > 0.0 and abs_smoothing > 0.0
+        self.dtype = dtype
+
+
 
 def test_new_stats_accum():
     """
