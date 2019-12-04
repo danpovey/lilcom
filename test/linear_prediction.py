@@ -137,7 +137,8 @@ def test_toeplitz_solve_compare():
 
 def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
                num_iters=2, order=None, dtype=np.float64,
-               proportional_smoothing=1.0e-10):
+               toeplitz_smoothing=1.0e-02,
+               diag_smoothing=1.0e-04):
     # Note: this modifies cur_coeffs in place.
     #  Uses conjugate gradient method to minimize the function
     #  cur_coeffs^T quad_mat cur_coeffs, subject to the constraint
@@ -148,7 +149,7 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
     #  dobjf/dx = 2Ax - 2b = 0, so we are solving Ax = b.
     #
     #  This function actually smooths M with something derived from the
-    # autorrelation stats, dictated by `proportional_smoothing`.
+    # autorrelation stats, dictated by `toeplitz_smoothing`.
 
     if order is None:
         order = quad_mat.shape[0] - 1
@@ -158,15 +159,16 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
         return
 
 
-
-    abs_smoothing = 1.0e-10
-
     b = quad_mat[0,1:].copy().astype(dtype)
     A = quad_mat[1:,1:].copy().astype(dtype)
+    autocorr_stats = autocorr_stats.copy()
+    autocorr_stats[0] += 1.0e-20 + (diag_smoothing * autocorr_stats[0])
+
+    A_orig = A.copy()
     for i in range(order):
         for j in range(order):
-            A[i,j] = ((1.0 - proportional_smoothing) * A[i,j] +
-                      proportional_smoothing * autocorr_stats[abs(i-j)])
+            A[i,j] = ((1.0 - toeplitz_smoothing) * A[i,j] +
+                      toeplitz_smoothing * autocorr_stats[abs(i-j)])
 
 
     w, v = np.linalg.eig(A)
@@ -177,7 +179,18 @@ def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
     ## we are solving Ax = b.  Trivial solution is: x = A^{-1} b
     x = cur_coeffs[1:].copy()
 
-    if True:
+
+    # We want to adjust be so that the derivative of
+    #    0.5 x^T A x - b x
+    # has the same value before and after we smoothed A.  (The intention is that near
+    # convergence, by keeping the gradient the same we keep the fixed point the same.)
+    #  The deriv w.r.t. x is:  A x - b.  So we want:
+    #    A x - b = A_orig x - b_orig
+    #  So:
+    #   b = b_orig + A x - A_orig x
+    b += np.dot(A, x) - np.dot(A_orig, x)
+
+    if False:
         exact_x = np.dot(np.linalg.inv(A), b)
         print("Exact objf is {}".format(np.dot(np.dot(A,exact_x),exact_x) - 2.0 * np.dot(exact_x,b)))
         #cur_coeffs[1:]  = exact_x
@@ -449,7 +462,7 @@ def update_stats(array, t_start,
                 quad_mat[i,j] = quad_mat[j,i]
 
         w, v = np.linalg.eig(quad_mat)
-        if w.min() < 0 and w.min() < proportional_smoothing * w.sum():
+        if w.min() < 0 and w.min() < toeplitz_smoothing * w.sum():
             print("tstart,end={},{}; WARN: After adding before-the-beginning terms, smallest eig of quad_mat is: {}, ratio={}".format(
                     t_start, t_end, w.min(), w.min() / w.sum()));
 
@@ -487,7 +500,9 @@ def test_prediction(array):
     pred_sumsq_tot = 0.0
     raw_sumsq_tot = 0.0
     BLOCK = 32
-    proportional_smoothing = 1.0e-04
+    toeplitz_smoothing = 1.0e-03
+    diag_smoothing = 1.0e-07
+
     assert(BLOCK > order)
 
     for t in range(T):
@@ -512,7 +527,8 @@ def test_prediction(array):
                            autocorr_stats, num_cg_iters,
                            order=(None if t > 5*BLOCK else min(t // 16, order)),
                            dtype=np.float32,
-                           proportional_smoothing=proportional_smoothing)
+                           toeplitz_smoothing=toeplitz_smoothing,
+                           diag_smoothing=diag_smoothing)
                 max_elem = np.max(np.abs(cur_coeffs[1:]))
                 print("Current residual / unpredicted-residual is (after update): {}, max coeff is {}".format(
                         np.dot(cur_coeffs, np.dot(quad_mat, cur_coeffs)) / orig_zero_element, max_elem))

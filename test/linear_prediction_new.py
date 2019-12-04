@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """
 This script tests fast estimation of linear prediction coefficients,
 using real data.
@@ -339,33 +339,111 @@ class OnlineLinearSolver:
     """
     def __init__(self, N, num_cgd_iters = 2,
                  num_cgd_iters_initial = 5,
-                 abs_smoothing = 1.0e-10,
-                 proportional_smoothing = 1.0e-04,
+                 diag_smoothing = 1.0e-07,
+                 toeplitz_smoothing = 1.0e-02,
+                 abs_smoothing = 1.0e-20,
                  dtype=np.float64):
         """
         Initialize the object.
         Args:
-              N:  the dimension of the thing we are solving for
-      cgd_iters:  The number of iterations of conjugate gradient
-                  descent that we do each time we solve.
+             N: The dimension of the problem (e.g. LPC order)
+     cgd_iters: The number of iterations of conjugate gradient
+                descent that we do each time we solve.
    cgd_iters_initial:  The number of CGD iters we do the first time
                (should be more, since we are not starting from a
                reasonable estimate.)
+   diag_smoothing:  Determines how much we scale up the zeroth
+               autocorrelation coefficient to ensure we
+               can limit the condition number of M (the
+               Toeplitz matrix formed from the autocorr stats)
+   toeplitz_smoothing:  Constant that controls how much we
+               smooth A with M (this multiplied by diag_smoothing
+               limits the condition number of the smoothed A).
    abs_smoothing:    A value that we add to the diagonal
-               of Toeplitz approximation of A to make sure that it is
-               nonnegative
-   proportional_smoothing:  A constant that dictates how we estimate
+               of M to make sure that it is positive definite (relevant if the
+               data is exactly zero); should not matter that much.
         """
-        self.order = lpc_order
+        self.N = N
         self.num_cgd_iters = num_cgd_iters
         self.num_cgd_iters_initial = num_cgd_iters_initial
-        assert num_cgd_iters <= num_cgd_iters_initial
-        assert proportional_smoothing > 0.0 and abs_smoothing > 0.0
+        self.diag_smoothing = diag_smoothing
+        self.toeplitz_smoothing = toeplitz_smoothing
+        self.abs_smoothing = abs_smoothing
         self.dtype = dtype
+        self.cur_estimate = None
 
 
+    def estimate(self, autocorr_stats, A, b):
+        """
+        Re-estimates the linear prediction coefficients and returns it
+        as a vector.
 
-def test_new_stats_accum():
+        Args:
+           autocorr_stats:  Autocorrelation statistics, of dimension self.N,
+                for use when smoothing A.
+           A:   The quadratic term in the objective function x^T A x - 2 b x
+           b:   The linear term in the objective function x^T A x - 2 b x
+
+        Return:
+          Returns the updated `x` value (e.g. the filter parameters)
+        """
+        N = self.N
+        if self.cur_estimate is None:
+            self.cur_estimate = np.zeros(N, dtype=self.dtype)
+            num_iters = self.num_cgd_iters_initial
+        else:
+            num_iters = self.num_cgd_iters
+
+        print("{}, {}, {}", autocorr_stats.shape[0], A.shape[0], b.shape[0])
+        assert autocorr_stats.shape[0] == A.shape[0]
+
+        x = self.cur_estimate
+        A = A.copy().astype(self.dtype)
+        b = b.copy().astype(self.dtype)
+        autocorr_stats = autocorr_stats.copy()
+        autocorr_stats[0] += self.abs_smoothing + (self.diag_smoothing * autocorr_stats[0])
+        M = get_toeplitz_mat(autocorr_stats)
+        t = self.toeplitz_smoothing
+        A_orig = A
+        A = (1.0 - t) * A + t * M
+        # Adjust b for the change of A_orig -> A, keeping the derivative w.r.t. x of
+        # the objective function (x^T A x - 2 b x) unchanged.
+        b += np.dot(A, x) - np.dot(A_orig, x)
+
+        r = b - np.dot(A, x)  # residual
+        z = toeplitz_solve(autocorr_stats, r)  # preconditioned residual
+
+        assert np.dot(z, r) >= 0.0
+
+        p = z.copy()
+        rsold = np.dot(r,z)
+        rs_orig = rsold
+        # TODO: cleanup
+        print("Residual0 is {}, objf0 is {}".format(rsold,
+                                                    np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b)))
+
+        for iter in range(num_iters):
+            Ap = np.dot(A, p)
+            alpha = rsold / np.dot(p, Ap)
+            x += alpha * p
+            if iter == num_iters-1:
+                break
+            r -= alpha * Ap;
+            z = toeplitz_solve(autocorr_stats, r)
+            rsnew = np.dot(r, z)
+            assert(rsnew >= 0.0)
+            print("ResidualN is {}, ratio={}, objf={} ".format(rsnew, rsnew / rs_orig,
+                                                               (np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b))))
+            if rsnew / rs_orig < 1.0e-05:
+                break
+            p = z + (p * (rsnew / rsold))
+            rsold = rsnew
+        # We'll use this as the starting point for optimization the next time this is called.
+        self.cur_estimate = x.copy()
+
+        return x
+
+def test_new_stats_accum_and_solver():
     """
     Tests that our formulas for the fast stats accumulation match the 'obvious'
     method of satts accumulation, and that the LpcStats object behaves as
@@ -377,7 +455,7 @@ def test_new_stats_accum():
     #eta = (time_constant - 1.0) / time_constant
     eta = 0.999
     dtype=np.float64
-    N = 2  # Order of filter
+    N = 10  # Order of filter
     N1 = N+1
     # A_ref is the stats A accumulated in the simple/obvious way.
     A_ref = np.zeros((N1,N1), dtype=dtype)
@@ -469,6 +547,19 @@ def test_new_stats_accum():
         rel_error = np.abs(error).sum() / np.abs(A).sum()
         print("Relative error in LpcStats-based stats accumulation is {}".format(rel_error))
         assert rel_error < 1.0e-05
+
+        if True:
+            # This block tests the linear solver.
+            solver = OnlineLinearSolver(N)
+            A_for_solver = A[1:,1:]
+            b_for_solver = A[0,:-1]
+            autocorr_for_solver = autocorr[:-1]
+            x = solver.estimate(autocorr_for_solver, A_for_solver,
+                                b_for_solver)
+            residual = np.dot(A_for_solver, x) - b_for_solver
+            rel_error = (np.dot(residual, residual) / np.dot(b_for_solver,
+                                                             b_for_solver))
+            print("Relative error in LPC solver = {}".format(rel_error))
 
     if True:
         # This block tests LpcStats with 1 block, and with
@@ -590,7 +681,24 @@ def test_new_stats_accum_cross():
         print("Relative error in LpcStats-based stats accumulation of b is {}, b={}, b_ref={}".format(rel_error, b_from_stats, b_ref))
         assert rel_error < 1.0e-05
 
+def get_toeplitz_mat(autocorr):
+    """
+    Returns a Toeplitz matrix constructed from the provided autocorrelation
+    coefficients
 
+    Args:
+       autocorr must be a NumPy array with one axis (a vector)
+    Return:
+       Returns a square matrix M with ``autocorr.shape[0]`` rows and
+       columns, elements M[i,j] = autocorr[abs(i-j)]
+    """
+    N = autocorr.shape[0]
+    autocorr_flip = np.flip(autocorr)
+    M = np.zeros((N, N))
+    for k in range(N):
+        M[k,:k] = autocorr_flip[-k-1:-1]
+        M[k,k:] = autocorr[:N-k]
+    return M
 
 def toeplitz_solve(autocorr, y):
     """
@@ -678,6 +786,16 @@ def test_toeplitz_solve():
         err = np.dot(A, b) - y
         relative_error = np.abs(err).sum() / np.abs(y).sum()
         print("Toeplitz solver: relative error is {}".format(relative_error))
+
+
+def test_get_toeplitz_mat():
+    autocorr = np.array([ 1.0, 2.0, 3.0, 4.0])
+    N = autocorr.shape[0]
+    M = np.zeros((N,N))
+    for i in range(N):
+        for j in range(N):
+            M[i,j] = autocorr[abs(i-j)]
+    assert np.array_equal(M, get_toeplitz_mat(autocorr))
 
 
 def test_toeplitz_solve_compare():
@@ -1048,7 +1166,7 @@ def test_prediction(array):
     pred_sumsq_tot = 0.0
     raw_sumsq_tot = 0.0
     BLOCK = 32
-    proportional_smoothing = 1.0e-04
+    proportional_smoothing = 1.0e-01
     assert(BLOCK > order)
 
     for t in range(T):
@@ -1372,10 +1490,11 @@ fileList = [settings["dataset-dir"] + "/" + item
             if ".wav" in item]
 
 
-test_new_stats_accum()
+test_new_stats_accum_and_solver()
 test_new_stats_accum_cross()
 test_toeplitz_solve()
 test_toeplitz_solve_compare()
+test_get_toeplitz_mat()
 
 for file in fileList:
     audioArray = waveRead(file, settings["sample-rate"])
