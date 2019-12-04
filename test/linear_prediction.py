@@ -345,8 +345,7 @@ def init_stats(array, order, block_size, optimize = False, dtype=np.float64):
 def update_stats(array, t_start,
                  t_end, quad_mat,
                  autocorr_stats,
-                 prev_scale, dtype=np.float32,
-                 proportional_smoothing=1.0e-10):
+                 prev_scale, dtype=np.float32):
     """
     Update autocorrelation and quadratic stats.. scale down previous stats by 0 < prev_scale <= 1.
     The aim is for quad_mat to contain the following, where N == order:
@@ -502,8 +501,7 @@ def test_prediction(array):
             else:
                 update_stats(array, max(order, t-BLOCK), t,
                              quad_mat_stats, autocorr_stats,
-                             weight, dtype=dtype,
-                             proportional_smoothing=proportional_smoothing)
+                             weight, dtype=dtype)
 
 
             if True:
@@ -537,7 +535,6 @@ def test_prediction(array):
                 raw_sumsq_tot += raw_sumsq
                 print("For blocks till now (t={}),, pred_sumsq_tot / raw_sumsq_tot = {}".format(
                         t, pred_sumsq_tot / raw_sumsq_tot))
-
 
 
 
