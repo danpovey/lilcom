@@ -35,15 +35,15 @@ class LpcStats:
         Initialize the LpcStats object.  Note: it is usable to obtain stats for
         estimating LPC of lower order than the one specified.
 
-        For predicting the next sample (e.g. x(t) given x(t-1),..., )
-        `lpc_order` is the number of taps in the filter, so we predict
-        x(t) given [ x(t-1), ... , x(t-lpc_order) ].
+        This is useful For predicting the next sample (e.g. x(t) given
+        x(t-1),x(t-1)...,x(t-lpc_order)); `lpc_order` is the number of taps in
+        the filter.
 
         However, if the scenario is that you want to predict y(t) given x
         values, then we predict y(t) given [ x(t), x(t-1), ... x(t-lpc_order) ],
-        so the order of the filter would be lpc_order+1.
-        (In that case you will provide the optional `y_block` argument to
-        calls to accept_block()).
+        so the order of the filter would be lpc_order+1.  (In that case you will
+        be providing the optional `y_block` argument to calls to
+        accept_block()).
 
        Args:
          lpc_order: The LPC order, must be > 0.
@@ -95,7 +95,7 @@ class LpcStats:
         self.T += T_diff
 
 
-    def get_A(self, lpc_order):
+    def get_A(self, lpc_order = None):
         """
         Returns the statistics.  This is a matrix A of shape (N+1, N+1) where
         N is self.lpc_order.  It can be expressed in Python-esque notation as:
@@ -103,23 +103,47 @@ class LpcStats:
            A = sum([ (self.eta**(2*(T-t))) * np.outer(get_hist(t), get_hist(t))
                      for t in range(self.lpc_order, T) ])
 
-        where T is the total number of samples given to the `accept_block`
-        call.
+        where T is the total number of samples given to `accept_block()`
+
+         Args:
+               lpc_order: int     The lpc order, must satisfy
+                               1 <= lpc_order <= self.lpc_order if set.  Defaults to
+                               self.lpc_order.
+         Returns:
+               b: numpy.ndarray   The linear term in the objective function when
+                            predicting a signal y given x; equals
+                            sum_t w(t) [x(t-lpc_order),...,x(t)] y(t)
+
         """
+        if lpc_order is None:
+            lpc_order = self.lpc_order
         return self._get_A_all(lpc_order) - self._get_A_plus(lpc_order) - self._get_A_minus(lpc_order)
 
-    def get_b(self, lpc_order):
+    def get_b(self, lpc_order = None):
         """
-        Returns the weighted cross-correlation between x and y for delays 0, 1, ... ,lpc_order;
-        caution, the size of the returned value is (lpc_order + 1).
-        This is only relevant if you called `accept_block` with the optional
-        y_block argument set.
+        Returns the weighted cross-correlation between x and y for delays 0, 1, ... ,lpc_order.
+
+        Caution, the size of the returned value is (lpc_order + 1), not lpc_order..
+
+         Args:
+               lpc_order: int     The lpc order, must satisfy
+                               1 <= lpc_order <= self.lpc_order if set.  Defaults to
+                               self.lpc_order.
+         Returns:
+               b: numpy.ndarray   The linear term in the objective function when
+                            predicting a signal y given x; equals
+                            sum_t w(t) [x(t-lpc_order),...,x(t)] y(t)
+
+        THIS IS ONLY RELEVANT IF you called `accept_block` with the optional
+        y_block argument set; otherwise it is zero.
         """
+        if lpc_order is None:
+            lpc_order = self.lpc_order
         b_all = self.cross_correlation.copy()
         return b_all - self._get_b_minus(lpc_order)
 
 
-    def get_autocorr_reflected(self, lpc_order):
+    def get_autocorr_reflected(self, lpc_order = None):
         """
         Returns a version of the autocorrelation coefficients in which we
         imagine the exponentially-windowed signal is reflected in time T-1/2,
@@ -135,7 +159,20 @@ class LpcStats:
         information in the coefficients.
 
         This is explained more in the writeup.
+
+         Args:
+               lpc_order: int     The lpc order, must satisfy
+                               1 <= lpc_order <= self.lpc_order if set.  Defaults to
+                               self.lpc_order.
+         Returns:
+               b: numpy.ndarray   The autocorrelation statistics (not normalized
+                            by count); if you construct Toeplitz matrix with
+                            elements M[i,j] = b[abs(i-j)], it will be similar to
+                            A (i.e. the result of calling get_A()).
         """
+        if lpc_order is None:
+            lpc_order = self.lpc_order
+
         T = self.history.shape[0]  # This is a kind of 'fake T', using the
                                    # highly truncated history in `self.history`.
                                    # It behaves in the equations like T, so we
@@ -158,6 +195,7 @@ class LpcStats:
         to correct for start-of-sequence effects (the issue is: we need to exclude
         the samples numbered 0, 1, .. lpc_order - 1 because they have incomplete histories.)
         """
+
         if not lpc_order in self.b_minus:
             N = lpc_order
             b_minus = np.zeros(N + 1)
@@ -337,7 +375,7 @@ class OnlineLinearSolver:
     The main intended use is to estimate linear prediction coefficients
     obtained from class LpcStats.
     """
-    def __init__(self, N, num_cgd_iters = 2,
+    def __init__(self, N, num_cgd_iters = 3,
                  num_cgd_iters_initial = 5,
                  diag_smoothing = 1.0e-07,
                  toeplitz_smoothing = 1.0e-02,
@@ -370,16 +408,20 @@ class OnlineLinearSolver:
         self.toeplitz_smoothing = toeplitz_smoothing
         self.abs_smoothing = abs_smoothing
         self.dtype = dtype
-        self.cur_estimate = None
+        self.cur_estimate = np.zeros(N, dtype=self.dtype)
 
 
-    def estimate(self, autocorr_stats, A, b):
+    def get_current_estimate(self):
+        print("cur_estimat is {}".format(self.cur_estimate))
+        return self.cur_estimate
+
+    def estimate(self, A, b, autocorr_stats):
         """
         Re-estimates the linear prediction coefficients and returns it
         as a vector.
 
         Args:
-           autocorr_stats:  Autocorrelation statistics, of dimension self.N,
+           autocorr_stats:  Autocorrelation coefficients, of dimension self.N,
                 for use when smoothing A.
            A:   The quadratic term in the objective function x^T A x - 2 b x
            b:   The linear term in the objective function x^T A x - 2 b x
@@ -393,15 +435,14 @@ class OnlineLinearSolver:
             num_iters = self.num_cgd_iters_initial
         else:
             num_iters = self.num_cgd_iters
-
-        print("{}, {}, {}", autocorr_stats.shape[0], A.shape[0], b.shape[0])
-        assert autocorr_stats.shape[0] == A.shape[0]
-
+        assert autocorr_stats.shape == (A.shape[0],) and b.shape == (A.shape[0],)
         x = self.cur_estimate
         A = A.copy().astype(self.dtype)
+        #print("A now {}".format(A))
         b = b.copy().astype(self.dtype)
         autocorr_stats = autocorr_stats.copy()
         autocorr_stats[0] += self.abs_smoothing + (self.diag_smoothing * autocorr_stats[0])
+        #print("autocorr_stats={},A={},b={}".format(autocorr_stats, A, b))
         M = get_toeplitz_mat(autocorr_stats)
         t = self.toeplitz_smoothing
         A_orig = A
@@ -440,7 +481,7 @@ class OnlineLinearSolver:
             rsold = rsnew
         # We'll use this as the starting point for optimization the next time this is called.
         self.cur_estimate = x.copy()
-
+        print("x is {}".format(x))
         return x
 
 def test_new_stats_accum_and_solver():
@@ -554,8 +595,7 @@ def test_new_stats_accum_and_solver():
             A_for_solver = A[1:,1:]
             b_for_solver = A[0,:-1]
             autocorr_for_solver = autocorr[:-1]
-            x = solver.estimate(autocorr_for_solver, A_for_solver,
-                                b_for_solver)
+            x = solver.estimate(A_for_solver, b_for_solver, autocorr_for_solver)
             residual = np.dot(A_for_solver, x) - b_for_solver
             rel_error = (np.dot(residual, residual) / np.dot(b_for_solver,
                                                              b_for_solver))
@@ -637,6 +677,7 @@ def test_new_stats_accum_and_solver():
                 print("Relative error in accumulating reflected autocorr stats (order={},higher-order={},tiny-blocks={} is {}".format(
                         N, higher_order, tiny_blocks, rel_error))
                 assert rel_error < 1.0e-05
+                toeplitz_solve(autocorr_reflected, autocorr_reflected)
 
 
 def test_new_stats_accum_cross():
@@ -759,7 +800,9 @@ def toeplitz_solve(autocorr, y):
 
         # Eq. 2.8
         epsilon *= (1.0 - nu_n * nu_n)
-        assert abs(nu_n) < 1.0
+        print("nu_n is {}".format(nu_n))
+        if not abs(nu_n) < 1.0:
+            raise RuntimeError("Something went wrong, nu_n = {}".format(nu_n))
 
         # The following is an unnumbered formula below Eq. 2.9
         lambda_n = y[n] - sum([ r[n-j] * x[j] for j in range(n)])
@@ -1146,8 +1189,43 @@ def update_stats(array, t_start,
                     t_start, t_end, w.min(), w.min() / w.sum()));
 
 
+def compute_residual_sumsq(x, t_begin, t_end, lp_coeffs):
+    """
+    Computes the sum-squared residual of the data in `x` versus the
+    prediction by the linear prediction coefficients.
+
+    Args:
+         x:  np.ndarray of a floating type, the array that is being predicted.
+         t_begin,t_end: int   The first and one-past-the-last 't' index
+                              (index into x) on which to compute the
+                              residuals
+         lp_coeffs:           linear prediction coefficients: the
+                              coefficients on x(t-1), x(t-2), etc.
+
+    Returns:
+         (orig_sumsq, pred_sumsq): (float, float)
+
+         orig_sumsq is the sum-square of the elements x[t_begin:t_end]
+         pred_sumsq is the sum-square of, for t in range(t_begin, t_end),
+         the difference between x[t] and the predicted value given
+         the linear prediction coefficients `lp_coeffs`.
+    """
+    orig_sumsq = (x[t_begin:t_end] ** 2).sum()
+
+    order = lp_coeffs.shape[0]
+    lp_coeffs_rev = np.flip(np.concatenate((np.asarray([-1.0], dtype=lp_coeffs.dtype),
+                                           lp_coeffs))).astype(x.dtype)
+    pred_sumsq = 0.0
+    if t_begin > order:
+        for t in range(t_begin, t_end):
+            residual = np.dot(x[t-order:t+1], lp_coeffs_rev)
+            pred_sumsq += residual * residual
+
+    return (orig_sumsq, pred_sumsq)
+
 
 def test_prediction(array):
+    print("HEREHERE");
     # Operate on a linear signal.
     assert(len(array.shape) == 1)
     order = 25
@@ -1155,73 +1233,40 @@ def test_prediction(array):
     array = array.astype(dtype)
     orderp1 = order + 1
     T = array.shape[0]
-    autocorr = np.zeros(orderp1, dtype=dtype)
+    block_size = 32
+    eta = 0.9 # 1.0 - (1.0/128.0)
+    print("eta is {}".format(eta))
+    stats = LpcStats(lpc_order=order, eta=eta, dtype=dtype)
+    solver = OnlineLinearSolver(N=order, dtype=dtype)  # otherwise defaults
 
-    cur_coeffs = np.zeros(orderp1, dtype=dtype)
-    cur_coeffs[0] = -1
-
-
-    weight = 0.75
-    num_cg_iters = 3
     pred_sumsq_tot = 0.0
     raw_sumsq_tot = 0.0
-    BLOCK = 32
-    proportional_smoothing = 1.0e-01
-    assert(BLOCK > order)
 
-    for t in range(T):
+    for t in range(0, T, block_size):
+        t_end = min(t + block_size, T)
 
-        if (t % BLOCK == 0) and t > 0:
-            optimize = True
-            # This block updates quad_mat_stats.
-            if t == BLOCK:
-                (quad_mat_stats, autocorr_stats) = init_stats(array, order, BLOCK,
-                                                              optimize, dtype=dtype)
-            else:
-                update_stats(array, max(order, t-BLOCK), t,
-                             quad_mat_stats, autocorr_stats,
-                             weight, dtype=dtype,
-                             proportional_smoothing=proportional_smoothing)
+        (raw_sumsq_tot, pred_sumsq_tot) = compute_residual_sumsq(
+            array, t, t_end, solver.get_current_estimate())
+        pred_sumsq_tot += pred_sumsq_tot
+        raw_sumsq_tot += raw_sumsq_tot
 
+        stats.accept_block(array[t:t_end].copy())
 
-            if True:
-                quad_mat = quad_mat_stats.copy()
-                orig_zero_element = quad_mat[0,0]
+        A = stats.get_A()
+        autocorr = stats.get_autocorr_reflected()
+        #print("A ORIGINALLY {}".format(A))
+        A_for_solver = A[1:,1:]
+        #print("A NOW {}".format(A_for_solver))
+        b_for_solver = A[0,1:]
+        autocorr_for_solver = autocorr[:-1]
+        try:
+            toeplitz_solve(autocorr_for_solver, autocorr_for_solver) # see if stats are OK
+        except Exception as e:
+            print("A is {}, autocorr is {}".format(A, autocorr, autocorr.dtype))
+            raise(e)
+        solver.estimate(A_for_solver, b_for_solver, autocorr_for_solver)
 
-                conj_optim(cur_coeffs, quad_mat,
-                           autocorr_stats, num_cg_iters,
-                           order=(None if t > 5*BLOCK else min(t // 16, order)),
-                           dtype=np.float32,
-                           proportional_smoothing=proportional_smoothing)
-                max_elem = np.max(np.abs(cur_coeffs[1:]))
-                print("Current residual / unpredicted-residual is (after update): {}, max coeff is {}".format(
-                        np.dot(cur_coeffs, np.dot(quad_mat, cur_coeffs)) / orig_zero_element, max_elem))
-
-            raw_sumsq = 0.0
-            pred_sumsq = 0.0
-            if t+BLOCK > array.shape[0]:
-                continue
-            # The rest is diagnostics: see how prediction compares with raw sumsq.
-            for t2 in range(t, t+BLOCK):
-                raw_sumsq += array[t2] * array[t2]
-
-                pred = 0.0
-                for i in range(order+1):
-                    pred += cur_coeffs[i] * array[t2 - i]
-                pred_sumsq += pred * pred
-            print("For this block, pred_sumsq / raw_sumsq = {}".format(pred_sumsq / raw_sumsq))
-            if t > BLOCK:
-                pred_sumsq_tot += pred_sumsq
-                raw_sumsq_tot += raw_sumsq
-                print("For blocks till now (t={}),, pred_sumsq_tot / raw_sumsq_tot = {}".format(
-                        t, pred_sumsq_tot / raw_sumsq_tot))
-
-
-        for i in range(orderp1):
-            if t-i >= 0:
-                autocorr[i] += array[t-i] * array[t]
-
-
+    print("Ratio of residual-sumsq / raw-sumsq is %f" % (pred_sumsq_tot / raw_sumsq_tot))
 
 
 def logger(logmod="initialization", reportList=None):
