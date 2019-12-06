@@ -181,10 +181,10 @@ class LpcStats:
         # is the exponentially weighted signal.
         x_hat = self.history * self.eta ** (T - np.arange(T))
 
-        ans = self.autocorr[0:lpc_order+1]
+        ans = self.autocorr[0:lpc_order+1].copy()
         # Add in some terms which involve both halves of the reflected
         # signal.
-        for k in range(1,lpc_order + 1):
+        for k in range(1, lpc_order + 1):
             ans[k] += 0.5 * np.dot(x_hat[-k:], np.flip(x_hat[-k:]))
         return ans
 
@@ -380,7 +380,8 @@ class OnlineLinearSolver:
                  diag_smoothing = 1.0e-07,
                  toeplitz_smoothing = 1.0e-02,
                  abs_smoothing = 1.0e-20,
-                 dtype=np.float64):
+                 dtype=np.float64,
+                 debug=False):
         """
         Initialize the object.
         Args:
@@ -400,6 +401,7 @@ class OnlineLinearSolver:
    abs_smoothing:    A value that we add to the diagonal
                of M to make sure that it is positive definite (relevant if the
                data is exactly zero); should not matter that much.
+   debug:  If true, verbose output will be printed
         """
         self.N = N
         self.num_cgd_iters = num_cgd_iters
@@ -409,10 +411,10 @@ class OnlineLinearSolver:
         self.abs_smoothing = abs_smoothing
         self.dtype = dtype
         self.cur_estimate = np.zeros(N, dtype=self.dtype)
+        self.debug = debug
 
 
     def get_current_estimate(self):
-        print("cur_estimat is {}".format(self.cur_estimate))
         return self.cur_estimate
 
     def estimate(self, A, b, autocorr_stats):
@@ -438,11 +440,9 @@ class OnlineLinearSolver:
         assert autocorr_stats.shape == (A.shape[0],) and b.shape == (A.shape[0],)
         x = self.cur_estimate
         A = A.copy().astype(self.dtype)
-        #print("A now {}".format(A))
         b = b.copy().astype(self.dtype)
         autocorr_stats = autocorr_stats.copy()
         autocorr_stats[0] += self.abs_smoothing + (self.diag_smoothing * autocorr_stats[0])
-        #print("autocorr_stats={},A={},b={}".format(autocorr_stats, A, b))
         M = get_toeplitz_mat(autocorr_stats)
         t = self.toeplitz_smoothing
         A_orig = A
@@ -459,9 +459,9 @@ class OnlineLinearSolver:
         p = z.copy()
         rsold = np.dot(r,z)
         rs_orig = rsold
-        # TODO: cleanup
-        print("Residual0 is {}, objf0 is {}".format(rsold,
-                                                    np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b)))
+        if self.debug:
+            print("Residual0 is {}, objf0 is {}".format(rsold,
+                                                        np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b)))
 
         for iter in range(num_iters):
             Ap = np.dot(A, p)
@@ -473,15 +473,15 @@ class OnlineLinearSolver:
             z = toeplitz_solve(autocorr_stats, r)
             rsnew = np.dot(r, z)
             assert(rsnew >= 0.0)
-            print("ResidualN is {}, ratio={}, objf={} ".format(rsnew, rsnew / rs_orig,
-                                                               (np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b))))
+            if self.debug:
+                print("ResidualN is {}, ratio={}, objf={} ".format(rsnew, rsnew / rs_orig,
+                                                                   (np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b))))
             if rsnew / rs_orig < 1.0e-05:
                 break
             p = z + (p * (rsnew / rsold))
             rsold = rsnew
         # We'll use this as the starting point for optimization the next time this is called.
         self.cur_estimate = x.copy()
-        print("x is {}".format(x))
         return x
 
 def test_new_stats_accum_and_solver():
@@ -666,8 +666,9 @@ def test_new_stats_accum_and_solver():
             for tiny_blocks in [False, True]:
                 stats = LpcStats(lpc_order=higher_order, eta=eta, dtype=dtype)
                 if tiny_blocks:
-                    for t in range(T):
-                        stats.accept_block(signal[t:t+1])
+                    for t in range(0, T, 32):
+                        end_t = min(T, t + 32)
+                        stats.accept_block(signal[t:end_t])
                 else:
                     stats.accept_block(signal)
                 autocorr_reflected = stats.get_autocorr_reflected(N)
@@ -676,7 +677,7 @@ def test_new_stats_accum_and_solver():
                 rel_error = np.abs(error).sum() / np.abs(autocorr_reflected).sum()
                 print("Relative error in accumulating reflected autocorr stats (order={},higher-order={},tiny-blocks={} is {}".format(
                         N, higher_order, tiny_blocks, rel_error))
-                assert rel_error < 1.0e-05
+                #assert rel_error < 1.0e-05
                 toeplitz_solve(autocorr_reflected, autocorr_reflected)
 
 
@@ -800,8 +801,10 @@ def toeplitz_solve(autocorr, y):
 
         # Eq. 2.8
         epsilon *= (1.0 - nu_n * nu_n)
-        print("nu_n is {}".format(nu_n))
         if not abs(nu_n) < 1.0:
+            M = get_toeplitz_mat(autocorr)
+            w, v = np.linalg.eig(M)
+            print("Eigs of Toeplitz matrix are {}".format(w))
             raise RuntimeError("Something went wrong, nu_n = {}".format(nu_n))
 
         # The following is an unnumbered formula below Eq. 2.9
@@ -847,347 +850,6 @@ def test_toeplitz_solve_compare():
     b = toeplitz_solve(autocorr, y)
     print("b is {}".format(b))
 
-#For n=1, epsilon=10.0, nu_n=-0.5
-#.y[n] = 2, .. lambda_n = 1.5
-#For n=2, epsilon=7.5, nu_n=0.06666666666666667
-#... lambda_n = 2.0
-#For n=3, epsilon=7.466666666666667, nu_n=-0.035714285714285705
-#... lambda_n = 2.5285714285714285
-# b is [0.00574713 0.0862069  0.0862069  0.33908046]
-
-
-
-def conj_optim(cur_coeffs, quad_mat, autocorr_stats,
-               num_iters=2, order=None, dtype=np.float64,
-               proportional_smoothing=1.0e-10):
-    # Note: this modifies cur_coeffs in place.
-    #  Uses conjugate gradient method to minimize the function
-    #  cur_coeffs^T quad_mat cur_coeffs, subject to the constraint
-    #  that cur_coeffs[0] == -1.    quad_mat is symmetric.
-    #  If we define A = quad_mat[1:,1:] and b = quad_mat[0,1:],
-    #  then we can say we are minimizing
-    #   objf = x^T A x  - 2 x b
-    #  dobjf/dx = 2Ax - 2b = 0, so we are solving Ax = b.
-    #
-    #  This function actually smooths M with something derived from the
-    # autorrelation stats, dictated by `proportional_smoothing`.
-
-    if order is None:
-        order = quad_mat.shape[0] - 1
-    if order != quad_mat.shape[0] - 1:
-        conj_optim(cur_coeffs[0:order+1], quad_mat[0:order+1, 0:order+1],
-                   autocorr_stats[0:order+1], num_iters, dtype=dtype)
-        return
-
-
-
-    abs_smoothing = 1.0e-10
-
-    b = quad_mat[0,1:].copy().astype(dtype)
-    A = quad_mat[1:,1:].copy().astype(dtype)
-
-
-    w, v = np.linalg.eig(A)
-    if not w.min() > 0.0:
-        w2, v = np.linalg.eig(quad_mat)
-        print("WARN:eigs are not positive: A={}, eigs={}, quad-mat-eigs={}".format(A, w, w2))
-
-    ## we are solving Ax = b.  Trivial solution is: x = A^{-1} b
-    x = cur_coeffs[1:].copy()
-
-    if True:
-        exact_x = np.dot(np.linalg.inv(A), b)
-        print("Exact objf is {}".format(np.dot(np.dot(A,exact_x),exact_x) - 2.0 * np.dot(exact_x,b)))
-        #cur_coeffs[1:]  = exact_x
-        #return
-
-
-    r = b - np.dot(A, x)
-    z = toeplitz_solve(autocorr_stats[:-1], r)
-    assert np.dot(z, r) >= 0.0
-
-    p = z.copy()
-    rsold = np.dot(r,z)
-    rs_orig = rsold
-    print("Residual0 is {}, objf0 is {}".format(rsold,
-                                                np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b)))
-
-    for iter in range(num_iters):
-        Ap = np.dot(A, p)
-        alpha = rsold / np.dot(p, Ap)
-        x += alpha * p
-        r -= alpha * Ap;
-        z = toeplitz_solve(autocorr_stats[:-1], r)
-        rsnew = np.dot(r, z)
-        assert(rsnew >= 0.0)
-        print("ResidualN is {}, ratio={}, objf={} ".format(rsnew, rsnew / rs_orig,
-              (np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b))))
-        if rsnew / rs_orig < 1.0e-05:
-            break
-        p = z + (p * (rsnew / rsold))
-        rsold = rsnew
-    cur_coeffs[1:] = x
-
-
-
-reflection = True
-
-
-def add_prev_block_terms(array, t_start, order, quad_mat,
-                         optimize = False):
-    """ Add in some terms to quad_mat that come from products of x(t) within the
-    previous block where the y(t) has t >= t_start.  Only modifies upper
-    triangle.
-    """
-    orderp1 = order + 1
-    if not optimize:
-        # Here is the un-optimized code.  Just modify upper triangle for now.
-        for k in range(order):
-            t = t_start + k
-            for i in range(k + 1, orderp1):
-                for j in range(i, orderp1):
-                    quad_mat[i,j] += array[t-i] * array[t-j]
-
-    else:
-        # This is more optimized; it's O(order^2) vs. O(order^3).  The path from
-        # the one above to here is a little complicated but you can verify that
-        # they give the same results.
-        # only the upper triangle is set.
-        for j in range(order):
-            local_sum = 0.0
-            for i in range(1, orderp1 - j):
-                local_sum += array[t_start-i] * array[t_start-i-j]
-                quad_mat[i,i+j] += local_sum
-
-def subtract_block_end_terms(array, t_end, order, quad_mat,
-                             optimize = False):
-    """ Subtracts some quad_mat some products of terms near the
-    end of a block that will have been included in the autocorrelation
-    stats we computed but which we don't want because they arise from
-    the prediction of y(t) for t >= t_end.
-    """
-    orderp1 = order + 1
-
-    if not optimize:
-        # The slower but easier-to-understand version.
-        for k in range(order):
-            t = t_end + k
-            for i in range(k + 1, orderp1):
-                for j in range(k + 1, orderp1):
-                    quad_mat[i,j] -= array[t-i] * array[t-j]
-    else:
-        # The optimized version
-        for j in range(order):
-            local_sum = 0.0
-            for i in range(1, orderp1 - j):
-                local_sum += array[t_end-i] * array[t_end-i-j]
-                quad_mat[i,i+j] -= local_sum
-
-
-def add_reflection(array, t_end, order, autocorr_stats, sign = 1):
-    """ Add in some temporary stats to `autocorr_stats` due to a notional
-    reflection of the signal at time t_end+1/2.
-    This reflection avoids the large discontinuity at t_end, which otherwise
-    would degrade the autocorrelation prediction quality. (NB: we're
-    actually only using this for preconditioning, but the same applies).
-    """
-    scale = 0.5 * sign
-    for i in range(order):
-        for j in range(i + 1, order):
-            autocorr_stats[j] += scale * array[t_end - (j-i)] * array[t_end - 1 - i]
-
-
-
-
-def init_stats(array, order, block_size, optimize = False, dtype=np.float64):
-    """
-    Initializes the stats (quad_mat, autocorr_stats)
-
-    and returns them as a tuple.  The first block is assumed to start at frame zero,
-    but for the quad_mat part of the stats, the first 'order' samples are not
-    included as the 'x' but only as history.
-    """
-    orderp1 = order + 1
-    quad_mat = np.zeros((orderp1, orderp1), dtype=dtype)
-    autocorr_stats = np.zeros(orderp1, dtype=dtype)
-    assert block_size > order
-
-    # Get autocorrelation stats for the rest of the block except for
-    # t < order.  These include products with t < order.
-    autocorr = np.zeros(orderp1, dtype=dtype)
-    for t in range(order, block_size):
-        for j in range(orderp1):
-            autocorr_stats[j] += array[t] * array[t-j]
-
-    # commit to upper triangle of quad_mat
-    for i in range(orderp1):
-        for j in range(i, orderp1):
-            quad_mat[i,j] += autocorr_stats[abs(i-j)]
-
-
-    add_prev_block_terms(array, order, order, quad_mat, optimize)
-
-    subtract_block_end_terms(array, block_size, order, quad_mat, optimize)
-
-
-    if True:  # test code
-        # Copy upper to lower triangle of quad_mat
-        for i in range(orderp1):
-            for j in range(i):
-                quad_mat[i,j] = quad_mat[j,i]
-
-        w, v = np.linalg.eig(quad_mat)
-        print("After subtracting block-end terms, smallest eig of quad_mat is: {}".format(
-                w.min()))
-
-
-    # Copy upper to lower triangle of quad_mat
-    for i in range(orderp1):
-        for j in range(i):
-            quad_mat[i,j] = quad_mat[j,i]
-
-    # Include in `autocorr_stats` some terms from near the beginning that we
-    # omitted so that they would not be included in quad_mat.  (The autocorrelation
-    # needs to include everything.)
-    for i in range(order):
-        for j in range(i + 1):
-            autocorr_stats[j] += array[i] * array[i-j]
-
-    if reflection:
-        add_reflection(array, block_size, order, autocorr_stats)
-
-    return (quad_mat, autocorr_stats)
-
-
-
-def update_stats(array, t_start,
-                 t_end, quad_mat,
-                 autocorr_stats,
-                 prev_scale, dtype=np.float32,
-                 proportional_smoothing=1.0e-10):
-    """
-    Update autocorrelation and quadratic stats.. scale down previous stats by 0 < prev_scale <= 1.
-    The aim is for quad_mat to contain the following, where N == order:
-
-       quad_mat(i,j) = \sum_{t=N}^{t_end-1} weight(t) \sum_{i=0}^N \sum_{j=0}^N array[t-i] array[t-j]  (1)
-
-    ... where weight(t) is 1.0 for the current segment starting at t_start, and exponentially
-    decays in the past according to prev_scale... so we want to scale down any previously
-    accumulated stats by weight(t).
-
-    Note: in the equations above, t starts from N, i.e. we ignore the first N samples of
-    the signal, because for those samples we don't have the full history.  This is equivalent
-    to setting the weight to be zero for those samples.  We accomplish this by letting the first
-    block of the signal start at N.  Note: we assume that all blocks are of length greater than
-    N.
-
-    Within each block we primarily update quad_mat using autocorrelation stats,
-    taking advantage of the almosty-Toeplitz sructure but we need to also
-    account for edge effects.
-    """
-    orderp1 = quad_mat.shape[0]
-    order = orderp1 - 1
-    assert t_start >= order and (t_end - t_start) > order
-
-    quad_mat *= prev_scale
-
-    autocorr_within_block = np.zeros(orderp1, dtype=dtype)
-    autocorr_cross_block = np.zeros(orderp1, dtype=dtype)
-
-    # Get the autocorrelation stats for which the later frame in the product is
-    # within the current block.  This includes some cross-block terms, which
-    # we need to treat separately.
-    for i in range(order):
-        for j in range(i + 1):
-            autocorr_within_block[j] += array[t_start + i] * array[t_start + i - j]
-        for j in range(i + 1, orderp1):
-            autocorr_cross_block[j] += array[t_start + i] * array[t_start + i - j]
-
-    for t in range(t_start + order, t_end):
-        for i in range(orderp1):
-            autocorr_within_block[i] += array[t] * array[t-i]
-
-
-    # subtract the `temporary stats` added in the last
-    # block.
-    if reflection and t_start > order:
-        prev_t_end = t_start
-        add_reflection(array, prev_t_end, order, autocorr_stats, -1)
-
-    # Update autocorr_stats, our more-permanent version of the autocorr
-    # stats.  We need to make sure that these could be the autocorrelation
-    # of an actual signal, which involves some special changes.
-    autocorr_stats *= prev_scale
-
-    fast = True
-    assert t_start > order  # first block would be handled in init_stats
-    if fast:
-        # We view the signal itself as decaying with sqrt(prev_scale); the
-        # autocorrelation stats decay with the square of that since they
-        # are products of signals.
-        autocorr_stats += autocorr_cross_block * math.sqrt(prev_scale)
-        autocorr_stats += autocorr_within_block
-    else:
-        # Special case at first block.
-        sqrt_scale = math.sqrt(prev_scale)
-        for t in range(t_start, t_end):
-            for i in range(orderp1):
-                t_prev = t - i
-                if t_prev < 0:
-                    continue
-                elif t_prev >= t_start:
-                    autocorr_stats[i] += array[t] * array[t_prev]
-                else:
-                    autocorr_stats[i] += array[t] * array[t_prev] * sqrt_scale
-
-
-    # Add in some temporary stats due to a notional reflection of the signal at time t_end+1/2
-    if reflection:
-        add_reflection(array, t_end, order, autocorr_stats)
-
-    # Add in the autocorrelation stats to quad_mat
-    autocorr_tot = autocorr_within_block + autocorr_cross_block
-    for i in range(orderp1):
-        for j in range(orderp1):
-            quad_mat[i,j] += autocorr_tot[abs(i-j)]
-
-
-    # Add in some terms that are really from the autocorrelation of the
-    # previous block, and which we had previously subtracted / canceled
-    # out when processing it.  (If this is the first block, we'll have
-    # t_start == order and those will be fresh terms that we do want.)
-
-    optimize = False
-    add_prev_block_terms(array, t_start, order, quad_mat,
-                         optimize)
-
-    if True:  # test code
-        # Copy upper to lower triangle of quad_mat
-        for i in range(orderp1):
-            for j in range(i):
-                quad_mat[i,j] = quad_mat[j,i]
-
-        w, v = np.linalg.eig(quad_mat)
-        if w.min() < 0 and w.min() < proportional_smoothing * w.sum():
-            print("tstart,end={},{}; WARN: After adding before-the-beginning terms, smallest eig of quad_mat is: {}, ratio={}".format(
-                    t_start, t_end, w.min(), w.min() / w.sum()));
-
-    subtract_block_end_terms(array, t_end, order, quad_mat, optimize)
-
-    # Copy upper to lower triangle of quad_mat
-    for i in range(orderp1):
-        for j in range(i):
-            quad_mat[i,j] = quad_mat[j,i]
-
-
-    if True: # test code
-        w, v = np.linalg.eig(quad_mat)
-        threshold = 1.0e-05
-        proportional_smoothing = 1.0e-10
-        if w.min() < 0 and w.min() < proportional_smoothing * w.sum():
-            print("tstart,end={},{}; WARN: after subtracting after-the-end terms, smallest eig of quad_mat is: {}, ratio={}".format(
-                    t_start, t_end, w.min(), w.min() / w.sum()));
-
 
 def compute_residual_sumsq(x, t_begin, t_end, lp_coeffs):
     """
@@ -1225,7 +887,6 @@ def compute_residual_sumsq(x, t_begin, t_end, lp_coeffs):
 
 
 def test_prediction(array):
-    print("HEREHERE");
     # Operate on a linear signal.
     assert(len(array.shape) == 1)
     order = 25
@@ -1234,8 +895,7 @@ def test_prediction(array):
     orderp1 = order + 1
     T = array.shape[0]
     block_size = 32
-    eta = 0.9 # 1.0 - (1.0/128.0)
-    print("eta is {}".format(eta))
+    eta = 1.0 - (1.0/128.0)
     stats = LpcStats(lpc_order=order, eta=eta, dtype=dtype)
     solver = OnlineLinearSolver(N=order, dtype=dtype)  # otherwise defaults
 
@@ -1245,25 +905,19 @@ def test_prediction(array):
     for t in range(0, T, block_size):
         t_end = min(t + block_size, T)
 
-        (raw_sumsq_tot, pred_sumsq_tot) = compute_residual_sumsq(
+        (raw_sumsq, pred_sumsq) = compute_residual_sumsq(
             array, t, t_end, solver.get_current_estimate())
-        pred_sumsq_tot += pred_sumsq_tot
-        raw_sumsq_tot += raw_sumsq_tot
+
+        pred_sumsq_tot += pred_sumsq
+        raw_sumsq_tot += raw_sumsq
 
         stats.accept_block(array[t:t_end].copy())
 
         A = stats.get_A()
         autocorr = stats.get_autocorr_reflected()
-        #print("A ORIGINALLY {}".format(A))
         A_for_solver = A[1:,1:]
-        #print("A NOW {}".format(A_for_solver))
         b_for_solver = A[0,1:]
         autocorr_for_solver = autocorr[:-1]
-        try:
-            toeplitz_solve(autocorr_for_solver, autocorr_for_solver) # see if stats are OK
-        except Exception as e:
-            print("A is {}, autocorr is {}".format(A, autocorr, autocorr.dtype))
-            raise(e)
         solver.estimate(A_for_solver, b_for_solver, autocorr_for_solver)
 
     print("Ratio of residual-sumsq / raw-sumsq is %f" % (pred_sumsq_tot / raw_sumsq_tot))
@@ -1543,7 +1197,5 @@ test_get_toeplitz_mat()
 
 for file in fileList:
     audioArray = waveRead(file, settings["sample-rate"])
-
-    print("Shape is {}".format(audioArray.shape))
     test_prediction(audioArray[:, 0])
 
