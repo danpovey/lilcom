@@ -65,10 +65,10 @@ class LpcStats:
                             # that we need to subtract.
         self.eta = eta
         self.T = 0
-        # Will contain the most recent history of length
-        # up to `lpc_order` (less only if the block was shorter
-        # than that).
-        self.history = np.zeros(lpc_order, dtype=dtype)
+        # Will contain the "x_hat" vector which is x times a scale;
+        # the shape of x_hat will always be (lpc_order + size of most recent block),
+        # where lpc_order is the required context.  Starts with zeros.
+        self.x_hat = np.zeros(lpc_order, dtype=dtype)
 
         # will contain the first `lpc_order` samples.
         # Needed to get A^- (see writeup).
@@ -89,10 +89,13 @@ class LpcStats:
 
     def accept_block(self, x_block, y_block = None):
         assert len(x_block.shape) == 1 and (y_block is None or len(y_block) == len(x_block))
+        # Update x_hat
         T_diff = x_block.shape[0]  # amount by which new T value (new num-frames) differs from old one.
+        T_diff_sqrt_scale = self.eta ** T_diff
+        self.x_hat = np.concatenate((self.x_hat[-self.lpc_order:] * T_diff_sqrt_scale,
+                                     self._get_sqrt_scale(T_diff) * x_block))
 
-        self._update_autocorr_stats(x_block, y_block)
-        self._update_history(x_block)
+        self._update_autocorr_stats(y_block)
         self._update_first_few_samples(x_block, y_block)
         self.T += T_diff
 
@@ -175,19 +178,11 @@ class LpcStats:
         if lpc_order is None:
             lpc_order = self.lpc_order
 
-        T = self.history.shape[0]  # This is a kind of 'fake T', using the
-                                   # highly truncated history in `self.history`.
-                                   # It behaves in the equations like T, so we
-                                   # call it that.
-        # x_hat is like the 'tail' (last few elements of) of x_hat which
-        # is the exponentially weighted signal.
-        x_hat = self.history * self._get_sqrt_scale(T)
-
         ans = self.autocorr[0:lpc_order+1].copy()
         # Add in some terms which involve both halves of the reflected
         # signal.
         for k in range(1, lpc_order + 1):
-            ans[k] += 0.5 * np.dot(x_hat[-k:], np.flip(x_hat[-k:]))
+            ans[k] += 0.5 * np.dot(self.x_hat[-k:], np.flip(self.x_hat[-k:]))
         return ans
 
 
@@ -214,18 +209,15 @@ class LpcStats:
             self.b_minus[lpc_order] = b_minus
         return self.b_minus[lpc_order] * (self.eta ** ((self.T - N) * 2))
 
-    def _update_autocorr_stats(self, x_block, y_block = None):
+    def _update_autocorr_stats(self, y_block = None):
         """
         Update the autocorrelation stats (self.autocorr)
         """
-        assert len(x_block.shape) == 1
-        full_x_block = np.concatenate((self.history, x_block.astype(self.dtype)))
         N = self.lpc_order
         reverse_autocorr_stats = np.zeros(N + 1, dtype=self.dtype)
-        S = full_x_block.shape[0]
-        # Don't do *=, we don't want to modify `x_block` in case
-        # np.concatenate passed it through with zero-copy somehow.
-        x_hat = full_x_block * self._get_sqrt_scale(S)
+        x_hat = self.x_hat
+        S = x_hat.shape[0]
+        T_diff = S - N  # T_diff is number of new samples (i.e. excluding history)
 
         # Now `x_hat` corresponds to the weighted data
         # which we called \hat{x} in the writeup.
@@ -234,31 +226,16 @@ class LpcStats:
             # would be 1.0 at one sample past the end.
             reverse_autocorr_stats += x_hat[t-N:t+1] * x_hat[t]
 
-        old_weight = self.eta ** (x_block.shape[0] * 2)
+        old_weight = self.eta ** (T_diff * 2)
         self.autocorr = self.autocorr * old_weight + np.flip(reverse_autocorr_stats)
 
         if y_block is not None:
             T = y_block.shape[0]
-            # the weighting factor below has the factor of 2; it's the
-            # weight of each sample in the objective function.
-            y_hat = y_block * self._get_scale(T)
+            y_hat = y_block * self._get_sqrt_scale(T)
             self.cross_correlation *= old_weight
-            for k in range(self.lpc_order + 1):
-                # full_x_block has `self.lpc_order` extra samples added at the
-                # beginning, it's otherwise the same as x_block.  So we are
-                # multiplying each weighted y_t by x_t delayed by k samples, and
-                # the sum gets added to self.cross_correlation[k]
-                start = self.lpc_order - k
-                self.cross_correlation[k] += np.dot(y_hat, full_x_block[start:start+T])
-
-    def _update_history(self, x_block):
-        """ Keeps self.history up to date (self.history is the last
-          `self.lpc_order` samples).
-        """
-        x_block_len = x_block.shape[0]
-        if x_block_len < self.lpc_order:
-            x_block = np.concatenate((self.history, x_block))
-        self.history = x_block[-self.lpc_order:].copy()
+            for k in range(N + 1):
+                start = N - k
+                self.cross_correlation[k] += np.dot(y_hat, x_hat[start:start+T]) * (self.eta ** (start-N))
 
 
     def _update_first_few_samples(self, x_block, y_block = None):
@@ -308,15 +285,18 @@ class LpcStats:
         N1 = lpc_order + 1
         A_plus = np.zeros((N1, N1), dtype=self.dtype)
 
-        # Note: this 'T' is not really a time value, it's just self.lpc_order, but
-        # it's what we need to calculate the weighting factors, as it's the distance
-        # from the end of the array self.history that matters.
-        T = self.history.shape[0]
-        # x_hat takes the places of the sequence x_hat in the writeup.  In fact
-        # it just contains the last `self.lpc_order` samples of x_hat, but for
-        # clarity we call its length T.  (This code would still work if we were
-        # using the entire sequence instead of self.history).
-        x_hat = self.history * self._get_sqrt_scale(T)
+        # Note: this 'T' is not really a time value, it's just the length of the
+        # x_hat vector which is lpc_order plus the previous block size; but it's
+        # what we need to calculate the weighting factors, as it's the distance
+        # from the end of x_hat vector that matters.
+
+        # x_hat takes the place of the sequence x_hat in the writeup.  In fact
+        # it just contains the tail (last elements) of x_hat, but for clarity we
+        # call its length T.  (This code would still work if we were using the
+        # entire sequence instead of self.history).
+        x_hat = self.x_hat
+
+        T = self.x_hat.shape[0]
 
 
         for j in range(1, N1):
