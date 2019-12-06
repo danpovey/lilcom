@@ -264,16 +264,15 @@ class LpcStats:
     def _update_first_few_samples(self, x_block, y_block = None):
         if self.first_few_x_samples.shape[0] < self.lpc_order:
             full_x_block = np.concatenate((self.first_few_x_samples,
-                                         x_block.astype(self.dtype)))
-            num_new_samples = x_block.shape[0]
-            self.first_few_x_samples = full_x_block[:min(num_new_samples, self.lpc_order)]
+                                           x_block.astype(self.dtype)))
+            current_num_samples = full_x_block.shape[0]
+            self.first_few_x_samples = full_x_block[:min(current_num_samples, self.lpc_order)]
 
             if y_block is None:
                 return
             full_y_block = np.concatenate((self.first_few_y_samples,
-                                         y_block.astype(self.dtype)))
-            num_new_samples = y_block.shape[0]
-            self.first_few_y_samples = full_y_block[:min(num_new_samples, self.lpc_order)]
+                                           y_block.astype(self.dtype)))
+            self.first_few_y_samples = full_y_block[:min(current_num_samples, self.lpc_order)]
 
 
 
@@ -511,7 +510,7 @@ class OnlineLinearSolver:
 def test_new_stats_accum_and_solver():
     """
     Tests that our formulas for the fast stats accumulation match the 'obvious'
-    method of satts accumulation, and that the LpcStats object behaves as
+    method of stats accumulation, and that the LpcStats object behaves as
     expected.
     """
     T = 100
@@ -937,12 +936,13 @@ def test_prediction(array):
 
         stats.accept_block(array[t:t_end].copy())
 
-        A = stats.get_A()
-        autocorr = stats.get_autocorr_reflected()
-        A_for_solver = A[1:,1:]
-        b_for_solver = A[0,1:]
-        autocorr_for_solver = autocorr[:-1]
-        solver.estimate(A_for_solver, b_for_solver, autocorr_for_solver)
+        if t >= order:
+            A = stats.get_A()
+            autocorr = stats.get_autocorr_reflected()
+            A_for_solver = A[1:,1:]
+            b_for_solver = A[0,1:]
+            autocorr_for_solver = autocorr[:-1]
+            solver.estimate(A_for_solver, b_for_solver, autocorr_for_solver)
 
     print("Ratio of residual-sumsq / raw-sumsq is %f" % (pred_sumsq_tot / raw_sumsq_tot))
 
