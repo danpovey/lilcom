@@ -322,20 +322,14 @@ class LpcStats:
 
 
         for j in range(1, N1):
-            for k in range(1, N1):
-                # The formula is:
-                #A_plus[j,k] = ((self.eta ** -2) * A_plus[j-1,k-1] +
-                #               (self.eta**-(j+k)) * x_hat[T-j] * x_hat[T-k])
-                # We vectorize this as:
-                A_plus[j,1:] = ((self.eta ** -2) * A_plus[j-1,:-1] +
-                               (self.eta**-(j+np.arange(1, N1))) * x_hat[T-j] * np.flip(x_hat[T-N:T]))
+            # The formula could be written more straightforwardly as:
+            # for k in range(1, N1):
+            #   A_plus[j,k] = ((self.eta ** -2) * A_plus[j-1,k-1] +
+            #                 (self.eta**-(j+k)) * x_hat[T-j] * x_hat[T-k])
+            # We vectorize this as:
+            A_plus[j,1:] = ((self.eta ** -2) * A_plus[j-1,:-1] +
+                            (self.eta**-(j+np.arange(1, N1))) * x_hat[T-j] * np.flip(x_hat[T-N:T]))
 
-
-
-        # Copy upper to lower triangle of A_plus
-                #for j in range(N1):
-#            for k in range(j):
-#                A_plus[j,k] = A_plus[k,j]
         return A_plus
 
     def _get_A_minus(self, lpc_order):
@@ -362,13 +356,18 @@ class LpcStats:
             N1 = lpc_order + 1
             A_minus = np.zeros((N1, N1), dtype=self.dtype)
             for j in range(N-1, -1, -1):  # for j in [N-1, N-2, .. 0]
-                for k in range(j, N):  # Note: this excludes k == N, since those elements are zero.
-                    A_minus[j,k] = (((self.eta ** 2) * A_minus[j+1,k+1]) +
-                                    ((self.eta**-(j+k)) * x_hat[N-1-j] * x_hat[N-1-k]))
+                # The formula could be written more straightforwardly as:
+                # for k in range(N):
+                #   A_minus[j,k] = (((self.eta ** 2) * A_minus[j+1,k+1]) +
+                #                    ((self.eta**-(j+k)) * x_hat[N-1-j] * x_hat[N-1-k]))
+                # We vectorize this as:
+                A_minus[j,:N] = ((self.eta ** 2) * A_minus[j+1,1:] +
+                               ((self.eta**-(j+np.arange(N))) * x_hat[N-1-j] * np.flip(x_hat)))
+
             # Copy upper to lower triangle of A_plus
-            for j in range(N1):
-                for k in range(j):
-                    A_minus[j,k] = A_minus[k,j]
+                    #for j in range(N1):
+#                for k in range(j):
+#                    A_minus[j,k] = A_minus[k,j]
 
             self.A_minus[lpc_order] = A_minus
 
