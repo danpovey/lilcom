@@ -182,7 +182,7 @@ class LpcStats:
                                    # call it that.
         # x_hat is like the 'tail' (last few elements of) of x_hat which
         # is the exponentially weighted signal.
-        x_hat = self.history * self._get_sqrt_scale_vec(T)
+        x_hat = self.history * self._get_sqrt_scale(T)
 
         ans = self.autocorr[0:lpc_order+1].copy()
         # Add in some terms which involve both halves of the reflected
@@ -209,7 +209,7 @@ class LpcStats:
             # in order to make it possible to cache A_minus and have it be valid
             # for later, we omit the factor involving T for now and just use
             # N; we'll add the (T-N) part later.
-            y_samples_weighted = y_samples * self._get_scale_vec(N)
+            y_samples_weighted = y_samples * self._get_scale(N)
             for j in range(N):
                 b_minus[:j+1] += y_samples_weighted[j] * np.flip(x_samples[:j+1])
             self.b_minus[lpc_order] = b_minus
@@ -226,7 +226,7 @@ class LpcStats:
         S = full_x_block.shape[0]
         # Don't do *=, we don't want to modify `x_block` in case
         # np.concatenate passed it through with zero-copy somehow.
-        x_hat = full_x_block * self._get_sqrt_scale_vec(S)
+        x_hat = full_x_block * self._get_sqrt_scale(S)
 
         # Now `x_hat` corresponds to the weighted data
         # which we called \hat{x} in the writeup.
@@ -242,7 +242,7 @@ class LpcStats:
             T = y_block.shape[0]
             # the weighting factor below has the factor of 2; it's the
             # weight of each sample in the objective function.
-            y_hat = y_block * self._get_scale_vec(T)
+            y_hat = y_block * self._get_scale(T)
             self.cross_correlation *= old_weight
             for k in range(self.lpc_order + 1):
                 # full_x_block has `self.lpc_order` extra samples added at the
@@ -318,7 +318,7 @@ class LpcStats:
         # it just contains the last `self.lpc_order` samples of x_hat, but for
         # clarity we call its length T.  (This code would still work if we were
         # using the entire sequence instead of self.history).
-        x_hat = self.history * self._get_sqrt_scale_vec(T)
+        x_hat = self.history * self._get_sqrt_scale(T)
 
 
         for j in range(1, N1):
@@ -328,7 +328,7 @@ class LpcStats:
             #                 (self.eta**-(j+k)) * x_hat[T-j] * x_hat[T-k])
             # We vectorize this as:
             A_plus[j,1:] = ((self.eta ** -2) * A_plus[j-1,:-1] +
-                            (self.eta**-(j+np.arange(1, N1))) * x_hat[T-j] * np.flip(x_hat[T-N:T]))
+                            self.eta**(-(j+N+1)) * self._get_sqrt_scale(N) * x_hat[T-j] * np.flip(x_hat[T-N:T]))
 
         return A_plus
 
@@ -362,18 +362,13 @@ class LpcStats:
                 #                    ((self.eta**-(j+k)) * x_hat[N-1-j] * x_hat[N-1-k]))
                 # We vectorize this as:
                 A_minus[j,:N] = ((self.eta ** 2) * A_minus[j+1,1:] +
-                               ((self.eta**-(j+np.arange(N))) * x_hat[N-1-j] * np.flip(x_hat)))
-
-            # Copy upper to lower triangle of A_plus
-                    #for j in range(N1):
-#                for k in range(j):
-#                    A_minus[j,k] = A_minus[k,j]
+                                 (self.eta ** -(j+lpc_order)) * self._get_sqrt_scale(N) * x_hat[N-1-j] * np.flip(x_hat))
 
             self.A_minus[lpc_order] = A_minus
 
         return self.A_minus[lpc_order] * (self.eta ** (self.T * 2))
 
-    def _get_scale_vec(self, T):
+    def _get_scale(self, T):
         """
         Returns self.eta ** (2*(T - np.arange(T))), except it caches this and doesn't do
         unnecessary computation.
@@ -382,7 +377,7 @@ class LpcStats:
             self.scale_vec = self.eta ** (2*(T - np.arange(T)))
         return self.scale_vec[-T:]
 
-    def _get_sqrt_scale_vec(self, T):
+    def _get_sqrt_scale(self, T):
         """
         Returns self.eta ** (T - np.arange(T))), except it caches this and doesn't do
         unnecessary computation.
