@@ -58,11 +58,15 @@ class LpcStats:
         self.lpc_order = lpc_order
         self.dtype=dtype
         self.autocorr = np.zeros(lpc_order + 1, dtype=dtype)
-        self.A_minus = { }  # Will be dict from lpc-order to matrix
+        self.A_minus = { }  # Will be dict from lpc-order to matrix.  See writeup
+                            # for details.
         self.b_minus = { }  # Will be dict from lpc-order to vector b_minus is
-                            # not defined in the writeup but it's analogous to
-                            # A_minus; it's something relating to start effects
-                            # that we need to subtract.
+                            # not defined in the writeup (it's only relevant in
+                            # the case where cross-correlations are involved,
+                            # i.e. you give the optional ``y_block`` argument to
+                            # accept_block()), but it's analogous to A_minus;
+                            # it's something relating to start effects that we
+                            # need to subtract.
         self.eta = eta
         self.T = 0
         # Will contain the "x_hat" vector which is x times a scale;
