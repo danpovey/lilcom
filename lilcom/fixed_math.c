@@ -93,13 +93,19 @@ void PrintMatrix64(Matrix64 *mat) {
 #endif
 
 
-
 /* If shift > 0 shifts right by `rshift`; if shift < 0 shift left by -rshift. */
 inline static void ShiftRegion64(int rshift, Region64 *region) {
   if (rshift > 0) ShiftRegion64Right(rshift, region);
   else if (rshift < 0) ShiftRegion64Left(-rshift, region);
 }
 
+void ShiftRegion64ToSize(int size, Region64 *region) {
+  /* right shift decreases the size, so we negate the difference
+     (size - region->size) and shift by that amount. */
+  if (region->size != -1)
+    ShiftRegion64(region->size - size, region);
+  /* if region->size is -1 (all zeros), there is no point shifting. */
+}
 
 void NegateVector64(Vector64 *a) {
   int stride = a->stride, dim = a->dim;
@@ -1091,27 +1097,28 @@ double DotVector64AsDouble(const Vector64 *a, const Vector64 *b) {
   return Scalar64ToDouble(&y);
 }
 
-/* Computes matrix-vector product:
-   y := M x.   Note: y and x must not be in the same region;
-   and currently, y must occupy its entire region.  (We
-   can relax this requirement later as needed.
-
+/* Computes matrix-vector product: does
+     y := M x  or  y += M x.
+   Note: y and x must not be in the same region.
    Note, this code closely mirrors the code of DotVector64.
+
+   If `add` != 0 it does y += M x, else y := M x
 */
-void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
-                       Vector64 *y) {
+static inline void SetOrAddMatrixVector64(const Matrix64 *m, const Vector64 *x,
+                                          Vector64 *y, int add) {
   assert(y->region != x->region && y->region != m->region &&
-      x->dim == m->num_cols && y->dim == m->num_rows);
+         x->dim == m->num_cols && y->dim == m->num_rows);
   /*int num_rows = m->num_rows,*/
   int num_cols = m->num_cols;
   /* col_size is the number of bits by which the a sum over this many terms
    * could be greater than the elements of the sum. */
   int col_size = (num_cols < 32 ? fm_num_bits[num_cols] : FindSize(num_cols, 6));
 
-  if (y->dim == y->region->dim)
+  if (!add && y->dim == y->region->dim) {
     y->region->size = -1;  /* So `ShiftRegion64{Left,Right} know they doesn't
                              really have to shift.  y's data will be
                              overwritten.*/
+  }
 
   int m_size = m->region->size, m_exponent = m->region->exponent,
       x_size = x->region->size, x_exponent = x->region->exponent,
@@ -1126,7 +1133,7 @@ void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
   ShiftRegion64(y_shift, y->region);
 
   /* We haven't made much of an effort here to think about optimizations for
-     memory loads . */
+     memory acccess . */
   uint64_t largest = 0;  /* Bit pattern to compute size of output. */
   int x_dim = x->dim, x_stride = x->stride,
       y_dim = y->dim, y_stride = y->stride,
@@ -1153,6 +1160,8 @@ void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
         int64_t prod = ((mrowdata[j * m_col_stride] >> m_shift) * (xdata[j * x_stride] >> x_shift)) >> post_shift;
         y_i += prod;
       }
+      if (add)
+        y_i += ydata[i * y_stride];
       if (FM_ABS(y_i) > largest)
         largest = FM_ABS(y_i);
       ydata[i * y_stride] = y_i;
@@ -1174,8 +1183,10 @@ void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
         y_i += prod;
       }
       /* NOTE: the m_shift is supposed to be applied to m, but we can apply it anywhere,
-         and it's more efficient to apply it after the summation. */
+         and it's more efficient to apply it after the summation.  */
       y_i = y_i << -m_shift;
+      if (add)
+        y_i += ydata[i * y_stride];
       if (FM_ABS(y_i) > largest)
         largest = FM_ABS(y_i);
       ydata[i * y_stride] = y_i;
@@ -1188,6 +1199,17 @@ void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
   }
   CheckRegion64Size(y->region);
 }
+
+void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
+                       Vector64 *y) {
+  SetOrAddMatrixVector64(m, x, y, 0);
+}
+void AddMatrixVector64(const Matrix64 *m, const Vector64 *x,
+                       Vector64 *y) {
+  SetOrAddMatrixVector64(m, x, y, 1);
+}
+
+
 
 /** Computes the size for this region and sets it to the correct value. */
 void SetRegion64Size(int size_hint, Region64 *r) {
@@ -1569,7 +1591,7 @@ void TestCopyVector() {
   }
 }
 
-void TestSetMatrixVector64() {
+void TestSetAndAddMatrixVector64() {
   for (int source = 0; source < 1000; source++) {
     /* source is a source of randomness. */
     int shift1 = source % 29,
@@ -1637,10 +1659,9 @@ void TestSetMatrixVector64() {
     fprintf(stderr, "]\n");
 
 
-    /* do: vec2 := vec2 - vec2_ref.  Should give us zero. */
-    Scalar64 minus_one;
-    InitScalar64FromInt(-1, &minus_one);
-    AddScalarVector64(&minus_one, &vec2_ref, &vec2);
+    /* do: vec2 := vec2 -  mat * (-vec1).  Should give us zero. */
+    NegateVector64(&vec1);
+    AddMatrixVector64(&mat, &vec1, &vec2);
 
     Scalar64 diff_product;
     DotVector64(&vec2, &vec2, &diff_product);
@@ -1880,7 +1901,7 @@ int main() {
   TestAddVector();
   TestCopyVector();
   TestInvertScalar();
-  TestSetMatrixVector64();
+  TestSetAndAddMatrixVector64();
   TestCopyScalarToElem64();
   TestCopyIntToVector64Elem();
 }

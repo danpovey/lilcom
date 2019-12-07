@@ -93,8 +93,9 @@ static inline uint64_t FM_ABS(int64_t a) {
                           in the region (i.e. it will be interpreted as that integer
                           number + 2^exponent).
      @param [in]  size_hint   caller's approximation to the `size` of the region,
-                          meaning the smallest power of 2 >= 0 that is greater than all
-                          the absolute values of elements of the region.
+                          meaning the smallest power p >= -1 that 2^p is >= all
+                          the absolute values of elements of the region.  A number
+                          in [-1,62]; see FindSize() in fixed_math.c.
      @param [out] region   region  the region object to be created
  */
 void InitRegion64(int64_t *data, int dim, int exponent, int size_hint, Region64 *region);
@@ -152,10 +153,10 @@ void PrintMatrix64(Matrix64 *vec);
        @param [in]  exponent  Exponent that dictates the interpretation as floats of
                            the integer elements of `data`; zero would mean just
                            taking their integer elements directly.
-       @param [in] size_hint  May be any value in [0,63] but it will be faster if it
-                           is close to FindSize(largest_value, ...) where
-                           largest_value is the largest absolute value of any element of
-                           `data`.
+       @param [in]  size_hint   caller's approximation to the `size` of the region,
+                          meaning the smallest power p such that 2^p is >= all
+                          the absolute values of elements of the region.  A number
+                          in [-1,62]; see FindSize() in fixed_math.c.
        @param [out] region  The region to be initialized
        @param [out] vector  The vector to be initialized
  */
@@ -236,6 +237,14 @@ void ShiftRegion64Right(int right_shift, Region64 *region);
 */
 void ShiftRegion64Left(int left_shift, Region64 *region);
 
+/*
+  Shift the region's data elements as needed so that the 'size'
+  of elements in the region has this value.  Would be used only
+  as an optimization (suitable if you know how this library works
+  internally).
+ */
+void ShiftRegion64ToSize(int size, Region64 *region);
+
 /* Shift the data right by this many bits, and adjust the exponent so
    the number it represents is unchanged. */
 void ShiftScalar64Right(int right_shift, Scalar64 *scalar);
@@ -256,9 +265,11 @@ void CopyVector64(const Vector64 *src, Vector64 *dest);
 /* Updates the `size` field of `vec` to be accurate. */
 void FixVector64Size(const Vector64 *vec);
 
-/* like BLAS saxpy.  y := a * x  +  y.
-   x and y must be from different regions.   */
+/* like BLAS saxpy with beta=1.  y := a * x  +  y.
+   x and y must be from different regions.   See also SetScalarVector64. */
 void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y);
+
+
 
 /*
   This is a wrapper for AddScalarVector64 that initializes a scalar
@@ -282,7 +293,7 @@ void Vector64SetScalar(const Scalar64 *a, Vector64 *y);
 void ZeroVector64(Vector64 *a);
 
 /* Sets the size for this region to the appropriate value.
-   (See docs for the `size` member).  0 <= size_hint <= 63
+   (See docs for the `size` member).  -1 <= size_hint <= 63
    is a hint for what we think the size might be.
 */
 void SetRegion64Size(int size_hint, Region64 *r);
@@ -321,10 +332,14 @@ void DotVector64(const Vector64 *a, const Vector64 *b, Scalar64 *y);
 double DotVector64AsDouble(const Vector64 *a, const Vector64 *b);
 
 /* Computes matrix-vector product:
-     y := M x.   Note: y must not be in the same region as x or m.
-*/
+   y := M x.   Note: y must not be in the same region as x or m. */
 void SetMatrixVector64(const Matrix64 *m, const Vector64 *x,
                        Vector64 *y);
+
+/* Does  y += M x.   Note: y must not be in the same region as x or m. */
+void AddMatrixVector64(const Matrix64 *m, const Vector64 *x,
+                       Vector64 *y);
+
 
 /* Copies the data in the scalar to the `elem`. */
 void CopyScalarToElem64(const Scalar64 *scalar, Elem64 *elem);
