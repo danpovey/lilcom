@@ -329,26 +329,24 @@ class LpcStats:
                lpc_order < self.T)
         if not lpc_order in self.A_minus:
             samples = self.first_few_x_samples[:lpc_order]
+            N = lpc_order
+            N1 = lpc_order + 1
             # Below, the scaling factor with self.eta in it should really have
             # T - np.arange(lpc_order) instead of -np.arange(lpc_order), but
             # in order to make it possible to cache A_minus and have it be valid
             # for later, we omit the factor involving T for now.
-            x_hat = samples * (self.eta **  -np.arange(lpc_order))
-            N = lpc_order
-            N1 = lpc_order + 1
+            x_hat = samples * self._get_sqrt_scale(N) # samples * (self.eta **  -np.arange(lpc_order))
+
             A_minus = np.zeros((N1, N1), dtype=self.dtype)
             for j in range(N-1, -1, -1):  # for j in [N-1, N-2, .. 0]
-                # The formula could be written more straightforwardly as:
-                # for k in range(N):
-                #   A_minus[j,k] = (((self.eta ** 2) * A_minus[j+1,k+1]) +
-                #                    ((self.eta**-(j+k)) * x_hat[N-1-j] * x_hat[N-1-k]))
-                # We vectorize this as:
+                # This formula has undergone a range of simplifications and efficiency
+                # improvements versus what was in the paper, but still gives the same result.
                 A_minus[j,:N] = ((self.eta ** 2) * A_minus[j+1,1:] +
-                                 (self.eta ** -(j+lpc_order)) * self._get_sqrt_scale(N) * x_hat[N-1-j] * np.flip(x_hat))
+                                 (self.eta ** -(j-1)) * x_hat[N-1-j] * np.flip(samples))
 
             self.A_minus[lpc_order] = A_minus
 
-        return self.A_minus[lpc_order] * (self.eta ** (self.T * 2))
+        return self.A_minus[lpc_order] * (self.eta ** ((self.T - lpc_order) * 2))
 
     def _get_scale(self, T):
         """
