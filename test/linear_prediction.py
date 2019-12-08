@@ -69,10 +69,17 @@ class LpcStats:
                             # need to subtract.
         self.eta = eta
         self.T = 0
+
+        # Will contain the "x_hat" vector which is x (the input) itself;
+        # the shape of x_hat will always be (lpc_order + size of most recent block),
+        # where lpc_order is the required context.  Starts with zeros for t<0.
+        self.x = np.zeros(lpc_order, dtype=dtype)
+
         # Will contain the "x_hat" vector which is x times a scale;
         # the shape of x_hat will always be (lpc_order + size of most recent block),
-        # where lpc_order is the required context.  Starts with zeros.
+        # where lpc_order is the required context.  Starts with zeros for t<0.
         self.x_hat = np.zeros(lpc_order, dtype=dtype)
+
 
         # will contain the first `lpc_order` samples.
         # Needed to get A^- (see writeup).
@@ -98,6 +105,7 @@ class LpcStats:
         T_diff_sqrt_scale = self.eta ** T_diff
         self.x_hat = np.concatenate((self.x_hat[-self.lpc_order:] * T_diff_sqrt_scale,
                                      self._get_sqrt_scale(T_diff) * x_block))
+        self.x = np.concatenate((self.x[-self.lpc_order:], x_block))
 
         self._update_autocorr_stats(y_block)
         self._update_first_few_samples(x_block, y_block)
@@ -290,7 +298,7 @@ class LpcStats:
         A_plus = np.zeros((N1, N1), dtype=self.dtype)
 
         # Note: this 'T' is not really a time value, it's just the length of the
-        # x_hat vector which is lpc_order plus the previous block size; but it's
+        # x_hat vector which is lpc_order plus the most recent block size; but it's
         # what we need to calculate the weighting factors, as it's the distance
         # from the end of x_hat vector that matters.
 
@@ -300,17 +308,16 @@ class LpcStats:
         # entire sequence instead of self.history).
         x_hat = self.x_hat
 
+        x = self.x
+
         T = self.x_hat.shape[0]
 
 
         for j in range(1, N1):
-            # The formula could be written more straightforwardly as:
-            # for k in range(1, N1):
             #   A_plus[j,k] = ((self.eta ** -2) * A_plus[j-1,k-1] +
-            #                 (self.eta**-(j+k)) * x_hat[T-j] * x_hat[T-k])
+            #                       x_hat[T-j] * x_hat[T-k])
             # We vectorize this as:
-            A_plus[j,1:] = ((self.eta ** -2) * A_plus[j-1,:-1] +
-                            self.eta**(-(j+N+1)) * self._get_sqrt_scale(N) * x_hat[T-j] * np.flip(x_hat[T-N:T]))
+            A_plus[j,1:] = (self.eta ** -2 * (A_plus[j-1,:-1]) +  x[T-j] * np.flip(x[T-N:T]))
 
         return A_plus
 
@@ -331,18 +338,12 @@ class LpcStats:
             samples = self.first_few_x_samples[:lpc_order]
             N = lpc_order
             N1 = lpc_order + 1
-            # Below, the scaling factor with self.eta in it should really have
-            # T - np.arange(lpc_order) instead of -np.arange(lpc_order), but
-            # in order to make it possible to cache A_minus and have it be valid
-            # for later, we omit the factor involving T for now.
-            x_hat = samples * self._get_sqrt_scale(N) # samples * (self.eta **  -np.arange(lpc_order))
-
             A_minus = np.zeros((N1, N1), dtype=self.dtype)
             for j in range(N-1, -1, -1):  # for j in [N-1, N-2, .. 0]
                 # This formula has undergone a range of simplifications and efficiency
                 # improvements versus what was in the paper, but still gives the same result.
-                A_minus[j,:N] = ((self.eta ** 2) * A_minus[j+1,1:] +
-                                 (self.eta ** -(j-1)) * x_hat[N-1-j] * np.flip(samples))
+                A_minus[j,:N] = ((self.eta ** 2) * (A_minus[j+1,1:] +
+                                                    samples[N-1-j] * np.flip(samples)))
 
             self.A_minus[lpc_order] = A_minus
 
