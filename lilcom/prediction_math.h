@@ -61,4 +61,176 @@
 int ToeplitzSolve(const Vector64 *autocorr, const Vector64 *y, Vector64 *x,
                   Vector64 *temp1, Vector64 *temp2);
 
-#endif
+
+struct LpcStats {
+  /* the allocated block of memory, size depends on the order. */
+  void *allocated_block;
+  /* The LPC order */
+  int lpc_order;
+  /* The max allowable block size (determines the sizes of certain stored
+     vectors */
+  int max_block_size;
+  /* region and vector for the autocorr coeffs, of dimension lpc_order + 1 */
+  Region64 autocorr_region;
+  Vector64 autocorr;
+  /* region and vector for a temporary vector of the same size as the
+     autocorr coeffs.  Note: we actually swap autocorr and autocorr_tmp
+     so they may sometimes point to each other's regions. */
+  Region64 autocorr_tmp_region;
+  Vector64 autocorr_tmp;
+
+  /* region and vector for x_hat (scaled version of the input x), including
+     `lpc_order` samples of context and the current block; size of region
+     is (lpc_order + max_block_size) elements and size of vector can vary. */
+  Region64 x_hat_region;
+  Vector64 x_hat;
+
+  /* In Python-like notation allowing negative indexing:
+     sqrt_scale[-k], for k > 0, contains self.eta ** k.
+     The dim of `sqrt_scale` is 2*max(lpc_order, max_block_size);
+  */
+  Region64 sqrt_scale_region;
+  Vector64 sqrt_scale;
+
+  /*  The first `lpc_order` samples are stored here (for purposes of
+      computing A^-), scaled: initial_samples[t] = x[t].
+      They are just stores as integers and exponent=0 set. */
+  Region64 initial_samples_region;
+  Vector64 initial_samples;
+
+  /*  Always contains the most recent 'lpc_order' samples, up to T-1;
+      a rolling buffer modulo lpc_order, indexed by 't'. */
+  int16_t *context_buf;
+
+
+  /* eta is a forgetting factor, like 0.99 */
+  Scalar64 eta;
+  /* eta squared. */
+  Scalar64 eta_2;
+  /* eta^-2. */
+  Scalar64 eta_m2;
+  ssize_t T;
+  /* eta_2T is eta to the power 2*(T-N); it will only
+     have this value when T >= N. */
+  Scalar64 eta_2TN;
+};
+
+
+
+/**
+   This is like an appendage to struct LpcStats; it contains the parts that
+   vary with the order of LPC stats requested (which is allowed to be less
+   than the order of LPC stats that is accumulated).
+
+   It is used when the user requests the statistics from the LpcStats
+   object.
+
+ */
+struct LpcStatsAux {
+  const struct LpcStats *stats;
+  /* allocated_block is the region of memory we allocated */
+  void *allocated_block;
+  /* we require 0 < lpc_order <= stats->lpc_order */
+  int lpc_order;
+
+  /* Region and matrix for A_minus (A^- in the writeup).  Note: like the A^-
+     stored in the dict in the Python version, it is a missing a factor of eta
+     ** (self.T * 2) */
+  Region64 A_minus_region;
+  Matrix64 A_minus;
+
+  /* Region and matrix for A_plus (A^+ in the writeup). */
+  Region64 A_plus_region;
+  Matrix64 A_plus;
+
+  /* Region and matrix for A (A^all, A^+ and A^- go in here. */
+  Region64 A_region;
+  Matrix64 A;
+
+  Region64 autocorr_reflected_region;
+  Vector64 autocorr_reflected;
+
+  /* x_context is a temporary buffer where past lpc_order input (`x`) samples
+     are put, in reversed order; they are copied from stats->context_buf.  It's
+     of dimension lpc_order. */
+  Region64 x_context_region;
+  Vector64 x_context;
+
+};
+
+
+/**
+   Initializes the LpcStats object.  This is derived from LpcStats::__init__ in
+   ../test/linear_prediction_new.py
+
+    @param [in] lpc_order   Order of LPC prediction; must be >= 1
+    @param [in] max_block_size  The caller asserts that they will never call
+                            LpcStatsAcceptBlock() with a block size greater
+                            than this.  (Needed for memory allocation).
+                            Don't call this with a too-large block size as it
+                            will affect performance (due to ResizeRegion())
+    @param [in] eta         Constant 0 < eta < 1 like 0.99, that is a per-sample
+                            decay rate (actually eta^2 is the decay rate of the
+                            weights in the objective; eta is the decay of a
+                            "virtual signal" that we use in the update.
+    @param [in] eta_den_power  See documentation for eta_num
+    @param [out] stats      The object to be initialized
+
+    @return:
+         Returns 0 on success; 1 if it failed as a result of failure to
+         allocate memory
+ */
+int LpcStatsInit(int lpc_order,
+                 int max_block_size,
+                 const Scalar64 *eta,
+                 struct LpcStats *stats);
+
+/*  Frees memory used in the `stats` object. */
+void LpcStatsDestroy(struct LpcStats *stats);
+
+
+/**
+   Initializes the LpcStatsAux object (this is for obtaining the statistics
+   matrix A for a specific LPC order, which may be <= the lpc order
+   of the actual stats).
+   This just allocates memory.  You would then call LpcStatsAuxCompute()
+   after accumulating stats.
+
+    @param [in] stats       LpcStats object from which this LpcStatsAux
+                            object will get its statistics.  Must be
+                            initialized (i.e. must have called
+                            LpcStatsInit()), but doesn't have to
+                            actually have stats in it yet.
+    @param [in] lpc_order   Order of LPC prediction; must be >= 1 and
+                            <= stats->
+    @param [out] stats_aux   The LpcStatsAux object to be initialized
+
+    @return:
+         Returns 0 on success; 1 if it failed as a result of failure to
+         allocate memory
+ */
+int LpcStatsAuxInit(struct LpcStats *stats,
+                    int lpc_order,
+                    struct LpcStatsAux *stats_aux);
+
+/**
+   Computes stats_aux->A and stats_aux->autocorr_reflected, which are the stats
+   needed to update the autocorrelation coefficients.
+ */
+void LpcStatsAuxCompute(struct LpcStatsAux *stats_aux);
+
+/*  Frees memory used in the `stats_aux` object. */
+void LpcStatsAuxDestroy(struct LpcStatsAux *stats_aux);
+
+
+
+/*
+  Gives a fresh block of data to the LpcStats object to process.
+ */
+void LpcStatsAcceptBlock16(int block_size,
+                           int16_t *data,
+                           struct LpcStats *stats);
+
+#endif  /* ifndef __LILCOM__PREDICTION_MATH_H__ */
+
+

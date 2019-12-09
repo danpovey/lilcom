@@ -139,11 +139,45 @@ FM_MAYBE_EXTERN inline void InitSubVector64(const Vector64 *src, int offset, int
   dest->data = src->data + offset * src->stride;
 }
 
+/**
+   Initializes a vector that is a row, or part of a row, of a matrix.
+   The vector will be `dim` elements of row `row` of matrix `src`,
+   with stride `stride`, starting from the element at `start_col`.
+ */
+FM_MAYBE_EXTERN inline void InitRowVector64(const Matrix64 *src, int row, int start_col, int dim,
+                                            Vector64 *dest) {
+
+  assert(row >= 0 && row < src->num_rows &&
+         start_col >= 0 && start_col < src->num_cols - 1 &&
+         dim > 0 && start_col + dim <= src->num_cols);
+  dest->region = src->region;
+  dest->data = src->data + (row * src->row_stride) + (start_col * src->col_stride);
+  dest->stride = src->col_stride;
+  dest->dim = dim;
+}
+
+
+/**
+   Initializes a vector that contains all the rows of a matrix
+   concatenated together.  Will crash if it is not the case
+   that m->row_stride == m->num_cols * m->col_stride
+   (i.e. this will not accept all matrices.)
+ */
+FM_MAYBE_EXTERN inline void InitRowsVector64(const Matrix64 *m, Vector64 *dest) {
+
+  assert(m->row_stride == m->num_cols * m->col_stride);
+  dest->region = m->region;
+  dest->data = m->data;
+  dest->dim = m->num_rows * m->num_cols;
+  dest->stride = m->col_stride;
+}
+
+
 /* Prints the vector to stderr */
-void PrintVector64(Vector64 *vec);
+void PrintVector64(const char *name, Vector64 *vec);
 
 /* Prints the matrix to stderr */
-void PrintMatrix64(Matrix64 *vec);
+void PrintMatrix64(const char *name, Matrix64 *vec);
 
 /**
    This convenience function initializes a region and vector, in the common case where
@@ -269,6 +303,13 @@ void FixVector64Size(const Vector64 *vec);
    x and y must be from different regions.   See also SetScalarVector64. */
 void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y);
 
+/*  y += x.  y and x must be from different regions. */
+void AddVector64(const Vector64 *x, Vector64 *y);
+
+
+/* does y += a * x.
+   x and y must be from different regions. */
+void AddScalarMatrix64(const Scalar64 *a, const Matrix64 *x, Matrix64 *y);
 
 
 /*
@@ -299,7 +340,6 @@ void ZeroVector64(Vector64 *a);
 void SetRegion64Size(int size_hint, Region64 *r);
 
 inline FM_MAYBE_EXTERN void NegateScalar64(Scalar64 *a) { a->data *= -1; }
-
 
 void NegateVector64(Vector64 *a);
 
@@ -351,7 +391,10 @@ void CopyElemToScalar64(const Elem64 *a, Scalar64 *y);
 void CopyVectorElemToScalar64(const Vector64 *a, int i, Scalar64 *y);
 
 /* Copies `s` to the i'th element of `a`:  a[i] = s. */
-void CopyScalar64ToVectorElem(const Scalar64 *s, int i, Vector64 *a);
+void CopyScalarToVector64Elem(const Scalar64 *s, int i, Vector64 *a);
+
+/*  Does m[i,j] = s */
+void CopyScalarToMatrix64Elem(const Scalar64 *s, int i, int j, Matrix64 *m);
 
 /* Sets an element of a vector to a scalar:  y[i] = a. */
 void CopyFromScalar64(const Scalar64 *a, int i, Vector64 *y);

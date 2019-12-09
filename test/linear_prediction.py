@@ -1009,12 +1009,49 @@ fileList = [settings["dataset-dir"] + "/" + item
             for item in os.listdir(settings["dataset-dir"])
             if ".wav" in item]
 
+def test_new_stats_accum_and_solver_compare():
+    """
+    This function is to help debug the "C" version of the code in
+    ../lilcom/prediction_math.
+
+    Tests that our formulas for the fast stats accumulation match the 'obvious'
+    method of stats accumulation, and that the LpcStats object behaves as
+    expected.
+    """
+    T = 10
+    signal = np.asarray([1,2,3,4,5,7,9,11,13,15], dtype=np.float64)
+
+
+    eta = 0.5  # Just for test, will change later!
+    dtype=np.float64
+    N = 4  # Order of filter
+    N1 = N+1
+
+    stats = LpcStats(N, eta, dtype=dtype)
+
+    # two blocks.
+    stats.accept_block(signal[:5])
+
+    aux_order = 4
+    print("autocorr is: ", stats.autocorr)
+    print("autocorr-reflected is: ", stats.get_autocorr_reflected(aux_order))
+
+    stats.accept_block(signal[5:])
+
+    print("autocorr is: ", stats.autocorr)
+    print("autocorr-reflected is: ", stats.get_autocorr_reflected(aux_order))
+
+    stats._get_A_minus(aux_order)
+    print("A'^- is: ", stats.A_minus[aux_order])
+    print("A^+ is: ", stats._get_A_plus(aux_order))
+
 
 test_new_stats_accum_and_solver()
 test_new_stats_accum_cross()
 test_toeplitz_solve()
 test_toeplitz_solve_compare()
 test_get_toeplitz_mat()
+test_new_stats_accum_and_solver_compare()
 
 for file in fileList:
     audioArray = waveRead(file, settings["sample-rate"])
