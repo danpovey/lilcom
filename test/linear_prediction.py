@@ -1034,16 +1034,21 @@ def test_new_stats_accum_and_solver_compare():
 
     aux_order = 4
     print("autocorr is: ", stats.autocorr)
+    print("x_hat is: ", stats.x_hat)
     print("autocorr-reflected is: ", stats.get_autocorr_reflected(aux_order))
 
     stats.accept_block(signal[5:])
 
     print("autocorr is: ", stats.autocorr)
+    print("x_hat is: ", stats.x_hat)
     print("autocorr-reflected is: ", stats.get_autocorr_reflected(aux_order))
 
     stats._get_A_minus(aux_order)
     print("A'^- is: ", stats.A_minus[aux_order])
     print("A^+ is: ", stats._get_A_plus(aux_order))
+    print("A^all is: ", stats._get_A_all(aux_order))
+
+    print("A is: ", stats.get_A(aux_order))
 
 
 test_new_stats_accum_and_solver()
