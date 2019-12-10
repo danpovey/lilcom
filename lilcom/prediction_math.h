@@ -92,6 +92,14 @@ struct LpcStats {
   Region64 sqrt_scale_region;
   Vector64 sqrt_scale;
 
+  /* In Python-like notation allowing negative indexing:
+     inv_sqrt_scale[k], for k >= 0, contains self.eta ** -k.
+     The dim of `inv_sqrt_scale` is 2 * lpc_order + 1.
+     It's used when computing A^all.
+  */
+  Region64 inv_sqrt_scale_region;
+  Vector64 inv_sqrt_scale;
+
   /*  The first `lpc_order` samples are stored here (for purposes of
       computing A^-), scaled: initial_samples[t] = x[t].
       They are just stores as integers and exponent=0 set. */

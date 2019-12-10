@@ -172,12 +172,14 @@ FM_MAYBE_EXTERN inline void InitRowsVector64(const Matrix64 *m, Vector64 *dest) 
   dest->stride = m->col_stride;
 }
 
+/* Prints the scalar to stderr */
+void PrintScalar64(const char *name, const Scalar64 *s);
 
 /* Prints the vector to stderr */
-void PrintVector64(const char *name, Vector64 *vec);
+void PrintVector64(const char *name, const Vector64 *vec);
 
 /* Prints the matrix to stderr */
-void PrintMatrix64(const char *name, Matrix64 *vec);
+void PrintMatrix64(const char *name, const Matrix64 *vec);
 
 /**
    This convenience function initializes a region and vector, in the common case where

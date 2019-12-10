@@ -177,8 +177,9 @@ int LpcStatsInit(int lpc_order,
   int autocorr_size = (lpc_order + 1),
       x_hat_size = (lpc_order + max_block_size),
       sqrt_scale_size = 2 * (lpc_order > max_block_size ? lpc_order : max_block_size),
+      inv_sqrt_scale_size = 2 * lpc_order + 3,
       initial_samples_size = lpc_order,
-      tot_size = 2*autocorr_size + x_hat_size + sqrt_scale_size + initial_samples_size;
+      tot_size = 2*autocorr_size + x_hat_size + sqrt_scale_size + inv_sqrt_scale_size + initial_samples_size;
   stats->allocated_block = malloc((tot_size * sizeof(int64_t)) +
                                   (lpc_order * sizeof(int16_t)));
   if (!stats->allocated_block)
@@ -198,6 +199,9 @@ int LpcStatsInit(int lpc_order,
   InitRegionAndVector64(data, sqrt_scale_size, exponent, size_hint,
                         &stats->sqrt_scale_region, &stats->sqrt_scale);
   data += sqrt_scale_size;
+  InitRegionAndVector64(data, inv_sqrt_scale_size, exponent, size_hint,
+                        &stats->inv_sqrt_scale_region, &stats->inv_sqrt_scale);
+  data += inv_sqrt_scale_size;
   InitRegionAndVector64(data, initial_samples_size, exponent, size_hint,
                         &stats->initial_samples_region, &stats->initial_samples);
   data += initial_samples_size;
@@ -210,23 +214,43 @@ int LpcStatsInit(int lpc_order,
 
   InitScalar64FromInt(1, &stats->eta_2TN);
 
-  Scalar64 cur_eta_power = *eta;
-  for (int i = sqrt_scale_size - 1; i >= 0; i--) {
-    CopyScalarToVector64Elem(&cur_eta_power, i, &stats->sqrt_scale);
-    if (i == sqrt_scale_size - 1) {
-      /* shift to a very large size (60) to avoid further left shifts in this
-       * loop  */
-      ShiftRegion64ToSize(60, &stats->sqrt_scale_region);
+
+  { /* Initialize stats->sqrt_scale. */
+    Scalar64 cur_eta_power = *eta;
+
+    for (int i = sqrt_scale_size - 1; i >= 0; i--) {
+      CopyScalarToVector64Elem(&cur_eta_power, i, &stats->sqrt_scale);
+      if (i == sqrt_scale_size - 1) {
+        /* shift to a very large size (60) to avoid further left shifts in this
+         * loop  */
+        ShiftRegion64ToSize(60, &stats->sqrt_scale_region);
+      }
+      MulScalar64(eta, &cur_eta_power, &cur_eta_power);
     }
-    MulScalar64(eta, &cur_eta_power, &cur_eta_power);
+    /* The region to shift it to 60 - 15 now, is to ensure that
+       when multiplied by a 16-bit number, these data elements
+       still have size <= 60, which will avoid extra shifts.
+       [note: largest-magnitude 16-bit number is -2^15, which has
+       'size' 15].
+    */
+    ShiftRegion64ToSize(60 - 15, &stats->sqrt_scale_region);
   }
-  /* The region to shift it to 60 - 15 now, is to ensure that
-     when multiplied by a 16-bit number, these data elements
-     still have size <= 60, which will avoid extra shifts.
-     [note: largest-magnitude 16-bit number is -2^15, which has
-     'size' 15].
-   */
-  ShiftRegion64ToSize(60 - 15, &stats->sqrt_scale_region);
+
+  { /* Initialize stats->inv_sqrt_scale. */
+    Scalar64 inv_eta;
+    InvertScalar64(eta, &inv_eta);
+    Scalar64 cur_inv_eta_power;
+    InitScalar64FromInt(1, &cur_inv_eta_power);
+    for (int i = 0; i < inv_sqrt_scale_size; i++) {
+      CopyScalarToVector64Elem(&cur_inv_eta_power, i, &stats->inv_sqrt_scale);
+      if (i == sqrt_scale_size - 1) {
+        /* shift to a very large size (60) to avoid further left shifts in this
+         * loop  */
+        ShiftRegion64ToSize(60, &stats->inv_sqrt_scale_region);
+      }
+      MulScalar64(&inv_eta, &cur_inv_eta_power, &cur_inv_eta_power);
+    }
+  }
 
   return 0;  /* Success */
 }
@@ -268,8 +292,7 @@ static void LpcStatsUpdateXhat(int block_size,
       lpc_order = stats->lpc_order;
   int T = stats->T,
       t_start = T - lpc_order,
-      t_end = T + block_size,
-      sqrt_scale_offset = sqrt_scale_dim - t_end;
+      t_end = T + block_size;
 
   /* sqrt_scale_offset is a number that, when added to a 't' value,
      gives us the appropriate index into sqrt_scale so that the
@@ -284,7 +307,7 @@ static void LpcStatsUpdateXhat(int block_size,
     int16_t sample;
     if (t < T) sample = stats->context_buf[t % lpc_order];
     else sample = data[t - T];
-    stats->x_hat.data[t - t_start] = sample * stats->sqrt_scale.data[t + sqrt_scale_offset];
+    stats->x_hat.data[t - t_start] = sample * stats->sqrt_scale.data[sqrt_scale_dim + t - t_end];
   }
 
   {  /* This block sets up the metadata of stats->x_hat */
@@ -312,6 +335,7 @@ static void LpcStatsUpdateXhat(int block_size,
        this may not actually be necessary. */
     SetRegion64Size(size_hint, stats->x_hat.region);
   }
+  PrintVector64("Xhat", &stats->x_hat);
 }
 
 
@@ -546,14 +570,9 @@ void LpcStatsAuxComputeAPlus(struct LpcStatsAux *aux) {
     Scalar64 x_Tj;  /* in Python this was: x[T-j].  Since aux->x_context is
                        stored in reversed order, this is addressed with index
                        j-1. */
-    PrintVector64("APlusj1", &A_plus_j_1);
-    PrintMatrix64("APlus[b] ", &aux->A_plus);
     CopyVectorElemToScalar64(&aux->x_context, j - 1, &x_Tj);
-    printf("xtj = %f\n", (float)Scalar64ToDouble(&x_Tj));
     /* do: A_plus[j,1:] += x[T-j] * np.flip(x[T-N]:T) */
     AddScalarVector64(&x_Tj, &aux->x_context, &A_plus_j_1);
-    PrintVector64("x_context", &aux->x_context);
-    PrintMatrix64("APlus[c] ", &aux->A_plus);
   }
 }
 
@@ -573,13 +592,8 @@ static void LpcStatsAuxComputeAAll(struct LpcStatsAux *aux) {
       /* formula in Python is:
          A_all[j,k] = (self.eta ** -(j+k)) * self.autocorr[abs(j-k)] */
       Scalar64 eta_mjk;  /* eta ** -(j+k) */
-      if (j == 0 && k == 0) {
-        InitScalar64FromInt(1, &eta_mjk);
-      } else {
-        CopyVectorElemToScalar64(&stats->sqrt_scale,
-                                 stats->sqrt_scale.dim - (j+k),
-                                 &eta_mjk);
-      }
+      CopyVectorElemToScalar64(&stats->inv_sqrt_scale,
+                               (j + k), &eta_mjk);
       int diff_index = (j >= k ? j - k : k - j);
       Scalar64 autocorr_element;  /* autocorr[abs(j-k)] */
       CopyVectorElemToScalar64(&stats->autocorr, diff_index,
@@ -656,6 +670,8 @@ void LpcStatsAuxCompute(struct LpcStatsAux *aux) {
     LpcStatsAuxComputeAMinus(aux);
   LpcStatsAuxComputeAPlus(aux);
   LpcStatsAuxComputeAAll(aux);
+  PrintMatrix64("A^plus", &aux->A_plus);
+  PrintMatrix64("A^all", &aux->A);
   LpcStatsAuxComputeA(aux);
   LpcStatsAuxComputeReflectedAutocorr(aux);
 }
@@ -734,8 +750,14 @@ void test_toeplitz_solve() {
 
   CheckRegion64Size(temp1.region);
   /* temp1 := mat * x. */
+  PrintVector64("x is ", &x);
+  ConstructToeplitzMatrix(&autocorr, &mat);
+  PrintMatrix64("mat is ", &mat);
   SetMatrixVector64(&mat, &x, &temp1);
   CheckRegion64Size(temp1.region);
+
+  PrintVector64("temp1", &temp1);
+  PrintVector64("y", &y);
 
   /* temp1 -= y.   Now temp1 is the error/residual. */
   AddIntVector64(-1, &y, &temp1);
@@ -777,6 +799,8 @@ void test_lpc_stats() {
   PrintMatrix64("A'^-", &aux.A_minus);
 
   PrintMatrix64("A^+", &aux.A_plus);
+
+  PrintMatrix64("A", &aux.A);
 
 
   /* TODO */

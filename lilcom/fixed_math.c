@@ -63,7 +63,12 @@ void PrintRegion64(const char *name, Region64 *region) {
   fprintf(stderr, "] }\n");
 }
 
-void PrintVector64(const char *name, Vector64 *vec) {
+void PrintScalar64(const char *name, const Scalar64 *s) {
+  fprintf(stderr, "%s = Vector64 { exponent = %d, size = %d, data = %d, value = %f }\n",
+          name, s->exponent, s->size, (int)s->data, (float)Scalar64ToDouble(s));
+}
+
+void PrintVector64(const char *name, const Vector64 *vec) {
   fprintf(stderr, "%s = Vector64 { dim = %d, stride = %d, exponent = %d, data = [ ",
           name, vec->dim, vec->stride, vec->region->exponent);
   float factor = pow(2.0, vec->region->exponent);
@@ -74,7 +79,7 @@ void PrintVector64(const char *name, Vector64 *vec) {
   fprintf(stderr, "] }\n");
 }
 
-void PrintMatrix64(const char *name, Matrix64 *mat) {
+void PrintMatrix64(const char *name, const Matrix64 *mat) {
   fprintf(stderr, "%s = Matrix64 { num-rows = %d, row-stride = %d, num-cols = %d, col-stride = %d,\n"
           "  data = [ ", name, mat->num_rows, mat->row_stride, mat->num_cols, mat->col_stride);
   float factor = pow(2.0, mat->region->exponent);
@@ -230,16 +235,24 @@ inline static void GetShiftsFor2ArgMultiply(int a_size, int b_size, int dim_size
   on the x[i] after the shift, where dim_size == FindSize(dim, ...).]
 
 
-  The output values must satisfy:
-    in_exponent + in_shift == out_exponent + out_shift
-  And to avoid overflow:
-    max(in_size - in_shift, out_size - out_shift) < 63
-  ... and also, if out_shift != 0, we require:
-    max(in_size - in_shift, out_size - out_shift) <= FM_MAX_SIZE
-  (we avoid shifting `out` if at all possible, since it might
-  include a whole region.)
-  Also, we never left-shift both args (i.e. never in_shift < 0 and
-  out_shift < 0).
+  For correctness, the output values must satisfy:
+   [so the exponents match up:]
+     in_exponent + in_shift == out_exponent + out_shift
+   [to avoid overflow prior to the summation; the +1 is so we
+    can add the y value to the sum.]
+     in_size - in_shift + dim_size + 1 - in_shift < 63
+   [to avoid overflow when we shift y and then add something to it]:
+    out_size - out_shift + 1 < 63
+
+    [the following is not required for correctness but to keep
+     things in a good numerical range: if out_shift != 0, we require:
+     max(in_size - in_shift, out_size - out_shift) <= FM_MAX_SIZE]
+
+    (we avoid shifting `out` if at all possible, since it might
+    include a whole region.)
+
+   Also, we never left-shift both args (i.e. never in_shift < 0 and
+   out_shift < 0).
 
      @param [in] in_size  Size of input data (x above), as found by FindSize() or
                         stored in its region
@@ -260,12 +273,26 @@ inline static void GetShiftsForAdd(int in_size, int in_exponent,
                                    int dim_size,
                                    int *in_shift, int *out_shift,
                                    int *final_size_guess) {
+  if (out_size < 0) { /* output is zero */
+    *in_shift = 0;
+    /* It won't physically shift the output. */
+    *out_shift = in_exponent - out_exponent;
+    *final_size_guess = in_size;
+    return;
+  } else if (in_size < 0) {
+    *in_shift = 0;  /* no need to shift if input data is zero. */
+    *out_shift = 0;
+    *final_size_guess = out_size;
+    return;
+  }
+
+
   int possible_in_shift = out_exponent - in_exponent;
   /* sum_max_size is the maximum possible size of the sum, assuming we only
      shift the input (the + 1 accounts for it getting larger when we add the two
      things. */
   int sum_max_size = FM_MAX(out_size, in_size + dim_size - possible_in_shift) + 1,
-      sum_min_size = FM_MAX(out_size, in_size + possible_in_shift),
+      sum_min_size = FM_MAX(out_size, in_size - possible_in_shift),
       sum_guess_size = FM_MAX(out_size, in_size + (dim_size / 2) - possible_in_shift);
 
   if (sum_max_size < 63 && out_size != 0 &&
@@ -296,6 +323,7 @@ inline static void GetShiftsForAdd(int in_size, int in_exponent,
     *in_shift = possible_in_shift;
     *out_shift = 0;
     *final_size_guess = sum_guess_size;
+    return;
   }
 
   /* Shift so that the max possible size becomes FM_TARGET_SIZE.  `shift_offset`
@@ -313,6 +341,7 @@ inline static void GetShiftsForAdd(int in_size, int in_exponent,
   *out_shift = shift_offset;
   *final_size_guess = sum_guess_size - shift_offset;
 }
+
 
 /**
    GetShiftsForAssign is the same as GetShiftsForAdd except a "+ 1" in the
@@ -906,11 +935,18 @@ void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
                                  &y_shift, &final_size_guess);
   ShiftRegion64(y_shift, y->region);
 
+  /*
+  fprintf(stderr, "a_size=%d,a_exponent=%d, x_size=%d,x_exponent=%d, y_size=%d,y_exponent=%d, "
+          "dim_size=%d, a_shift=%d, x_shift=%d, post_shift=%d, y_shift=%d, fsg=%d\n",
+          a_size, a_exponent, x_size, x_exponent, y_size, y_exponent,
+          dim_size, a_shift, x_shift, post_shift, y_shift, final_size_guess);
+  */
+
   int x_stride = x->stride, y_stride = y->stride;
   int64_t *x_data = x->data, *y_data = y->data;
   uint64_t largest = 0;  /* largest absolute value. */
   int i;
-  if (a_shift > 0 || y_shift > 0 || post_shift > 0) {
+  if (a_shift > 0 || x_shift > 0 || post_shift > 0) {
     int64_t a_shifted = a->data >> a_shift;
     for (i = 0; i + 4 <= dim; i += 4) {
       int64_t sum1 = ((a_shifted * (x_data[i  * x_stride] >> x_shift)) >> post_shift) + y_data[(i + 0) * y_stride],
@@ -932,6 +968,7 @@ void AddScalarVector64(const Scalar64 *a, const Vector64 *x, Vector64 *y) {
       if (FM_ABS(sum) > largest) largest = FM_ABS(sum);
     }
   } else {
+    assert(x_shift == 0 && post_shift == 0);
     /* We can implement the shifting by shifting just a. */
     int64_t a_shifted = a->data << -a_shift;
     for (i = 0; i + 4 <= dim; i += 4) {
@@ -1046,7 +1083,11 @@ void AddScalarMatrix64(const Scalar64 *a, const Matrix64 *x, Matrix64 *y) {
     Vector64 x_vec, y_vec;
     InitRowsVector64(x, &x_vec);
     InitRowsVector64(y, &y_vec);
+    PrintVector64("x_vec:", &x_vec);
+    PrintVector64("y_vec:", &y_vec);
     AddScalarVector64(a, &x_vec, &y_vec);
+    PrintScalar64("scalar=", a);
+    PrintVector64("y_vec[mod]:", &y_vec);
   } else {
     for (int r = 0; r < x->num_rows; r++) {
       Vector64 x_row, y_row;
@@ -1957,8 +1998,8 @@ void TestGetShiftsForTwoArgMultiply() {
 
 void TestGetShiftsForAdd() {
   for (int i = 0; i < 2000; i++) {
-    int in_size = i % 64,
-        out_size = (i * 7) % 64,
+    int in_size = i % 64 - 1,
+        out_size = (i * 7) % 64 - 1,
         in_exponent = -100 + i % 199,
         out_exponent = -50 + i % 93,
         dim_size = (i * 11) % 32;
@@ -1970,11 +2011,25 @@ void TestGetShiftsForAdd() {
                     dim_size,
                     &in_shift, &out_shift,
                     &final_size_guess);
-    assert(in_exponent + in_shift == out_exponent + out_shift);
+    fprintf(stderr, "in_size=%d,in_exp=%d, out_size=%d, out_exp=%d, "
+            "dim_size=%d, in_shift=%d,out_shift=%d\n",
+            in_size, in_exponent, out_size, out_exponent, dim_size, in_shift, out_shift);
+
+    assert(in_exponent + in_shift == out_exponent + out_shift || in_size < 0 || out_size < 0);
+    assert(in_size - in_shift + dim_size + 1 < 63);
+    assert(out_size < 0 || out_size - out_shift + 1 < 63);
+    if (out_shift < 0) {
+      assert(in_size < 0 || in_size - in_shift <= FM_MAX_SIZE);
+      assert(out_size < 0 || out_size - out_shift <= FM_MAX_SIZE);
+    }
+
     int max_size_out = FM_MAX(in_size + dim_size - in_shift, out_size - out_shift) + 1,
         size_guess = FM_MAX(in_size + (dim_size / 2) - in_shift, out_size - out_shift),
         min_size_out = FM_MAX(in_size - in_shift, out_size - out_shift);
-    assert(max_size_out < 64);
+    if (in_size < 0 && out_size < 0)
+      continue;  /* The following checks don't apply. */
+
+    assert(max_size_out < 63);
     assert(final_size_guess == size_guess);
     assert(!(out_shift < 0 && in_shift < 0));  /* doesn't make sense to shift
                                                  * both left. */
@@ -1983,8 +2038,12 @@ void TestGetShiftsForAdd() {
     }
 
     if (out_shift > 0 || in_shift > 0) {
+      fprintf(stderr, "in_size=%d,in_exp=%d, out_size=%d, out_exp=%d, "
+              "dim_size=%d, in_shift=%d,out_shift=%d,  min_size_out=%d, max_size_out=%d\n",
+              in_size, in_exponent, out_size, out_exponent, dim_size, in_shift, out_shift,
+              min_size_out, max_size_out);
       assert(min_size_out >= FM_MIN_SIZE ||
-          max_size_out >= FM_TARGET_SIZE);
+             max_size_out >= FM_TARGET_SIZE);
     }
   }
 }
