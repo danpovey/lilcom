@@ -383,6 +383,7 @@ class OnlineLinearSolver:
     """
     def __init__(self, N, num_cgd_iters = 3,
                  num_cgd_iters_initial = 5,
+                 fast_update = False,
                  diag_smoothing = 1.0e-07,
                  toeplitz_smoothing = 1.0e-02,
                  abs_smoothing = 1.0e-20,
@@ -397,6 +398,10 @@ class OnlineLinearSolver:
    cgd_iters_initial:  The number of CGD iters we do the first time
                (should be more, since we are not starting from a
                reasonable estimate.)
+   fast_update:  If set to true, and if we are doing only one
+               iteration (because cgd_iters and/or cgd_iters_initial
+               is 1), just use the search direction as the update,
+               leaving step size as 1.
    diag_smoothing:  Determines how much we scale up the zeroth
                autocorrelation coefficient to ensure we
                can limit the condition number of M (the
@@ -412,6 +417,7 @@ class OnlineLinearSolver:
         self.N = N
         self.num_cgd_iters = num_cgd_iters
         self.num_cgd_iters_initial = num_cgd_iters_initial
+        self.fast_update = fast_update
         self.diag_smoothing = diag_smoothing
         self.toeplitz_smoothing = toeplitz_smoothing
         self.abs_smoothing = abs_smoothing
@@ -469,23 +475,26 @@ class OnlineLinearSolver:
             print("Residual0 is {}, objf0 is {}".format(rsold,
                                                         np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b)))
 
-        for iter in range(num_iters):
-            Ap = np.dot(A, p)
-            alpha = rsold / np.dot(p, Ap)
-            x += alpha * p
-            if iter == num_iters-1:
-                break
-            r -= alpha * Ap;
-            z = toeplitz_solve(autocorr_stats, r)
-            rsnew = np.dot(r, z)
-            assert(rsnew >= 0.0)
-            if self.debug:
-                print("ResidualN is {}, ratio={}, objf={} ".format(rsnew, rsnew / rs_orig,
-                                                                   (np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b))))
-            if rsnew / rs_orig < 1.0e-05:
-                break
-            p = z + (p * (rsnew / rsold))
-            rsold = rsnew
+        if num_iters == 1 and self.fast_update:
+            x += p
+        else:
+            for iter in range(num_iters):
+                Ap = np.dot(A, p)
+                alpha = rsold / np.dot(p, Ap)
+                x += alpha * p
+                if iter == num_iters-1:
+                    break
+                r -= alpha * Ap;
+                z = toeplitz_solve(autocorr_stats, r)
+                rsnew = np.dot(r, z)
+                assert(rsnew >= 0.0)
+                if self.debug:
+                    print("ResidualN is {}, ratio={}, objf={} ".format(rsnew, rsnew / rs_orig,
+                                                                       (np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b))))
+                if rsnew / rs_orig < 1.0e-05:
+                    break
+                p = z + (p * (rsnew / rsold))
+                rsold = rsnew
         # We'll use this as the starting point for optimization the next time this is called.
         self.cur_estimate = x.copy()
         return x
@@ -903,7 +912,10 @@ def test_prediction(array):
     block_size = 32
     eta = 1.0 - (1.0/128.0)
     stats = LpcStats(lpc_order=order, eta=eta, dtype=dtype)
-    solver = OnlineLinearSolver(N=order, dtype=dtype)  # otherwise defaults
+    # You can change num_cgd_iters=3 for more complete optimization;
+    # this disables the `fast_update`
+    solver = OnlineLinearSolver(N=order, num_cgd_iters=1,
+                                fast_update=True, dtype=dtype)  # otherwise defaults
 
     pred_sumsq_tot = 0.0
     raw_sumsq_tot = 0.0
