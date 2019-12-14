@@ -59,7 +59,7 @@ void PrintRegion64(const char *name, Region64 *region) {
   fprintf(stderr, "%s = Region64 { dim = %d, exponent = %d, size = %d, data = [ ",
           name, region->dim, region->exponent, region->size);
   for (int i = 0; i < region->dim; i++)
-    fprintf(stderr, "%lld ", region->data[i]);
+    fprintf(stderr, "%ld ", (long)region->data[i]);
   fprintf(stderr, "] }\n");
 }
 
@@ -511,7 +511,8 @@ inline static int SizeIsCorrect(uint64_t value, int size) {
         (value*2 > ((uint64_t) 1) << size);
   }
   if (!ok) {
-    fprintf(stderr, "Error in SizeIsCorrect(value=%llu, size=%d)\n", value, size);
+    fprintf(stderr, "Error in SizeIsCorrect(value=%lu, size=%d)\n",
+            (long unsigned int)value, size);
     return 0;
   } else {
     return 1;
@@ -2196,4 +2197,3 @@ int main() {
   TestCopyIntToVector64Elem();
 }
 #endif /* FIXED_MATH_TEST */
-

@@ -449,13 +449,13 @@ int LpcStatsAuxInit(struct LpcStats *stats,
   int N = lpc_order, N1 = N + 1,
       tot_size = 3 * (N1 * N1)  +  N1 + N,
       tot_size_bytes = tot_size * sizeof(int64_t);
-  stats->allocated_block = malloc(tot_size_bytes);
-  if (stats->allocated_block == NULL)
+  aux->allocated_block = malloc(tot_size_bytes);
+  if (aux->allocated_block == NULL)
     return 1;  /* Error */
-  memset(stats->allocated_block, 0, tot_size_bytes);
+  memset(aux->allocated_block, 0, tot_size_bytes);
   int exponent = 0, size_hint = -1;
 
-  int64_t *data = (int64_t*)stats->allocated_block;
+  int64_t *data = (int64_t*)aux->allocated_block;
   InitRegionAndMatrix64(data, N1, N1, exponent, size_hint,
                         &aux->A_minus_region, &aux->A_minus);
   data += N1 * N1;
@@ -473,7 +473,7 @@ int LpcStatsAuxInit(struct LpcStats *stats,
                         &aux->x_context_region,
                         &aux->x_context);
   data += N;
-  assert(data == tot_size + (int64_t*)stats->allocated_block);
+  assert(data == tot_size + (int64_t*)aux->allocated_block);
   return 0;  /* Success */
 }
 
