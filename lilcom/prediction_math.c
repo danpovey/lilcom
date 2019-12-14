@@ -677,6 +677,120 @@ void LpcStatsAuxCompute(struct LpcStatsAux *aux) {
 }
 
 
+int OnlineLinearSolverInit(int dim,
+                           const Scalar64 *diag_smoothing,
+                           const Scalar64 *abs_smoothing,
+                           struct OnlineLinearSolver *solver) {
+  solver->dim = dim;
+  InitScalar64FromInt(1, &solver->diag_smoothing_plus_one);
+  AddScalar64(diag_smoothing, &solver->diag_smoothing_plus_one,
+              &solver->diag_smoothing_plus_one);
+  solver->abs_smoothing = *abs_smoothing;
+
+
+  int tot_size = 5 * dim,
+      tot_size_bytes = tot_size * sizeof(int64_t);
+  solver->allocated_block = malloc(tot_size_bytes);
+  if (solver->allocated_block == NULL)
+    return 1;  /* Error */
+  memset(solver->allocated_block, 0, tot_size_bytes);
+  int64_t *data = (int64_t*)solver->allocated_block;
+  int exponent = 0, size_hint = -1;
+  InitRegionAndVector64(data, dim, exponent, size_hint,
+                        &solver->x_region, &solver->x);
+  data += dim;
+  InitRegionAndVector64(data, dim, exponent, size_hint,
+                        &solver->r_region, &solver->r);
+  data += dim;
+  InitRegionAndVector64(data, dim, exponent, size_hint,
+                        &solver->z_region, &solver->z);
+  data += dim;
+  InitRegionAndVector64(data, dim, exponent, size_hint,
+                        &solver->temp1_region, &solver->temp1);
+  data += dim;
+  InitRegionAndVector64(data, dim, exponent, size_hint,
+                        &solver->temp2_region, &solver->temp2);
+  data += dim;
+  assert(data == ((int64_t*)solver->allocated_block) + tot_size);
+
+  return 0;  /* Success */
+}
+
+void OnlineLinearSolverDestroy(struct OnlineLinearSolver *solver) {
+  free(solver->allocated_block);
+}
+
+/* Does autocorr[0] += autocorr[0] * diag_smoothing + abs_smoothing. */
+static void OnlineLinearSolverSmoothAutocorr(
+    const struct OnlineLinearSolver *solver,
+    Vector64 *autocorr) {
+  Scalar64 a;
+  CopyVectorElemToScalar64(autocorr, 0, &a);
+  /* Actually `diag_smoothing` now contains */
+  MulScalar64(&a, &solver->diag_smoothing_plus_one, &a);
+  AddScalar64(&a, &solver->abs_smoothing, &a);
+  CopyScalarToVector64Elem(&a, 0, autocorr);
+}
+
+
+/* See documentation in header. */
+int OnlineLinearSolverStep(const Matrix64 *A,
+                           const Vector64 *b,
+                           Vector64 *autocorr,
+                           struct OnlineLinearSolver *solver) {
+  int dim = solver->dim;
+  assert(A->num_rows == dim && A->num_cols == dim &&
+         b->dim == dim && autocorr->dim == dim);
+  /* Add smoothing to autocorr[0]. */
+  OnlineLinearSolverSmoothAutocorr(solver, autocorr);
+
+  /* TODO: the 'safety mechanism' from the Python code. */
+
+  /* New few lines do r := b - np.dot(A, x)  */
+  ZeroRegion64(&solver->z_region);
+  ZeroRegion64(&solver->r_region);
+  /* using z as temp storage here.*/
+  SetMatrixVector64(A, &solver->x, &solver->r);
+  NegateVector64(&solver->r);
+  AddVector64(b, &solver->r);
+  /* now r == b - np.dot(A, x). */
+
+  /* Do z := r * inv(M), where M is the symmetric Toeplitz matrix formed from
+     `autocorr`. */
+  ZeroRegion64(&solver->temp1_region);
+  ZeroRegion64(&solver->temp2_region);
+  ZeroRegion64(&solver->z_region);
+  if (ToeplitzSolve(autocorr, &solver->r, &solver->z,
+                    &solver->temp1, &solver->temp2) != 0)
+    return 1;  /* Failure in Toeplitz solver (should not really happen but hard to prove, as we'd
+                  have to do an analysis of roundoff.  We leave x at its previous value.  It is
+                  still a deterministic computation. */
+  /* so x += z. */
+  ZeroRegion64(&solver->temp1_region);
+  AddVector64(&solver->z, &solver->x);
+  return 0;  /* success. */
+}
+
+void LpcStatsAuxGetInfoForSolver(struct LpcStatsAux *aux,
+                                 Matrix64 *A_for_solver,
+                                 Vector64 *b_for_solver,
+                                 Vector64 *autocorr_for_solver) {
+  /* In python, would be something like:
+     A_for_solver = A[1:,1:]
+     b_for_solver = A[0,1:]
+     autocorr_for_solver = autocorr_reflected[:-1]
+   */
+  *A_for_solver = aux->A;
+  A_for_solver->num_rows -= 1;
+  A_for_solver->num_cols -= 1;
+  /* First element is (1,1) */
+  A_for_solver->data += (1 * A_for_solver->row_stride + 1 * A_for_solver->col_stride);
+  InitRowVector64(&aux->A, 0, 1, aux->A.num_cols - 1, b_for_solver);
+  *autocorr_for_solver = aux->autocorr_reflected;
+  autocorr_for_solver->dim -= 1;  /* discard the last element. */
+}
+
+
 #ifdef PREDICTION_MATH_TEST
 #include <math.h>
 
@@ -767,14 +881,15 @@ void test_toeplitz_solve() {
   assert(rel_error < pow(2.0, -20));
 }
 
-void test_lpc_stats() {
-  /* Test LPC stats accumulation.  Mirrors code in ../test/linear_prediction.py
-     These numbers are the same ones used there.
+void test_lpc_stats_and_solver() {
+  /* Test LPC stats accumulation and LinearSolver.  Mirrors code in
+     ../test/linear_prediction.py These numbers are the same ones used there.
    */
   int16_t signal[10] = { 1,2,3,4,5,7,9,11,13,15 };
   Scalar64 eta;
   InitScalar64FromInt(2, &eta);
   InvertScalar64(&eta, &eta);  /* now it's 0.5. */
+
 
   int lpc_order = 4;
   struct LpcStats stats;
@@ -784,31 +899,60 @@ void test_lpc_stats() {
   int est_lpc_order = 4;  /* it can be any number >= 1 and <= 4. */
   LpcStatsAuxInit(&stats, est_lpc_order, &aux);
 
+  struct OnlineLinearSolver solver;
+  Scalar64 diag_smoothing, abs_smoothing;
+  InitScalar64AsPowerOf2(-8, &diag_smoothing);
+  InitScalar64AsPowerOf2(-10, &abs_smoothing);
+  OnlineLinearSolverInit(est_lpc_order, &diag_smoothing,
+                         &abs_smoothing, &solver);
+
+
   LpcStatsAcceptBlock16(5, signal + 0, &stats);
   PrintVector64("Autocorr-coeffs[1]: ", &stats.autocorr);
 
   LpcStatsAuxCompute(&aux);
   PrintVector64("Autocorr-coeffs-reflected[1]:", &aux.autocorr_reflected);
 
+  PrintMatrix64("A'^-[1]", &aux.A_minus);
+  PrintMatrix64("A^+[1]", &aux.A_plus);
+  PrintMatrix64("A[1]", &aux.A);
+
+  {
+    Matrix64 A;
+    Vector64 b, autocorr;
+    LpcStatsAuxGetInfoForSolver(&aux, &A, &b, &autocorr);
+    OnlineLinearSolverStep(&A, &b, &autocorr, &solver);
+    PrintVector64("x[1]", &solver.x);
+  }
+
+
   LpcStatsAcceptBlock16(5, signal + 5, &stats);
   PrintVector64("Autocorr-coeffs[2]: ", &stats.autocorr);
 
   LpcStatsAuxCompute(&aux);
   PrintVector64("Autocorr-coeffs-reflected[2]:", &aux.autocorr_reflected);
+  PrintMatrix64("A'^-[2]", &aux.A_minus);
 
-  PrintMatrix64("A'^-", &aux.A_minus);
+  PrintMatrix64("A^+[2]", &aux.A_plus);
 
-  PrintMatrix64("A^+", &aux.A_plus);
+  PrintMatrix64("A[2]", &aux.A);
 
-  PrintMatrix64("A", &aux.A);
+  {
+    Matrix64 A;
+    Vector64 b, autocorr;
+    LpcStatsAuxGetInfoForSolver(&aux, &A, &b, &autocorr);
+    OnlineLinearSolverStep(&A, &b, &autocorr, &solver);
+    PrintVector64("x[2]", &solver.x);
+  }
 
-
-  /* TODO */
+  OnlineLinearSolverDestroy(&solver);
+  LpcStatsAuxDestroy(&aux);
+  LpcStatsDestroy(&stats);
 }
 
 int main() {
   test_toeplitz_solve();
-  test_lpc_stats();
+  test_lpc_stats_and_solver();
 }
 
 

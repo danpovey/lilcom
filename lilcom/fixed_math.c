@@ -729,6 +729,12 @@ void InitScalar64FromInt(int64_t i, Scalar64 *a) {
   assert(SizeIsCorrect(i_abs, a->size));
 }
 
+void InitScalar64AsPowerOf2(int64_t p, Scalar64 *a){
+  a->exponent = p;
+  a->data = 1;
+  a->size = 0;  /* 1 <= 2^0 */
+}
+
 void CopyIntToVector64Elem(int i, int64_t value, int size_hint, Vector64 *a) {
   assert(i >= 0 && i < a->dim);
   int size = FindSize(FM_ABS(value), size_hint),

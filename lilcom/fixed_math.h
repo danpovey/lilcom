@@ -350,6 +350,9 @@ void NegateVector64(Vector64 *a);
 /* Sets this scalar to an integer. */
 void InitScalar64FromInt(int64_t i, Scalar64 *a);
 
+/* Sets this scalar to 2^p. */
+void InitScalar64AsPowerOf2(int64_t p, Scalar64 *a);
+
 
 /*
   a[i] = value:

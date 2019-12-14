@@ -1144,24 +1144,32 @@ def test_new_stats_accum_and_solver_compare():
 
     # two blocks.
     stats.accept_block(signal[:5])
+    solver = SimpleOnlineLinearSolver(N=N, diag_smoothing=2**-8,
+                                      abs_smoothing=2**-10, dtype=dtype)
 
     aux_order = 4
-    print("autocorr is: ", stats.autocorr)
-    print("x_hat is: ", stats.x_hat)
-    print("autocorr-reflected is: ", stats.get_autocorr_reflected(aux_order))
+    print("autocorr[1] is: ", stats.autocorr)
+    print("x_hat[1] is: ", stats.x_hat)
+    A = stats.get_A()
+    autocorr_r = stats.get_autocorr_reflected(aux_order)
+    print("autocorr-reflected[1] is: ", autocorr_r)
+    print("x[1] is ", solver.estimate(A[1:,1:], A[0,1:], autocorr_r[:-1]))
 
     stats.accept_block(signal[5:])
 
-    print("autocorr is: ", stats.autocorr)
-    print("x_hat is: ", stats.x_hat)
-    print("autocorr-reflected is: ", stats.get_autocorr_reflected(aux_order))
+    print("autocorr[2] is: ", stats.autocorr)
+    print("x_hat[2] is: ", stats.x_hat)
+    autocorr_r = stats.get_autocorr_reflected(aux_order)
+    print("autocorr-reflected[2] is: ", autocorr_r)
 
     stats._get_A_minus(aux_order)
-    print("A'^- is: ", stats.A_minus[aux_order])
-    print("A^+ is: ", stats._get_A_plus(aux_order))
-    print("A^all is: ", stats._get_A_all(aux_order))
+    print("A'^-[2] is: ", stats.A_minus[aux_order])
+    print("A^+[2] is: ", stats._get_A_plus(aux_order))
+    print("A^all[2] is: ", stats._get_A_all(aux_order))
+    A = stats.get_A()
+    print("A[2] is: ", A)
+    print("x[2] is ", solver.estimate(A[1:,1:], A[0,1:], autocorr_r[:-1]))
 
-    print("A is: ", stats.get_A(aux_order))
 
 
 test_new_stats_accum_and_solver()

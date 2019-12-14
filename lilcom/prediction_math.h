@@ -147,7 +147,8 @@ struct LpcStatsAux {
   Region64 A_minus_region;
   Matrix64 A_minus;
 
-  /* Region and matrix for A_plus (A^+ in the writeup). */
+  /* Region and matrix for A_plus (A^+ in the writeup).  Dimension is
+     lpc_order+1 by lpc_order+1 */
   Region64 A_plus_region;
   Matrix64 A_plus;
 
@@ -155,6 +156,7 @@ struct LpcStatsAux {
   Region64 A_region;
   Matrix64 A;
 
+  /* Region and vector for autocorr_reflected.  Dimension is lpc_order+1. */
   Region64 autocorr_reflected_region;
   Vector64 autocorr_reflected;
 
@@ -239,6 +241,156 @@ void LpcStatsAcceptBlock16(int block_size,
                            int16_t *data,
                            struct LpcStats *stats);
 
+/*
+  This convenience function seets up `A_for_solver` to point
+  to (in NumPy notation) A[1:,1:] where A is aux->A,
+  `b_for_solver` to point to A[0,1:], and autocorr_for_solver
+  to point to autocorr_reflected[:-1] (i.e. all but the last
+  element) where autocorr_reflected is aux->autocorr_reflected.
+
+  `aux` is unaffected by this call, but we don't make it `const`
+  because we want to draw attention to the fact that the zeroth element
+  of autocorr_for_solver will be modified in OnlineLinearSolverStep(),
+  so we will later be modifying `aux` as an indirect effect of
+  calling this.
+*/
+void LpcStatsAuxGetInfoForSolver(struct LpcStatsAux *aux,
+                                 Matrix64 *A_for_solver,
+                                 Vector64 *b_for_solver,
+                                 Vector64 *autocorr_for_solver);
+
+/*
+  This struct parallels class SimpleOnlineLinearSolver in
+  ../test/linear_prediction.py.
+
+  It is for solving systems of the form A x = b with A symmetric positive
+  definite, where A can be reasonably closely approximated by a Toeplitz matrix
+  that the user can supply, and A and b are changing with time (so it makes
+  sense to start the optimization from the previous value of x).
+
+  It uses a very simple method that's essentially gradient descent with a
+  learning rate of 1, but preconditioned by the inverse of the Toeplitz matrix
+  (we can multiply by this inverse using a Toeplitz solver in O(dim^2)).
+
+  This class uses preconditioned conjugate gradient descent (CGD)
+  to approximately solve for x.
+ */
+struct OnlineLinearSolver {
+  /* block of memory to free when we are done */
+  void *allocated_block;
+
+
+  /* The dimension of the thing we are solving for. */
+  int dim;
+
+  /* 1.0 plus the proportionality constant diag_smoothing for smoothing
+   * autocorr[0].  E.g. 1.0 + 1.0e-07. */
+  Scalar64 diag_smoothing_plus_one;
+  /* absolute value used when smoothing autocorr[0].  E.g. 1.0e-20. */
+  Scalar64 abs_smoothing;
+
+
+  /* The current estimate of x (e.g. x might be the filter coefficients).
+     Dimension is `dim`. */
+  Region64 x_region;
+  Vector64 x;
+
+  /* The residual (this is a quantity used internally).  Dimension is `dim`. */
+  Region64 r_region;
+  Vector64 r;
+  /* The preconditioned residual == the update step.  Equals r times
+     inv(M) where M is the Toeplitz matrix formed from the autocorr stats. */
+  Region64 z_region;
+  Vector64 z;
+
+  /* temp1 and temp2 are two temporary vectors of dimension `dim` that are
+     used in ToeplitzSolve(). */
+  Region64 temp1_region;
+  Vector64 temp1;
+  Region64 temp2_region;
+  Vector64 temp2;
+};
+
+/*
+  Initialize OnlineLinearSolver object (allocates memory and sets 'x' to
+  zero).
+
+     @param [in] dim   Dimension of the linear problem we are solving.
+                       (would be the LPC filter order)
+     @param [in] diag_smoothing, abs_smoothing
+                       Constants for smoothing added to diagonal
+                       of the Toeplitz matrix formed by the autocorrelation
+                       coefficients, equivalent to increasing the 0th
+                       autocorrelation coefficient, formula is:
+                         autocorr[0] += diag_smoothing * autocorr[0] + abs_smoothing
+     @param [out] solver  The solver object to be initialized
+
+     @return           Returns 0 on success, 1 if it fails due to memory allocation
+                       failure.
+ */
+int OnlineLinearSolverInit(int dim,
+                           const Scalar64 *diag_smoothing,
+                           const Scalar64 *abs_smoothing,
+                           struct OnlineLinearSolver *solver);
+
+/*
+  Do one step of the linear solver (we are trying to approach a solution of
+  the equation A x = b, but where A and b are changing with time).
+
+    @param [in] A       The matrix A that is the quadratic term in the objective
+                        function we are minimizing (0.5 x^T A x - b).  Must be
+                        of dimension solver->dim by solver->dim and must be
+                        positive semidefinite.
+    @param [in] b       The vector b that is the linear term in the objective
+                        function we are minimizing.
+    @param [in,out] autocorr  A vector of dimension `dim` that provides an
+                        approximation to A.  Specifically: if we construct
+                        a `dim` by `dim` matrix M with elements M(i,j) =
+                        autocorr(abs(i-j)) [assuming zero-based indexing],
+                        the caller asserts that (a) this has some similarity
+                        to A, and (b) all its eigenvalues are strictly
+                        positive.  There are some specific limitations
+                        that need to be met to prevent divergence:
+                        e.g. if for some direction x,
+                        (x^T M x) < 0.5 (x^T A x), calling this function
+                        repeatedly with the same values of A,b,autocorr
+                        would lead to divergence of x.  We can't exclude
+                        this in general, so this function will reset the
+                        previous `x` in the online update to zero anytime
+                        it detects that zero would give a better
+                        objective-function value than the previous `x`.
+                        (This should be rare).
+                        CAUTION: autocorr is consumed destructively
+                        (we modify one element by adding smoothing).
+    @param [in,out] solver   The solver object; its x value will be
+                        updated.
+    @return             Returns 0 on success, and 1 if there was
+                        some supposed-to-be-rare-or-impossible problem
+                        such as needing to `revert` x or the Toeplitz
+                        matrix not being invertible.  This failure
+                        condition is just for diagnostic purposes;
+                        this function will still leave solver->x in
+                        a reasonable and well-defined state so that
+                        compression can continue.
+ */
+int OnlineLinearSolverStep(const Matrix64 *A,
+                           const Vector64 *b,
+                           Vector64 *autocorr,
+                           struct OnlineLinearSolver *solver);
+
+/*
+  Destroy OnlineLinearSolver object (releases memory).
+ */
+void OnlineLinearSolverDestroy(struct OnlineLinearSolver *solver);
+
+
+
+
+
+/* TODO: make sure that it's impossible for it to attempt to shift right
+   by more than 64.  (could happen if exponents are weird.) */
+
 #endif  /* ifndef __LILCOM__PREDICTION_MATH_H__ */
+
 
 
