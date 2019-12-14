@@ -197,20 +197,6 @@ class LpcStats:
             ans[k] += 0.5 * np.dot(self.x_hat[-k:], np.flip(self.x_hat[-k:]))
         return ans
 
-    def get_autocorr_reflected_scaled(self, lpc_order = None):
-        """
-        Returns a scaled version of the reflected autocorrelation coefficients
-        as returned by `get_autocorr_reflected`, where the scale ensures that if
-        we construct a Toeplitz matrix M from the scaled reflected
-        autocorrelation coefficients a such that M[i,j] = a[abs(i-j)], then
-        M \geq A (meaning: for any vector x, x^T M x >= x^T A x),
-        where A is the result of callng self.get_A().
-
-        This is useful for convergence proofs.
-        """
-        return (self.eta ** (-2*self.lpc_order)) * self.get_autocorr_reflected(lpc_order)
-
-
     def _get_b_minus(self, lpc_order):
         """
         Returns a term that we need to subtract from the weighted cross-correlation between x and y
@@ -395,7 +381,6 @@ class SimpleOnlineLinearSolver:
     (so it makes sense to start the optimization from the previous value).
     """
     def __init__(self, N,
-                 acceleration = 1.3,
                  diag_smoothing = 1.0e-07,
                  abs_smoothing = 1.0e-20,
                  dtype=np.float64,
@@ -404,9 +389,6 @@ class SimpleOnlineLinearSolver:
         Initialize the object.
         Args:
              N: The dimension of the problem (e.g. LPC order)
-   acceleration:   Constant that accelerates the update; convergence
-               is assured for any value that is >0 and <2; values between
-               1 and 2 are the ones that make sense.
    diag_smoothing:  Determines how much we scale up the zeroth
                autocorrelation coefficient to ensure we
                can limit the condition number of M (the
@@ -419,7 +401,6 @@ class SimpleOnlineLinearSolver:
    debug:  If true, verbose output will be printed
         """
         self.N = N
-        self.acceleration = acceleration
         self.diag_smoothing = diag_smoothing
         self.abs_smoothing = abs_smoothing
         self.dtype = dtype
@@ -474,7 +455,7 @@ class SimpleOnlineLinearSolver:
                 r = b
 
         z = toeplitz_solve(autocorr_stats, r)  # preconditioned residual
-        x += self.acceleration * z
+        x += z
         self.cur_estimate = x
         return x
 
@@ -1015,6 +996,17 @@ def test_prediction(array):
     T = array.shape[0]
     block_size = 32
     eta = 1.0 - (1.0/128.0)
+
+    # The following inequality is required for convergence, i.e.
+    # to prevent the possibility of the update of x diverging.
+    # eta ** (-2 * order) is a constant that if we multiplied
+    # M by it, we could prove that have M >= A, in the sense that for
+    # any x, x^T M x >= x^T A x.  [the -2*order relates to the -(j+k)
+    # in eq. (17) in the writeup].  The < 2.0 is because for
+    # a quadratic objective function, we converge as long as the
+    # learning rate is less than twice the "optimal" learning rate.
+    assert(eta ** (-2 * order) < 2.0)
+
     stats = LpcStats(lpc_order=order, eta=eta, dtype=dtype)
     # You can change num_cgd_iters=3 for more complete optimization;
     # this disables the `fast_update`
@@ -1042,7 +1034,7 @@ def test_prediction(array):
 
         if t >= order:
             A = stats.get_A()
-            autocorr = stats.get_autocorr_reflected_scaled()
+            autocorr = stats.get_autocorr_reflected()
             A_for_solver = A[1:,1:]
             b_for_solver = A[0,1:]
             autocorr_for_solver = autocorr[:-1]
