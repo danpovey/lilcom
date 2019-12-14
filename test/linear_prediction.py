@@ -183,7 +183,7 @@ class LpcStats:
                                self.lpc_order.
          Returns:
                b: numpy.ndarray   The autocorrelation statistics (not normalized
-                            by count); if you construct Toeplitz matrix with
+                            by count); if you construct a Toeplitz matrix with
                             elements M[i,j] = b[abs(i-j)], it will be similar to
                             A (i.e. the result of calling get_A()).
         """
@@ -196,6 +196,19 @@ class LpcStats:
         for k in range(1, lpc_order + 1):
             ans[k] += 0.5 * np.dot(self.x_hat[-k:], np.flip(self.x_hat[-k:]))
         return ans
+
+    def get_autocorr_reflected_scaled(self, lpc_order = None):
+        """
+        Returns a scaled version of the reflected autocorrelation coefficients
+        as returned by `get_autocorr_reflected`, where the scale ensures that if
+        we construct a Toeplitz matrix M from the scaled reflected
+        autocorrelation coefficients a such that M[i,j] = a[abs(i-j)], then
+        M \geq A (meaning: for any vector x, x^T M x >= x^T A x),
+        where A is the result of callng self.get_A().
+
+        This is useful for convergence proofs.
+        """
+        return (self.eta ** (-2*self.lpc_order)) * self.get_autocorr_reflected(lpc_order)
 
 
     def _get_b_minus(self, lpc_order):
@@ -368,6 +381,105 @@ class LpcStats:
         return self.sqrt_scale_vec[-T:]
 
 
+class SimpleOnlineLinearSolver:
+    """
+    This is a simpler form of class OnlineLinearSolver that just does a single
+    step of gradient descent each time, using the inverse of the autocorrelation
+    matrix as the preconditioner.  (This would be an exact solution if A was
+    the same as the Toeplitz matrix constructed from the autocorrelation
+    coefficients).
+
+    This class is for solving systems of the form A x = b with A symmetric
+    positive definite, where A can be reasonably closely approximated by a
+    Toeplitz matrix that the user can supply, and A and b are changing with time
+    (so it makes sense to start the optimization from the previous value).
+    """
+    def __init__(self, N,
+                 acceleration = 1.3,
+                 diag_smoothing = 1.0e-07,
+                 abs_smoothing = 1.0e-20,
+                 dtype=np.float64,
+                 debug=False):
+        """
+        Initialize the object.
+        Args:
+             N: The dimension of the problem (e.g. LPC order)
+   acceleration:   Constant that accelerates the update; convergence
+               is assured for any value that is >0 and <2; values between
+               1 and 2 are the ones that make sense.
+   diag_smoothing:  Determines how much we scale up the zeroth
+               autocorrelation coefficient to ensure we
+               can limit the condition number of M (the
+               Toeplitz matrix formed from the autocorr stats)
+   abs_smoothing:    A value that we add to the diagonal
+               of M to make sure that it is positive definite (relevant if the
+               data is exactly zero); the exact value should not
+               matter that much.
+   dtype:  The data type to use: np.float32 or np.float64
+   debug:  If true, verbose output will be printed
+        """
+        self.N = N
+        self.acceleration = acceleration
+        self.diag_smoothing = diag_smoothing
+        self.abs_smoothing = abs_smoothing
+        self.dtype = dtype
+        self.cur_estimate = np.zeros(N, dtype=self.dtype)
+        self.debug = debug
+
+
+    def get_current_estimate(self):
+        return self.cur_estimate
+
+    def estimate(self, A, b, autocorr_stats):
+        """
+        Re-estimates the linear prediction coefficients and returns it
+        as a vector.
+
+        Args:
+           autocorr_stats:  Autocorrelation coefficients, of dimension self.N,
+                for use when smoothing A.
+           A:   The quadratic term in the objective function x^T A x - 2 b x
+           b:   The linear term in the objective function x^T A x - 2 b x
+
+        Return:
+          Returns the updated `x` value (e.g. the filter parameters)
+        """
+        N = self.N
+        assert autocorr_stats.shape == (A.shape[0],) and b.shape == (A.shape[0],)
+        A = A.copy().astype(self.dtype)
+        b = b.copy().astype(self.dtype)
+        autocorr_stats = autocorr_stats.copy()
+        autocorr_stats[0] += self.abs_smoothing + (self.diag_smoothing * autocorr_stats[0])
+
+        x = self.cur_estimate
+        r = b - np.dot(A, x)  # residual
+
+
+        if True:
+            # This block is a kind of safety mechanism to prevent divergence
+            # (that in practice never gets triggered).
+            #
+            # The objective function, to be maximized, is is f(x) = x b - 0.5 x^T A x.
+            # We want its value, to see whether the previous x was worse than zero,
+            # in which case we'll revert the coefficients to zero.  (This avoids
+            # the possibility of divergence).
+            # x.r equals x^T b - x^T A x, so 0.5(x.r + x.b) equals x^T b - 0.5 x^T A x.
+            # This should normally be positive.
+            # We are only interested in the sign so we forget the 0.5.
+            twice_objf = np.dot(r+b, x)
+            if twice_objf < 0:  # this x value is worse than the zero vector,
+                                # so revert
+                print("reverting");
+                x.fill(0.0)
+                r = b
+
+        z = toeplitz_solve(autocorr_stats, r)  # preconditioned residual
+        x += self.acceleration * z
+        self.cur_estimate = x
+        return x
+
+
+
 class OnlineLinearSolver:
     """
     This class is for solving systems of the form A x = b with A symmetric
@@ -382,7 +494,6 @@ class OnlineLinearSolver:
     obtained from class LpcStats.
     """
     def __init__(self, N, num_cgd_iters = 3,
-                 num_cgd_iters_initial = 5,
                  fast_update = False,
                  diag_smoothing = 1.0e-07,
                  toeplitz_smoothing = 1.0e-02,
@@ -395,12 +506,9 @@ class OnlineLinearSolver:
              N: The dimension of the problem (e.g. LPC order)
      cgd_iters: The number of iterations of conjugate gradient
                 descent that we do each time we solve.
-   cgd_iters_initial:  The number of CGD iters we do the first time
-               (should be more, since we are not starting from a
-               reasonable estimate.)
    fast_update:  If set to true, and if we are doing only one
-               iteration (because cgd_iters and/or cgd_iters_initial
-               is 1), just use the search direction as the update,
+               iteration (because cgd_iters is 1), just use the
+               search direction as the update,
                leaving step size as 1.
    diag_smoothing:  Determines how much we scale up the zeroth
                autocorrelation coefficient to ensure we
@@ -412,11 +520,11 @@ class OnlineLinearSolver:
    abs_smoothing:    A value that we add to the diagonal
                of M to make sure that it is positive definite (relevant if the
                data is exactly zero); should not matter that much.
+   dtype:  The data type to use (np.float32 or np.float64)
    debug:  If true, verbose output will be printed
         """
         self.N = N
         self.num_cgd_iters = num_cgd_iters
-        self.num_cgd_iters_initial = num_cgd_iters_initial
         self.fast_update = fast_update
         self.diag_smoothing = diag_smoothing
         self.toeplitz_smoothing = toeplitz_smoothing
@@ -444,11 +552,6 @@ class OnlineLinearSolver:
           Returns the updated `x` value (e.g. the filter parameters)
         """
         N = self.N
-        if self.cur_estimate is None:
-            self.cur_estimate = np.zeros(N, dtype=self.dtype)
-            num_iters = self.num_cgd_iters_initial
-        else:
-            num_iters = self.num_cgd_iters
         assert autocorr_stats.shape == (A.shape[0],) and b.shape == (A.shape[0],)
         x = self.cur_estimate
         A = A.copy().astype(self.dtype)
@@ -475,14 +578,15 @@ class OnlineLinearSolver:
             print("Residual0 is {}, objf0 is {}".format(rsold,
                                                         np.dot(np.dot(A,x),x) - 2.0 * np.dot(x,b)))
 
-        if num_iters == 1 and self.fast_update:
+        if self.num_cgd_iters == 1 and self.fast_update:
             x += p
         else:
-            for iter in range(num_iters):
+            for iter in range(self.num_cgd_iters):
                 Ap = np.dot(A, p)
                 alpha = rsold / np.dot(p, Ap)
+                #print("alpha = {}".format(alpha))
                 x += alpha * p
-                if iter == num_iters-1:
+                if iter == self.num_cgd_iters-1:
                     break
                 r -= alpha * Ap;
                 z = toeplitz_solve(autocorr_stats, r)
@@ -914,8 +1018,13 @@ def test_prediction(array):
     stats = LpcStats(lpc_order=order, eta=eta, dtype=dtype)
     # You can change num_cgd_iters=3 for more complete optimization;
     # this disables the `fast_update`
-    solver = OnlineLinearSolver(N=order, num_cgd_iters=1,
-                                fast_update=True, dtype=dtype)  # otherwise defaults
+
+    #solver = OnlineLinearSolver(N=order, num_cgd_iters=1,
+    #                            dtype=dtype)  # otherwise defaults
+
+    # on first 14 files, using this one gave objf = 0.00308
+    # vs. 0.00283 with 3-iter CGD.
+    solver = SimpleOnlineLinearSolver(N=order, dtype=dtype)
 
     pred_sumsq_tot = 0.0
     raw_sumsq_tot = 0.0
@@ -933,7 +1042,7 @@ def test_prediction(array):
 
         if t >= order:
             A = stats.get_A()
-            autocorr = stats.get_autocorr_reflected()
+            autocorr = stats.get_autocorr_reflected_scaled()
             A_for_solver = A[1:,1:]
             b_for_solver = A[0,1:]
             autocorr_for_solver = autocorr[:-1]
