@@ -103,7 +103,7 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
     InitSubVector64(&b_temp, 1, n, 1, &b_temp_1n1);
     CopyVector64(&bn, &b_temp_1n1); /* b_temp[1:n+1] = b[:n] */
     CheckRegion64Size(b_temp.region);
-    Vector64 b_temp_n; /* == b[0:n] */
+    Vector64 b_temp_n; /* == b_temp[0:n] */
     InitSubVector64(&b_temp, 0, n, 1, &b_temp_n);
     Vector64 b_n_flip; /* == np.flip(b[:n]) */
     InitSubVector64(&b, n - 1, n, -1, &b_n_flip);
@@ -152,15 +152,13 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
       DivideScalar64(&lambda_n, &epsilon, &ratio); /* ratio = lambda_n / epsilon */
     }
 
+
     Vector64 x_n1, b_n1;
     InitSubVector64(&x, 0, n+1, 1, &x_n1);
     InitSubVector64(&b, 0, n+1, 1, &b_n1);
     /* next line: x[:n+1] += (lambda_n / epsilon) * b[:n+1] */
     AddScalarVector64(&ratio, &b_n1, &x_n1);
   }
-
-  PrintVector64("x is: ", &x);
-
   return 0;
 }
 
@@ -335,7 +333,6 @@ static void LpcStatsUpdateXhat(int block_size,
        this may not actually be necessary. */
     SetRegion64Size(size_hint, stats->x_hat.region);
   }
-  PrintVector64("Xhat", &stats->x_hat);
 }
 
 
@@ -546,7 +543,6 @@ void LpcStatsAuxComputeAPlus(struct LpcStatsAux *aux) {
         abs_x = (x >= 0 ? x : -x);
     if (abs_x > max_abs_value)
       max_abs_value = abs_x;
-    fprintf(stderr, "t=%d, setting x-context data to %d\n", t, x);
     aux->x_context.data[T-1-t] = x;
   }
   aux->x_context_region.exponent = 0;  /* they are just integers */
@@ -555,15 +551,12 @@ void LpcStatsAuxComputeAPlus(struct LpcStatsAux *aux) {
    * since it's faster this way. */
   aux->x_context_region.size = FindSize(size_hint, (uint64_t)max_abs_value);
 
-  PrintMatrix64("APlus[a] ", &aux->A_plus);
   for (int j = 1; j <= N; j++) {
     /* Python code was: A_plus[j,1:] = (self.eta ** -2 * (A_plus[j-1,:-1]) +  x[T-j] * np.flip(x[T-N:T])) */
     Vector64 A_plus_j_1,  /* A_plus[j,1:] */
         A_plus_jm1; /* A_plus[j-1,:-1] */
     InitRowVector64(&aux->A_plus, j,     1, N, &A_plus_j_1);
     InitRowVector64(&aux->A_plus, j - 1, 0, N, &A_plus_jm1);
-    PrintVector64("APlusjm1", &A_plus_jm1);
-    PrintVector64("APlusj1", &A_plus_j_1);
 
     /* do: A_plus[j,1:] = ((self.eta ** -2) * (A_plus[j-1,:-1])) */
     SetScalarVector64(&stats->eta_m2, &A_plus_jm1, &A_plus_j_1);
@@ -606,6 +599,42 @@ static void LpcStatsAuxComputeAAll(struct LpcStatsAux *aux) {
   }
 }
 
+/**
+   This function sets `factor` to -\eta^{2(T-N)}, where N is aux->lpc_order.
+ */
+static void LpcStatsAuxGetMinusEta2TN(const struct LpcStatsAux *aux,
+                                      Scalar64 *factor) {
+  InitScalar64FromInt(-1, factor);
+  const struct LpcStats *stats = aux->stats;
+  Scalar64 eta_2TN;
+  if (stats->T < stats->lpc_order) {
+    /* In this case, stats->eta_2TN will be 1.0, and we ignore it. */
+    int eta_power = 2 * (stats->T - aux->lpc_order);
+    /* Note: stats->sqrt_scale.dim is at least 2 * stats->lpc_order,
+       so the index below won't be negative.*/
+    CopyVectorElemToScalar64(&stats->sqrt_scale,
+                             stats->sqrt_scale.dim - eta_power, &eta_2TN);
+  } else {
+    /* Here we are correcting for the fact that stats->eta_2TN has
+       N corresponding to stats->lpc_order, while we want N to
+       be aux->lpc_order.
+       I.e. we want eta_2TN = eta^(2(T-aux->lpc_order)), but we have
+       stats->eta_2TN = eta^(2(T-stats->lpc_order))
+    */
+    int eta_power = 2 * (stats->lpc_order - aux->lpc_order);
+    if (eta_power != 0) {
+      Scalar64 correction;
+      CopyVectorElemToScalar64(&stats->sqrt_scale,
+                               stats->sqrt_scale.dim - eta_power, &correction);
+      MulScalar64(&correction, &stats->eta_2TN, &eta_2TN);
+    } else {
+      eta_2TN = stats->eta_2TN;
+    }
+  }
+  /* factor *= eta^2(T-N) */
+  MulScalar64(&eta_2TN, factor, factor);
+}
+
 
 static void LpcStatsAuxComputeA(struct LpcStatsAux *aux) {
   const struct LpcStats *stats = aux->stats;
@@ -617,11 +646,11 @@ static void LpcStatsAuxComputeA(struct LpcStatsAux *aux) {
   AddScalarMatrix64(&factor, &aux->A_plus, &aux->A);
 
   if (stats->eta_2TN.exponent < -1000)
-    return;  /* A^- is too small to worry about. */
-  MulScalar64(&stats->eta_2TN, &factor, &factor);
+    return;  /* A^- is too small to worry about; ignore it */
+
+  LpcStatsAuxGetMinusEta2TN(aux, &factor);
   /* next line: A -= eta^2(T-N) * A^-
-     Note: aux->a_minus is actually A'^- in the writeup.
-   */
+     Note: aux->a_minus is actually A'^- in the writeup. */
   AddScalarMatrix64(&factor, &aux->A_minus, &aux->A);
 }
 
@@ -670,7 +699,6 @@ void LpcStatsAuxCompute(struct LpcStatsAux *aux) {
     LpcStatsAuxComputeAMinus(aux);
   LpcStatsAuxComputeAPlus(aux);
   LpcStatsAuxComputeAAll(aux);
-  PrintMatrix64("A^plus", &aux->A_plus);
   PrintMatrix64("A^all", &aux->A);
   LpcStatsAuxComputeA(aux);
   LpcStatsAuxComputeReflectedAutocorr(aux);
@@ -744,15 +772,15 @@ int OnlineLinearSolverStep(const Matrix64 *A,
   /* Add smoothing to autocorr[0]. */
   OnlineLinearSolverSmoothAutocorr(solver, autocorr);
 
-  /* TODO: the 'safety mechanism' from the Python code. */
-
   /* New few lines do r := b - np.dot(A, x)  */
   ZeroRegion64(&solver->z_region);
   ZeroRegion64(&solver->r_region);
   /* using z as temp storage here.*/
   SetMatrixVector64(A, &solver->x, &solver->r);
+
   NegateVector64(&solver->r);
   AddVector64(b, &solver->r);
+
   /* now r == b - np.dot(A, x). */
 
   /* Do z := r * inv(M), where M is the symmetric Toeplitz matrix formed from
@@ -761,10 +789,12 @@ int OnlineLinearSolverStep(const Matrix64 *A,
   ZeroRegion64(&solver->temp2_region);
   ZeroRegion64(&solver->z_region);
   if (ToeplitzSolve(autocorr, &solver->r, &solver->z,
-                    &solver->temp1, &solver->temp2) != 0)
+                    &solver->temp1, &solver->temp2) != 0) {
+    fprintf(stderr, "Warning: failure in Toeplitz solver\n");
     return 1;  /* Failure in Toeplitz solver (should not really happen but hard to prove, as we'd
                   have to do an analysis of roundoff.  We leave x at its previous value.  It is
                   still a deterministic computation. */
+  }
   /* so x += z. */
   ZeroRegion64(&solver->temp1_region);
   AddVector64(&solver->z, &solver->x);
@@ -891,12 +921,13 @@ void test_lpc_stats_and_solver() {
   InvertScalar64(&eta, &eta);  /* now it's 0.5. */
 
 
-  int lpc_order = 4;
+  int lpc_order = 10;
   struct LpcStats stats;
   int max_block_size = 5;
   LpcStatsInit(lpc_order, max_block_size, &eta, &stats);
   struct LpcStatsAux aux;
-  int est_lpc_order = 4;  /* it can be any number >= 1 and <= 4. */
+  int est_lpc_order = 4;  /* it can be any number >= 1 and <= lpc_order.
+                           */
   LpcStatsAuxInit(&stats, est_lpc_order, &aux);
 
   struct OnlineLinearSolver solver;
@@ -921,6 +952,7 @@ void test_lpc_stats_and_solver() {
     Matrix64 A;
     Vector64 b, autocorr;
     LpcStatsAuxGetInfoForSolver(&aux, &A, &b, &autocorr);
+    PrintVector64("Smoothed-autocorr[1]", &autocorr);
     OnlineLinearSolverStep(&A, &b, &autocorr, &solver);
     PrintVector64("x[1]", &solver.x);
   }
@@ -941,6 +973,7 @@ void test_lpc_stats_and_solver() {
     Matrix64 A;
     Vector64 b, autocorr;
     LpcStatsAuxGetInfoForSolver(&aux, &A, &b, &autocorr);
+    PrintVector64("Smoothed-autocorr[2]", &autocorr);
     OnlineLinearSolverStep(&A, &b, &autocorr, &solver);
     PrintVector64("x[2]", &solver.x);
   }

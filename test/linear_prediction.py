@@ -435,25 +435,6 @@ class SimpleOnlineLinearSolver:
         x = self.cur_estimate
         r = b - np.dot(A, x)  # residual
 
-
-        if True:
-            # This block is a kind of safety mechanism to prevent divergence
-            # (that in practice never gets triggered).
-            #
-            # The objective function, to be maximized, is is f(x) = x b - 0.5 x^T A x.
-            # We want its value, to see whether the previous x was worse than zero,
-            # in which case we'll revert the coefficients to zero.  (This avoids
-            # the possibility of divergence).
-            # x.r equals x^T b - x^T A x, so 0.5(x.r + x.b) equals x^T b - 0.5 x^T A x.
-            # This should normally be positive.
-            # We are only interested in the sign so we forget the 0.5.
-            twice_objf = np.dot(r+b, x)
-            if twice_objf < 0:  # this x value is worse than the zero vector,
-                                # so revert
-                print("reverting");
-                x.fill(0.0)
-                r = b
-
         z = toeplitz_solve(autocorr_stats, r)  # preconditioned residual
         x += z
         self.cur_estimate = x
@@ -912,6 +893,9 @@ def toeplitz_solve(autocorr, y):
 
         x[:n+1] += (lambda_n / epsilon) * b[:n+1];
 
+        #print("iter={}, nu_n={} epsilon={}, lambda={}, b[:n+1]={}, x[:n+1] = {}".format(
+        #        n, nu_n, epsilon, lambda_n, b[:n+1], x[:n+1]))
+
     return x
 
 def test_toeplitz_solve():
@@ -945,6 +929,7 @@ def test_get_toeplitz_mat():
 
 
 def test_toeplitz_solve_compare():
+    print("Comparing toeplitz solver")
     autocorr = np.array([ 10.0, 5.0, 2.0, 1.0 ])
     y = np.array([ 1.0, 2.0, 3.0, 4.0 ])
     b = toeplitz_solve(autocorr, y)

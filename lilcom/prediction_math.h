@@ -118,8 +118,8 @@ struct LpcStats {
   /* eta^-2. */
   Scalar64 eta_m2;
   ssize_t T;
-  /* eta_2T is eta to the power 2*(T-N); it will only
-     have this value when T >= N. */
+  /* eta_2T is eta to the power 2*(T-N); it will only have this value when T >=
+     N, and is 1.0 otherwise. */
   Scalar64 eta_2TN;
 };
 

@@ -64,7 +64,7 @@ void PrintRegion64(const char *name, Region64 *region) {
 }
 
 void PrintScalar64(const char *name, const Scalar64 *s) {
-  fprintf(stderr, "%s = Vector64 { exponent = %d, size = %d, data = %d, value = %f }\n",
+  fprintf(stderr, "%s = Scalar64 { exponent = %d, size = %d, data = %d, value = %f }\n",
           name, s->exponent, s->size, (int)s->data, (float)Scalar64ToDouble(s));
 }
 
@@ -354,12 +354,24 @@ inline static void GetShiftsForAssign(int in_size, int in_exponent,
                                       int dim_size,
                                       int *in_shift, int *out_shift,
                                       int *final_size_guess) {
+  if (out_size < 0) { /* output is zero */
+    *in_shift = 0;
+    /* It won't physically shift the output. */
+    *out_shift = in_exponent - out_exponent;
+    *final_size_guess = in_size;
+    return;
+  } else if (in_size < 0) {
+    *in_shift = 0;  /* no need to shift if input data is zero. */
+    *out_shift = 0;
+    *final_size_guess = out_size;
+    return;
+  }
   int possible_in_shift = out_exponent - in_exponent;
   int sum_max_size = FM_MAX(out_size, in_size + dim_size - possible_in_shift),
-      sum_min_size = FM_MAX(out_size, in_size + possible_in_shift),
+      sum_min_size = FM_MAX(out_size, in_size - possible_in_shift),
       sum_guess_size = FM_MAX(out_size, in_size + (dim_size / 2) - possible_in_shift);
 
-  if (sum_max_size < 63 && out_size != 0 &&
+  if (sum_max_size < 63 &&
       (possible_in_shift <= 0 || sum_min_size >= FM_MIN_SIZE)) {
     *in_shift = possible_in_shift;
     *out_shift = 0;
@@ -631,7 +643,7 @@ void CopyVectorElemToScalar64(const Vector64 *a, int i, Scalar64 *y) {
   assert(i >= 0 && i < a->dim);
   y->exponent = a->region->exponent;
   y->data = a->data[i * a->stride];
-  y->size = FindSize(y->data, a->region->size);
+  y->size = FindSize(FM_ABS(y->data), a->region->size);
 }
 
 void CopyScalarToVector64Elem(const Scalar64 *s, int i, Vector64 *a) {
@@ -898,11 +910,16 @@ void CopyVector64(const Vector64 *src, Vector64 *dest) {
       dest_stride = dest->stride;
   int64_t *src_data = src->data, *dest_data = dest->data;
   int src_shift, dest_shift, final_size_guess;
+  int dim_size = 0;  /* There is no summation. */
 
-  GetShiftsForAssign(0, src->region->exponent, src->region->size,
-                     dest->region->exponent, dest->region->size,
+  GetShiftsForAssign(src->region->size, src->region->exponent,
+                     dest->region->size, dest->region->exponent,
+                     dim_size,
                      &src_shift, &dest_shift,
                      &final_size_guess);
+  fprintf(stderr, "src-exp=%d dest-exp=%d src_size=%d, dest-size=%d, src_shift=%d,dest_shift=%d, fs=%d\n",
+          src->region->exponent, dest->region->exponent, src->region->size, dest->region->size,
+          src_shift, dest_shift, final_size_guess);
   ShiftRegion64(dest_shift, dest->region);
 
   if (src_shift == 0) {

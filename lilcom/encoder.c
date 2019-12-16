@@ -88,20 +88,23 @@
 /*
   least_bits(value, min_width):
 
-  Returns least n >= min_width such that:
-    -2^n <= value * 2 < 2^n
+  For -2^30 <= value < 2^30 and min_width >= 0, returns the
+  least n >= min_width such that:
 
-  For -2^30 <= value`  < 2^30, this is the smallest number of
-  bits we would need (as a signed 2s-complement integer) to
-  represent the value.  For `value` outside this range, it is
-  meaningless.
+      -2^n <= value * 2 < 2^n
+
+  For `value` and `n` outside this range, we do not define the return value (the
+  user should not call this function with such values).  The returned value is
+  the smallest number of bits we would need (as a signed 2s-complement integer)
+  to represent the value.
 
   Note: the "* 2" part of the formulation may seem odd, but:
-  (1) It means that the number of bits can include the bit
-  needed for the sign (2s complement encoding..), and
-  (2) It allows us to save on even using the sign bit in
-  the case where value == 0, i.e. that equation works
-  with n == 0 in that case.
+
+  (1) It means that the number of bits can include the bit needed for the sign
+  (2s complement encoding..), and
+
+  (2) It allows us to save on even using the sign bit in the case where value ==
+  0, i.e. that equation works with n == 0 in that case.
 
   @param [in] value  Value to be encoded.  Must satisfy
               -(1<<30) <= value < (1<<30), or the output is meaningless.
@@ -692,7 +695,7 @@ void lilcom_test_encode_residual() {
 
 void lilcom_test_backtracking_encoder() {
   for (int i = 0; i < 2; i++) {
-    for (int max_bits = 4; max_bits <= 32; max_bits++) {
+    for (int max_bits = 3; max_bits < 32; max_bits++) {
       if (max_bits > 16 && i == 1)
         continue;
       /* max_bits includes the width bit. */
@@ -740,8 +743,6 @@ void lilcom_test_backtracking_encoder() {
       assert(next_compressed_code == next_free_byte);
     }
   }
-  /* just a random small thing: */
-  assert(least_bits(((uint32_t)-1) << 31, 0) == 31);
 }
 
 #endif /* LILCOM_TEST */
