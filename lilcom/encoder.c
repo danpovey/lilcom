@@ -356,9 +356,18 @@ static inline int backtracking_encoder_encode_limited(int max_bits_in_sample,
        one call, which actually matters because of the way
        the bit-packer object deals with backtracking.
     */
-    bit_packer_write_code(t, ((mantissa << 1) + width_delta),
-                          num_bits_encoded + 1,
-                          &encoder->bit_packer);
+    if (min_codable_width >= 0) {
+      bit_packer_write_code(t, ((mantissa << 1) + width_delta),
+                            num_bits_encoded + 1,
+                            &encoder->bit_packer);
+    } else {
+      /* If the min codable width was -1, then 'width_delta' would have to be
+         1, so there is no point writing it; we save a bit. */
+      bit_packer_write_code(t, mantissa,
+                            num_bits_encoded,
+                            &encoder->bit_packer);
+
+    }
     return 0;
   } else {
     /* Failure: the width required to most accurately
@@ -451,9 +460,18 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
        one call, which actually matters because of the way
        the bit-packer object deals with backtracking.
     */
-    bit_packer_write_code(t, ((mantissa << 1) + width_delta),
-                          num_bits_encoded + 1,
-                          &encoder->bit_packer);
+    if (min_codable_width >= 0) {
+      bit_packer_write_code(t, ((mantissa << 1) + width_delta),
+                            num_bits_encoded + 1,
+                            &encoder->bit_packer);
+    } else {
+      /* If the min codable width was -1, then 'width_delta' would have to be
+         1, so there is no point writing it; we save a bit. */
+      bit_packer_write_code(t, mantissa,
+                            num_bits_encoded,
+                            &encoder->bit_packer);
+
+    }
     return 0;
   } else {
     /* Failure: the width required to most accurately
@@ -586,9 +604,20 @@ static inline int decoder_decode(ssize_t t,
                                  int max_encoded_mantissa_bits,
                                  struct Decoder *decoder,
                                  int32_t *value) {
-  int width_bit = 1 & bit_unpacker_read_next_code(1, &decoder->bit_unpacker),
-      min_codable_width = LILCOM_COMPUTE_MIN_CODABLE_WIDTH(
+  /*
+    The expression for `width_bit` below is a little complex...  If
+      min_codable_width >= 0, then we read the 1-bit code.  Otherwise
+      (min_codable_width == -1), the `width_bit` is bound to be 1 so we don't
+      need to read it.  However we want to read a 0-bit code to keep the
+      num-samples-read consistent (this is mostly for checking code).  We do
+      that, and then discard its value using the "comma" operator, using instead
+      the value 1.
+  */
+  int min_codable_width = LILCOM_COMPUTE_MIN_CODABLE_WIDTH(
           t, decoder->num_bits),
+      width_bit = (min_codable_width >= 0  ?
+                   1 & bit_unpacker_read_next_code(1, &decoder->bit_unpacker) :
+                   (bit_unpacker_read_next_code(0, &decoder->bit_unpacker), 1)),
       width = min_codable_width + width_bit,
       num_bits_encoded = lilcom_min(max_encoded_mantissa_bits,
                                     width),
