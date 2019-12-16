@@ -220,7 +220,15 @@ struct Decoder {
 /**
    Initialize the decoder object.
 
+        @param [in]  num_samples_to_read  The number of samples that
+                     will be read from this decoder object (used only for
+                     checking)
+        @param [in]  compressed_code  Pointer to the first byte of the
+                     compressed code to be decoded
+        @param [in]  compressed_code_stride  Stride between elements of
+                     `compressed_code`.  [TODO: this will alter be removed.]
         @param [out] decoder  The object to be initialized.
+
  */
 void decoder_init(ssize_t num_samples_to_read,
                   const int8_t *compressed_code,

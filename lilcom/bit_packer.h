@@ -47,8 +47,8 @@ struct BitPacker {
   /* An array of an anonymous struct...  See comments above about the
      constraints on STAGING_BLOCK_SIZE. */
   struct {
-    int32_t code;
-    int num_bits;
+    int32_t code; /* the code (lowest `num_bits` bits are relevant. */
+    int num_bits; /* number of bits in this code; must be in [0, 31]. */
   } staging_buffer[STAGING_BLOCK_SIZE * 2];
 
   /** num_samples_committed is the number of samples we have so far committed to
@@ -115,7 +115,11 @@ void bit_packer_commit_block(ssize_t begin_t,
      @param [in] code  The code to write; the lowest 'num_bits' of it
                  will be the relevant ones, and others will be ignored.
      @param [in] num_bits  The number of bits in this code; must
-                 be in the range [1..16].
+                 be in the range [0..31].  Note: codes with zero
+                 bits are allowed because it's more convenient to
+                 know the number of codes we'll write, and sometimes
+                 (for the exponents) we don't really need to write a
+                 code.
      @param [in,out] packer  The BitPacker object we are using to
                  write the code.
  */
@@ -136,7 +140,6 @@ static inline void bit_packer_write_code(ssize_t t,
           packer);
     }
   }
-  /* assert(((num_bits - 1) & ~(int) 15) == 0);   check that 0 < num_bits <= 16 */
   packer->staging_buffer[t_mod].code = code;
   packer->staging_buffer[t_mod].num_bits = num_bits;
 }
