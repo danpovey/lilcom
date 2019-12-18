@@ -49,7 +49,7 @@ typedef struct {
 } LilcomConfig;
 
 
-void* lilcom_get_config(int samp_rate,
+LilcomConfigT* lilcom_get_config(int samp_rate,
                                  int num_channels,
                                  int lpc_order,
                                  int max_bits_per_sample,

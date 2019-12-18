@@ -81,7 +81,7 @@ void bit_packer_finish(struct BitPacker *packer,
   while (packer->num_samples_committed < T) {
     ssize_t new_end = packer->num_samples_committed + STAGING_BLOCK_SIZE;
     int flush;
-    if (new_end > T) {
+    if (new_end >= T) {
       new_end = T;
       flush = 1;
     } else {
