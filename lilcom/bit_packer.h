@@ -124,7 +124,7 @@ void bit_packer_commit_block(ssize_t begin_t,
                  write the code.
  */
 static inline void bit_packer_write_code(ssize_t t,
-                                         int code, int num_bits,
+                                         int32_t code, int num_bits,
                                          struct BitPacker *packer) {
   ssize_t t_mod = t & (STAGING_BLOCK_SIZE * 2 - 1);
   if (t % STAGING_BLOCK_SIZE == 0) {
@@ -144,6 +144,22 @@ static inline void bit_packer_write_code(ssize_t t,
   packer->staging_buffer[t_mod].num_bits = num_bits;
 }
 
+
+/*
+  This function outputs the code and num-bits for time 't', assuming 't' is the
+  most recently given 't' value to bit_packer_write_code (which would imply that
+  its value is still cached in the curcular buffer).
+ */
+static inline void bit_packer_retrieve_code(ssize_t t,
+                                            struct BitPacker *packer,
+                                            int32_t *code,
+                                            int *num_bits) {
+  assert(t >= packer->num_samples_committed &&
+         t < packer->num_samples_committed + 2*STAGING_BLOCK_SIZE);
+  ssize_t t_mod = t & (STAGING_BLOCK_SIZE * 2 - 1);
+  *code = packer->staging_buffer[t_mod].code;
+  *num_bits = packer->staging_buffer[t_mod].num_bits;
+}
 
 
 /**
@@ -215,7 +231,7 @@ void bit_unpacker_finish(const struct BitUnpacker *unpacker,
 /**
    Read a single code from the bit_unpacker object.
        @param [in] num_bits  The number of bits in the code to be
-                  read; must be in [1, 24].
+                  read; must be in [1, 32].
        @param [in,out] unpacker  The unpacker object that we are
                   reading from
 

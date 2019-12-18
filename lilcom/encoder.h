@@ -99,8 +99,8 @@ void backtracking_encoder_init(ssize_t num_samples_to_write,
  */
 
 void backtracking_encoder_finish(struct BacktrackingEncoder *encoder,
-                                  float *avg_bits_per_sample,
-                                  int8_t **next_free_byte);
+                                 float *avg_bits_per_sample,
+                                 int8_t **next_free_byte);
 
 
 
@@ -117,99 +117,56 @@ void backtracking_encoder_finish(struct BacktrackingEncoder *encoder,
                            max_bits_in_sample values this is called with must be
                            the same when decoding as when encoding.
       @param [in] value    The value to be encoded.  May have any value that
-                           fits in int32_t, but bear in mind that since
-                           max_bits_in_sample has maximum value [TODO:finish].
+                           fits in a 31-bit int, i.e. in [-2^30 .. 2^30 - 1. ]
+      @param [out] decoded_value  On success (i.e. if this function returns 0),
+                           the encoded-then-decoded version of `value` will be
+                           written to here (it may differ, due to compression).
+                           Otherwise its value at exit is undefined.
 
-      Requires that encoder->next_sample_to_encode >= 0.
+      This function requires that encoder->next_sample_to_encode >= 0.
+      (which it always would be.)
 
       @return  Returns 0 on success, 1 on failure.  Success means
-             a code was created, encoder->next_sample_to_encode
-             was increased by 1, and the code was written to `packer`.  On
-             failure, encoder->next_sample_to_encode will be decreased (while
-             still satisfying encoder->most_recent_attempt -
-             encoder->next_sample_to_encode < (2*MAX_POSSIBLE_WIDTH + 1)).
-             [Note: this type of failure happens in the normal course of
-             compression, it is part of backtracking.]
+             a code was created and encoder->next_sample_to_encode
+             was increased by 1, and the code was written to the underlying
+             bit-packer.  On failure, encoder->next_sample_to_encode will be
+             decreased by up to max_bits_in_sample + 1.  [Note: this type of
+             failure happens in the normal course of compression, it is part of
+             backtracking.]
 
      See also decoder_decode(), which you can think of as the reverse
      of this.
  */
 static inline int backtracking_encoder_encode(int max_bits_in_sample,
                                               int32_t value,
-                                              struct BacktrackingEncoder *encoder);
+                                              struct BacktrackingEncoder *encoder,
+                                              int32_t *decoded_value);
 
-/**
-   Attempts to lossily compress `residual` (which is allowed to be in the range
-   [-(2**16-1) .. 2**16-1]) to an 8-bit code.  The encoding scheme uses an
-   width and a mantissa, and the width is stored as a single bit
-   `delta_width` by dint of only storing the changes in the width,
-   according to the formula:
-       width(t) := width(t-1) + (t % 2) + delta_width(t)
-   where delta_width in {0,1} is the only thing we encode.  When we
-   discover that we can't encode a large enough width to encode a particular
-   sample, we have to go back to previous samples and use a larger width for
-   them.
+/*
+  This function takes the code point at time t = encoder->next_sample_to_encode
+  - 1, regresses it by one towards zero, and puts the modified decoded output
+  in *decoded_value.  What we mean by `regresses it toward zero` is, if the
+  mantissa (i.e. all but the exponent bit) is m, doing
 
-   The reason for the '_limited' part of the name is that function makes
-   sure that the compressed residual satisfies the condition that
-   `value + residual` will fit in an int16.
+     m += (m >= 0 ? -1 : 1).
 
-      @param [in] max_bits_in_sample  The maximum number of bits that the
-                           encoder is allowed to use to encode this sample,
-                           INCLUDING THE WIDTH BIT.  Must be at in [3, 32].  The
-                           max_bits_in_sample does not have to be the same from
-                           sample to sample, but the sequence of
-                           max_bits_in_sample values this is called with must be
-                           the same when decoding as when encoding.
+  This is done in cases where we are encoding int16's and the predicted value
+  plus the rounded residual would exceed the range of int16_t, so we need
+  to make it closer to zero.
+  This function requires that the sample for this time was encoded with at
+  least 2 bits (and the calling code does, naturally, respect this limit).
 
-                           TODO: fix this.
-                           Must be in range [3, 31].  The upper limit of 31
-                           is I think because least_bits doesn't work for input
-                           greater than 2^30.
-                           is because we need at least 2 bits to encode the mantissa
-                           so that
+  This function does not change encoder->next_sample_to_encode.
 
-      @param [in] residual The value to be encoded for time
-                           encoder->next_sample_to_encode.  Required to be
-                           in the range [-(2**16-1) .. 2**16-1].
-      @param [in] value    The predicted value from which this residual is
-                           an offset.  This is needed in order to ensure that
-                           (predicted + *approx_residual) does not
-                           overflow the range of int16_t.
-      @param [out] next_value  On success, the input `predicted` plus
-                           the approximated residual will be written to here.
-      @param [out] code    On success, the code will be written to
-                           here.  (Only the lowest-order encoder->bits_per_sample
-                           bits will be relevant).  Note: later on we
-                           might extend this codebase to support writing
-                           fewer than the specified number of bits where
-                           doing so would not affect the accuracy, by allowing
-                           negative excursions of the width.  That
-                           would require interface changes, though.
-      @param [in,out] encoder  The encoder object.  Will be modified by
-                           this call.
-
-      Requires that encoder->next_sample_to_encode >= 0.
-
-      @return  Returns 0 on success, 1 on failure.  Success means
-             a code was created, encoder->next_sample_to_encode
-             was increased by 1, and the code was written to `packer`.  On
-             failure, encoder->next_sample_to_encode will be decreased (while
-             still satisfying encoder->most_recent_attempt -
-             encoder->next_sample_to_encode < (2*MAX_POSSIBLE_WIDTH + 1)).
-             [Note: this type of failure happens in the normal course of
-             compression, it is part of backtracking.]
-
-     See also decoder_decode(), which you can think of as the reverse
-     of this; and backtracking_encoder_encode(), which is a simpler
-     version of this without the logic to keep the result within
-     int16_t.
+    @param [in,out] encoder   The encoder object in which we are
+                  changing the most recently written sample.
+    @param [out] decoded_value  The new encoded-and-then-decoded value,
+               as in the `decoded_value` output of `backtracking_encoder_encode()`.
  */
-static inline int32_t backtracking_encoder_encode_limited(int max_bits_in_sample,
-                                                          int32_t residual,
-                                                          int16_t predicted,
-                                                          int16_t *next_value,
-                                                          struct BacktrackingEncoder *encoder);
+static inline void backtracking_encoder_regress_most_recent_t(
+    struct BacktrackingEncoder *encoder,
+    int32_t *decoded_value);
+
 
 
 /* View this as the reverse of struct BacktrackingDecoder.
@@ -283,7 +240,6 @@ static inline int decoder_decode(ssize_t t,
 #ifdef LILCOM_TEST
 void lilcom_test_extract_mantissa();
 void lilcom_test_encode_decode_signed();
-void lilcom_test_encode_residual();
 #endif
 
 

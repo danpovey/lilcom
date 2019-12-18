@@ -17,7 +17,6 @@
 #include "encoder.c"
 
 
-
 typedef struct {
   int samp_rate;
   int block_size;
@@ -1107,12 +1106,23 @@ int lilcom_compress(
     /** cast to int32 when computing the residual because a difference of int16's may
         not fit in int16. */
     int32_t residual = ((int32_t) observed_value) - ((int32_t) predicted_value);
-    int16_t *next_value =
+    int16_t *next_value_out =
         &(state.decompressed_signal[MAX_LPC_ORDER + (t & (SIGNAL_BUFFER_SIZE - 1))]);
 
-    backtracking_encoder_encode_limited(bits_per_sample, residual,
-                                        predicted_value, next_value,
-                                        &state.encoder);
+    int32_t decoded_residual;
+    if (backtracking_encoder_encode(bits_per_sample, residual, &state.encoder,
+                                    &decoded_residual) == 0) {
+      /* Success... */
+      int32_t next_value = predicted_value + decoded_residual;
+      if (next_value != (int16_t)next_value) {
+        /* If we left the bounds of int16_t we have to fix it up... */
+        backtracking_encoder_regress_most_recent_t(&state.encoder,
+                                                   &decoded_residual);
+        next_value = predicted_value + decoded_residual;
+      }
+      assert(next_value == (int16_t)next_value);
+      *next_value_out = next_value;
+    }
     /* We are actually ignoring the return status of backtracking_encoder_encode. */
   }
 
@@ -2081,7 +2091,6 @@ int main() {
   lilcom_test_compute_conversion_exponent();
   lilcom_test_get_max_abs_float_value();
   lilcom_test_encode_decode_signed();
-  lilcom_test_encode_residual_int16();
   lilcom_test_backtracking_encoder();
 }
 #endif

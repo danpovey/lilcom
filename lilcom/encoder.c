@@ -86,7 +86,7 @@
 
 
 /*
-  least_bits(value, min_width):
+  least_width(value, min_width):
 
   For -2^30 <= value < 2^30 and 0 <= min_width <= 31, returns the
   least n >= min_width such that:
@@ -116,16 +116,54 @@
               -2^n <= value * 2 < 2^n.  Otherwise, returns a
               meaningless value.
 */
-static inline int least_bits(int32_t value,
-                             int min_bits) {
+static inline int least_width(int32_t value,
+                              int min_bits) {
   int bits = min_bits;
-  int limit = -1 << bits;
+  int32_t limit = ((int32_t)-1) << bits;
   while (value * 2 < limit || value * -2 <= limit) {
     limit <<= 1;
     bits++;
   }
   return bits;
 }
+
+/**  This function returns `code`, interpreted as a 2s-complement
+     signed integer with `num_bits` bits, with the format changed
+     to a 2s-complement signed integer that fits in type `int`.
+
+     Specifically this means that its bits [0..num_bits - 2] are unchanged and
+     the bit numbered [num_bits - 1] is duplicated at all higher-ordered
+     positions.  (All bit numberings here are from lowest-to-highest order, so
+     position 0 is the ones bit.)
+
+       @param [in] code  The integer code to be manipulated.
+                         Note: only its bits 0 through num_bits - 1
+                         will affect the return value.
+       @param [in] num_bits  The number of bits in the code
+                         (excluding the width bit).
+                         Must satisfy 0 <= n <= 31.  The code is
+                         interpreted as a 2s-complement signed integer with
+                         `num_bits` bits.
+
+    @return  Returns the code extended to be a signed int.
+*/
+static inline int32_t extend_sign_bit(int32_t code, int32_t num_bits) {
+  /*
+     The first term in the outer-level 'or' is all the `num_bits` bits
+     the mantissa, which will be correct for positive mantissa but for
+     negative mantissa we need all the higher-order-than-bits_per_sample bits
+     to be set as well.  That's what the second term in the or is for.  The
+     big number is 2^31 - 1, which means that we duplicate that bit (think of
+     it as the sign bit), at its current position and at all positions to its
+     left.  */
+  if (num_bits == 0) {
+    return 0;
+  } else {
+    return (((uint32_t) code) & ((((uint32_t)1) << (num_bits)) - 1)) |
+        ((((uint32_t) code) & (((uint32_t)1) << (num_bits - 1))) * 2147483647);
+  }
+}
+
 
 /**
    Does the central part of encoding a value (`value` would typically be
@@ -170,7 +208,7 @@ static inline void encode_signed_value(int32_t value,
                                        int *num_bits_encoded,
                                        int32_t *encoded_value) {
   assert(min_bits >= 0 && max_bits_encoded > 1);
-  *num_bits = least_bits(value, min_bits);
+  *num_bits = least_width(value, min_bits);
   if (*num_bits <= max_bits_encoded) {
     *num_bits_encoded = *num_bits;
     *encoded_value = value;  /* Only the lowest-order *num_bits_encoded are to
@@ -190,7 +228,8 @@ static inline void encode_signed_value(int32_t value,
                         inspected by this function; the rest may have
                         any value.
      @param [in] num_bits  The number of bits used in the code prior
-                        to discarding the lower-order bits
+                        to discarding the lower-order bits.  (Note: does not
+                        include the bit that encodes the exponent).
      @param [in] num_bits_encoded  This is equal to
                         min(num_bits, max_bits_encoded), where max_bits_encoded
                         will ultimately be user specified (e.g. bits-per-sample - 1),
@@ -219,195 +258,22 @@ static inline int32_t decode_signed_value(int32_t code,
 }
 
 
-/**
-   Encodes the residual, returning the least number of bits required to do so
-   subject to a caller-specified floor.
-
-      @param [in] residual  The residual that we are trying to encode,
-                     meaning: the observed value minus the value that was
-                     predicted by the linear prediction.  This is a
-                     difference of int16_t's, but such differences cannot
-                     always be represented as int16_t, so it's represented
-                     as an int32_t.
-      @param [in] predicted   The predicted sample (so the residual
-                     is the observed sample minus this).  The only reason
-                     this needs to be specified is to detect situations
-                     where, due to quantization effects, the next decompressed
-                     sample would exceed the range of int16_t; in those
-                     cases, we need to reduce the magnitude of the encoded value to
-                     stay within the allowed range of int16_t (this avoids us
-                     having to implement extra checks in the decoder).
-       @param [in] min_bits   A caller-supplied floor on the number of bits
-                     we will use to encode the residual (the max of this
-                     and what least_bits() returns will be used.)
-                     It must be in the range [0, 17].
-       @param [in] max_bits_encoded  This is a user-specified maximum
-                     on the number of bits to use (it will be the
-                     bits-per-sample minus one, since the width takes one
-                     bit.)  It must be >= 2.  Note: It is allowed to be less
-                     than min_bits; if the number of bits needed exceeds
-                     max_bits_encoded, we discard lower-order bits.
-       @param [in] limit_to_int16   If nonzero, this code will make sure
-                     that the encoded+decoded residual plus `predicted`
-                     is within the range of int16 (may require changing
-                     the code point by 1).  Requires that
-                     predicted+residual fits within int16.
-       @param [out]  num_bits  The number of bits used to encode this
-                     value before truncation.  Will be the smallest
-                     integer n such that n >= min_bits and
-                     -2^n <= 2 * residual < 2^n.
-       @param [out] num_bits_encoded  Will contain min(num_bits,
-                     max_bits_encoded) at exit.
-       @param [out]  encoded_value   A signed integer which can be
-                     encoded in `num_bits_encoded` bits.
-       @param [out] next_decompressed_value  Will contain
-                     residual + decode_signed_value(*encoded_value,
-                                  *num_bits, *num_bits_encoded).
-                    It just happens to be convenient to compute it
-                    here.
-*/
-static inline void encode_residual(int32_t residual,
-                                   int16_t predicted,
-                                   int min_bits,
-                                   int max_bits_encoded,
-                                   int limit_to_int16,
-                                   int *num_bits,
-                                   int *num_bits_encoded,
-                                   int32_t *encoded_value,
-                                   int16_t *next_decompressed_value) {
-  assert(min_bits >= 0 && min_bits <= 17 && max_bits_encoded >= 2);
-
-  encode_signed_value(residual, min_bits, max_bits_encoded,
-                      num_bits, num_bits_encoded, encoded_value);
-
-  int32_t decoded_residual = decode_signed_value(*encoded_value, *num_bits,
-                                                 *num_bits_encoded),
-      next_value = (int32_t) predicted + decoded_residual;
-
-  {
-    int32_t max_error = (((int32_t) 1) << *num_bits) >> (*num_bits_encoded + 1);
-    assert(lilcom_abs(decoded_residual - residual) <= max_error);
-  }
-
-  if (limit_to_int16 && next_value != ((int32_t)(int16_t)next_value)) {
-    /* This should be very rare; it means that we have exceeded the range of
-       int16_t due to rounding effects, so we have to decrease the magnitude of
-       *encoded_value by 1.  Note: there is a reason why it's >= 0 and not > 0.
-       *encoded_value of zero will, if *num_bits > num_bits_encoded, be decoded as
-       a positive number (search for `rounding_part` in decode_signed_value()),
-       so if this is overshooting we have to turn it into -1.
-    */
-    *encoded_value += (*encoded_value >= 0 ? -1 : 1);
-    decoded_residual =  decode_signed_value(*encoded_value, *num_bits,
-                                            *num_bits_encoded);
-    next_value = (int32_t)predicted + decoded_residual;
-    assert(next_value == ((int16_t)next_value));
-  }
-  *next_decompressed_value = next_value;
-}
-
-
-
 /* See documentation in header */
-static inline int backtracking_encoder_encode_limited(int max_bits_in_sample,
-                                                      int32_t residual,
-                                                      int16_t predicted,
-                                                      int16_t *next_value,
-                                                      struct BacktrackingEncoder *encoder) {
-  ssize_t t = encoder->next_sample_to_encode,
-      t_most_recent = encoder->most_recent_attempt;
-  size_t t_mod = (t & (WIDTH_BUFFER_SIZE - 1)), /* t % buffer_size */
-      t1_mod = ((t - 1) & (WIDTH_BUFFER_SIZE - 1));
-
-  int width_t1 = encoder->width[t1_mod],
-      min_codable_width =
-      LILCOM_COMPUTE_MIN_CODABLE_WIDTH(t, width_t1),
-      width_floor = (min_codable_width < 0 ? 0 : min_codable_width);
-  if (t <= t_most_recent) {
-    /* We are backtracking, so there will be limitations on the
-       width. (encoder->width[t_mod] represents a floor
-       on the width). */
-    if (encoder->width[t_mod] > min_codable_width) {
-      width_floor = encoder->width[t_mod];
-      /* If the following assert fails it means the logic of the
-         backtracking_encoder's routines has failed somewhere. */
-      assert(width_floor == min_codable_width + 1);
-    }
-  } else {
-    encoder->most_recent_attempt = t;
-  }
-
-  int width, /* note: width is not any more the width, it is the
-                 * num-bits; must rename. */
-      num_bits_encoded, mantissa;
-  encode_residual(residual, predicted,
-                  width_floor,  /* min_bits */
-                  max_bits_in_sample - 1,
-                  1, /* limit to int16 */
-                  &width, &num_bits_encoded,
-                  &mantissa, next_value);
-  if (width <= min_codable_width + 1) {
-    /* Success. */
-    int width_delta = width - min_codable_width;
-    /* The following is a checks (non-exhaustively) that width_delta is 0 or 1. */
-    assert((width_delta & 254) == 0);
-    /** Success; we can represent this.  This is (hopefully) the normal code
-        path. */
-    encoder->width[t_mod] = width;
-    encoder->next_sample_to_encode = t + 1;
-
-    /* Actually write the code.  Note: this is as if we had written
-       first the width bit and then the mantissa.  We do it in
-       one call, which actually matters because of the way
-       the bit-packer object deals with backtracking.
-    */
-    if (min_codable_width >= 0) {
-      bit_packer_write_code(t, ((mantissa << 1) + width_delta),
-                            num_bits_encoded + 1,
-                            &encoder->bit_packer);
-    } else {
-      /* If the min codable width was -1, then 'width_delta' would have to be
-         1, so there is no point writing it; we save a bit. */
-      bit_packer_write_code(t, mantissa,
-                            num_bits_encoded,
-                            &encoder->bit_packer);
-
-    }
-    return 0;
-  } else {
-    /* Failure: the width required to most accurately
-       approximate this residual is too large; we will need
-       to backtrack. */
-    encoder->width[t_mod] = width;
-    while (1) {
-      width = LILCOM_COMPUTE_MIN_PRECEDING_WIDTH(t, width);
-      t--;
-#ifndef NDEBUG
-      encoder->num_backtracks++;
-#endif
-      /* Now `width` is the minimum width we'll allow for time t-1. */
+static inline void backtracking_encoder_regress_most_recent_t(
+    struct BacktrackingEncoder *encoder,
+    int32_t *decoded_value) {
+  ssize_t t = encoder->next_sample_to_encode - 1,
       t_mod = t & (WIDTH_BUFFER_SIZE - 1);
-      if (encoder->width[t_mod] >= width) {
-        /* The width value we used for this time satsifes our limit, so we will
-           next be encoding the value at time t + 1.  */
-        encoder->next_sample_to_encode = t + 1;
-        return 1;
-      } else {
-        /* The following will set a floor on the allowed
-           width, which this function will inspect when
-           it is asked to encode the sample at t-1.. */
-        encoder->width[t_mod] = width;
-        /* TODO: maybe change the code so the following if-statement is no
-         * longer necessary? */
-        if (t < 0) {  /* t == -1 */
-          *(encoder->width_m1) = width;
-          encoder->next_sample_to_encode = 0;
-          return 1;
-        }
-      }
-    }
-    return 1;
-  }
+  assert(t >= 0);
+  int code, num_bits;
+  bit_packer_retrieve_code(t, &encoder->bit_packer,
+                           &code, &num_bits);
+  int32_t new_code = code + ((code & (((int32_t)1) << (num_bits - 1))) ? 2 : -2);
+  *decoded_value = decode_signed_value(new_code >> 1,
+                                       encoder->width[t_mod],
+                                       num_bits - 1);
+  bit_packer_write_code(t, new_code, num_bits, &encoder->bit_packer);
+  return;
 }
 
 
@@ -415,7 +281,8 @@ static inline int backtracking_encoder_encode_limited(int max_bits_in_sample,
 /* See documentation in header */
 static inline int backtracking_encoder_encode(int max_bits_in_sample,
                                               int32_t value,
-                                              struct BacktrackingEncoder *encoder) {
+                                              struct BacktrackingEncoder *encoder,
+                                              int32_t *decoded_value) {
   ssize_t t = encoder->next_sample_to_encode,
       t_most_recent = encoder->most_recent_attempt;
   size_t t_mod = (t & (WIDTH_BUFFER_SIZE - 1)), /* t % buffer_size */
@@ -451,14 +318,6 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
                       &width, &num_bits_encoded,
                       &mantissa);
 
-#ifdef LILCOM_TEST
-  if (num_bits_encoded < max_bits_in_sample) {
-    int32_t decoded_value =  decode_signed_value(mantissa, width,
-                                                 num_bits_encoded);
-    assert(decoded_value == value);
-  }
-#endif
-
   if (width <= min_codable_width + 1) {
     /* Success. */
     int width_delta = width - min_codable_width;
@@ -486,6 +345,8 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
                             &encoder->bit_packer);
 
     }
+    *decoded_value = decode_signed_value(mantissa, width,
+                                         num_bits_encoded);
     return 0;
   } else {
     /* Failure: the width required to most accurately approximate this value is
@@ -573,43 +434,6 @@ void decoder_finish(const struct Decoder *decoder,
                     const int8_t **next_compressed_code) {
   bit_unpacker_finish(&decoder->bit_unpacker,
                       next_compressed_code);
-}
-
-/**  This function returns `code`, interpreted as a 2s-complement
-     signed integer with `num_bits` bits, with the format changed
-     to a 2s-complement signed integer that fits in type `int`.
-
-     Specifically this means that its bits [0..num_bits - 2] are unchanged and
-     the bit numbered [num_bits - 1] is duplicated at all higher-ordered
-     positions.  (All bit numberings here are from lowest-to-highest order, so
-     position 0 is the ones bit.)
-
-       @param [in] code  The integer code to be manipulated.
-                         Note: only its bits 0 through num_bits - 1
-                         will affect the return value.
-       @param [in] num_bits  The number of bits in the code
-                         (excluding the width bit).
-                         Must satisfy 0 <= n <= 31.  The code is
-                         interpreted as a 2s-complement signed integer with
-                         `num_bits` bits.
-
-    @return  Returns the code extended to be a signed int.
-*/
-static inline int extend_sign_bit(int code, int num_bits) {
-  /*
-     The first term in the outer-level 'or' is all the `num_bits` bits
-     the mantissa, which will be correct for positive mantissa but for
-     negative mantissa we need all the higher-order-than-bits_per_sample bits
-     to be set as well.  That's what the second term in the or is for.  The
-     big number is 2^31 - 1, which means that we duplicate that bit (think of
-     it as the sign bit), at its current position and at all positions to its
-     left.  */
-  if (num_bits == 0) {
-    return 0;
-  } else {
-    return (((unsigned int) code) & ((1 << (num_bits)) - 1)) |
-        ((((unsigned int) code) & (1 << (num_bits - 1))) * 2147483647);
-  }
 }
 
 /* See documentation in header */
@@ -703,88 +527,51 @@ void lilcom_test_encode_decode_signed() {
   }
 }
 
-void lilcom_test_encode_residual_int16() {
-  for (int source = 0; source < 1000; source++)  {
-    for (int min_bits = 0; min_bits < 4; min_bits++) {
-      for (int max_bits_encoded = 2; max_bits_encoded <= 16; max_bits_encoded++) {
-        int num_bits, num_bits_encoded;
-        int32_t encoded;
-
-        int16_t predicted = (source * 23456),
-            next_value = (source * 12345);
-        int32_t residual = next_value - (int32_t)predicted;
-        int16_t next_decompressed_value;
-        encode_residual(residual, predicted,
-                        min_bits, max_bits_encoded,
-                        1, /* limit to int16 */
-                        &num_bits, &num_bits_encoded,
-                        &encoded,
-                        &next_decompressed_value);
-        int32_t decoded = decode_signed_value(encoded,
-                                              num_bits,
-                                              num_bits_encoded),
-            decompressed_check = predicted + decoded;
-        /*fprintf(stderr, "residual = %d, predicted = %d, next-value = %d, max-bits=%d, "
-               "num-bits{,enc}=%d,%d encoded = %d,  next{,decompressed}=%d,%d\n",
-               residual, predicted, next_value, max_bits_encoded, num_bits,
-               num_bits_encoded, encoded, next_value, next_decompressed_value);*/
-
-        assert(next_decompressed_value == decompressed_check);
-      }
-    }
-  }
-}
-
 
 void lilcom_test_backtracking_encoder() {
-  for (int i = 0; i < 2; i++) {
-    for (int max_bits = 3; max_bits <= 32; max_bits++) {
-      if (max_bits > 16 && i == 1)
-        continue;
-      /* max_bits includes the width bit. */
-      int prime = 111;
-      int32_t to_encode[500],
-          decoded[500];
-      int8_t encoded[5000];
-      int stride = 1;
-      int t;
-      uint64_t rand = extend_sign_bit(1245684, max_bits - 1);
-      struct BacktrackingEncoder encoder;
-      backtracking_encoder_init(500, encoded, stride, &encoder);
-      int8_t *next_free_byte;
+  for (int max_bits = 3; max_bits <= 32; max_bits++) {
+    /* max_bits includes the width bit. */
+    int prime = 111;
+    int32_t to_encode[500],
+        decoded[500];
+    int8_t encoded[5000];
+    int stride = 1;
+    int t;
+    uint64_t rand = extend_sign_bit(1245684, max_bits - 1);
+    struct BacktrackingEncoder encoder;
+    backtracking_encoder_init(500, encoded, stride, &encoder);
+    int8_t *next_free_byte;
 
-      for (t = 0; t < 500; t++) {
-        /* rand can be viewed as a signed integer that fits (with the
-           sign bit) into `max_bits` bits. */
-        rand =  extend_sign_bit(rand * prime, max_bits - 1);
-        fprintf(stderr, "to-encode[%d] = %d\n", (int)t, (int)rand);
-        to_encode[t] = rand;
-      }
-      while (encoder.next_sample_to_encode < 500) {
-        int16_t dontcare;
-        if (i == 1)  {  /* this happens only for max_bits <= 16 */
-          backtracking_encoder_encode_limited(max_bits, to_encode[encoder.next_sample_to_encode],
-                                              0, &dontcare, &encoder);
-        } else {
-          backtracking_encoder_encode(max_bits, to_encode[encoder.next_sample_to_encode],
-                                      &encoder);
-        }
-      }
-      float avg_bits_per_sample;
-      backtracking_encoder_finish(&encoder, &avg_bits_per_sample,
-                                  &next_free_byte);
-
-      struct Decoder decoder;
-      decoder_init(500, encoded + 0, stride, &decoder);
-      for (t = 0; t < 500; t++) {
-        int ans = decoder_decode(t, max_bits - 1, &decoder, decoded + t);
-        assert(decoded[t] == to_encode[t]);
-        assert(!ans);
-      }
-      const int8_t *next_compressed_code;
-      decoder_finish(&decoder, &next_compressed_code);
-      assert(next_compressed_code == next_free_byte);
+    for (t = 0; t < 500; t++) {
+      /* rand can be viewed as a signed integer that fits (with the
+         sign bit) into `max_bits` bits. */
+      rand =  extend_sign_bit(rand * prime, max_bits - 1);
+      fprintf(stderr, "to-encode[%d] = %d\n", (int)t, (int)rand);
+      to_encode[t] = rand;
     }
+    while (encoder.next_sample_to_encode < 500) {
+      ssize_t t = encoder.next_sample_to_encode;
+      int32_t dontcare;
+      if (backtracking_encoder_encode(max_bits,
+                                      to_encode[t],
+                                      &encoder, &dontcare) == 0) {
+        assert(dontcare == to_encode[t]);
+      }
+    }
+    float avg_bits_per_sample;
+    backtracking_encoder_finish(&encoder, &avg_bits_per_sample,
+                                &next_free_byte);
+
+    struct Decoder decoder;
+    decoder_init(500, encoded + 0, stride, &decoder);
+    for (t = 0; t < 500; t++) {
+      int ans = decoder_decode(t, max_bits - 1, &decoder, decoded + t);
+      assert(decoded[t] == to_encode[t]);
+      assert(!ans);
+    }
+    const int8_t *next_compressed_code;
+    decoder_finish(&decoder, &next_compressed_code);
+    assert(next_compressed_code == next_free_byte);
   }
 }
 
