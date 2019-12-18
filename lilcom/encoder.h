@@ -105,7 +105,9 @@ void backtracking_encoder_finish(struct BacktrackingEncoder *encoder,
 
 
 /**
-   Attempts to lossily compress `value` (which may be any int32_t).
+   Attempts to lossily compress `value` (which may be any int32_t).  [If a
+   signed integer with max_bits_in_sample-1 bits is large enough to encode
+   `value`, though, it will be exact].
 
       @param [in] max_bits_in_sample  The maximum number of bits that the
                            encoder is allowed to use to encode this sample,
@@ -116,7 +118,7 @@ void backtracking_encoder_finish(struct BacktrackingEncoder *encoder,
                            the same when decoding as when encoding.
       @param [in] value    The value to be encoded.  May have any value that
                            fits in int32_t, but bear in mind that since
-                           max_bits_in_sample has maximum value
+                           max_bits_in_sample has maximum value [TODO:finish].
 
       Requires that encoder->next_sample_to_encode >= 0.
 
@@ -148,15 +150,24 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
    sample, we have to go back to previous samples and use a larger width for
    them.
 
+   The reason for the '_limited' part of the name is that function makes
+   sure that the compressed residual satisfies the condition that
+   `value + residual` will fit in an int16.
+
       @param [in] max_bits_in_sample  The maximum number of bits that the
                            encoder is allowed to use to encode this sample,
-                           INCLUDING THE WIDTH BIT.  Must be at least 4.  The
+                           INCLUDING THE WIDTH BIT.  Must be at in [3, 32].  The
                            max_bits_in_sample does not have to be the same from
                            sample to sample, but the sequence of
                            max_bits_in_sample values this is called with must be
                            the same when decoding as when encoding.
 
-                           TODO: find upper limit in max_bits_in_sample.
+                           TODO: fix this.
+                           Must be in range [3, 31].  The upper limit of 31
+                           is I think because least_bits doesn't work for input
+                           greater than 2^30.
+                           is because we need at least 2 bits to encode the mantissa
+                           so that
 
       @param [in] residual The value to be encoded for time
                            encoder->next_sample_to_encode.  Required to be

@@ -88,7 +88,7 @@
 /*
   least_bits(value, min_width):
 
-  For -2^30 <= value < 2^30 and min_width >= 0, returns the
+  For -2^30 <= value < 2^30 and 0 <= min_width <= 31, returns the
   least n >= min_width such that:
 
       -2^n <= value * 2 < 2^n
@@ -202,16 +202,18 @@ static inline int32_t decode_signed_value(int32_t code,
   if (num_bits == 0) {
     return 0;
   } else {
-    int32_t full_code = code << (num_bits - num_bits_encoded);
+    uint32_t full_code = code << (num_bits - num_bits_encoded);
 
     /**
        non_sign_part is the lowest-order `num_bits - 1` bits of the code.
        sign_part is the `num_bits - 1`'th bit, repeated at that
        and higher-order positions by multiplying by -1.
      */
-    int32_t non_sign_part = (full_code & ((1 << (num_bits - 1)) - 1)),
-        sign_part = (((int32_t) -1)) * (full_code & ((1 << (num_bits - 1)))),
-        rounding_part = (1 << num_bits) >> (num_bits_encoded + 1);
+    uint32_t mask = ((((uint32_t)1) << (num_bits - 1)) - 1),
+        non_sign_part = (full_code & mask),
+        sign_part = (((uint32_t)-1)) * (full_code & ((((uint32_t)1) << (num_bits - 1)))),
+        rounding_part = (((uint32_t)1) << 30) >> (num_bits_encoded + 31 - num_bits);
+
     return non_sign_part | sign_part | rounding_part;
   }
 }
@@ -245,6 +247,11 @@ static inline int32_t decode_signed_value(int32_t code,
                      bit.)  It must be >= 2.  Note: It is allowed to be less
                      than min_bits; if the number of bits needed exceeds
                      max_bits_encoded, we discard lower-order bits.
+       @param [in] limit_to_int16   If nonzero, this code will make sure
+                     that the encoded+decoded residual plus `predicted`
+                     is within the range of int16 (may require changing
+                     the code point by 1).  Requires that
+                     predicted+residual fits within int16.
        @param [out]  num_bits  The number of bits used to encode this
                      value before truncation.  Will be the smallest
                      integer n such that n >= min_bits and
@@ -263,6 +270,7 @@ static inline void encode_residual(int32_t residual,
                                    int16_t predicted,
                                    int min_bits,
                                    int max_bits_encoded,
+                                   int limit_to_int16,
                                    int *num_bits,
                                    int *num_bits_encoded,
                                    int32_t *encoded_value,
@@ -281,7 +289,7 @@ static inline void encode_residual(int32_t residual,
     assert(lilcom_abs(decoded_residual - residual) <= max_error);
   }
 
-  if (((int16_t) next_value) != next_value) {
+  if (limit_to_int16 && next_value != ((int32_t)(int16_t)next_value)) {
     /* This should be very rare; it means that we have exceeded the range of
        int16_t due to rounding effects, so we have to decrease the magnitude of
        *encoded_value by 1.  Note: there is a reason why it's >= 0 and not > 0.
@@ -290,11 +298,10 @@ static inline void encode_residual(int32_t residual,
        so if this is overshooting we have to turn it into -1.
     */
     *encoded_value += (*encoded_value >= 0 ? -1 : 1);
-    int fixed_decoded_residual = decode_signed_value(*encoded_value, *num_bits,
-                                                     *num_bits_encoded);
-    decoded_residual = fixed_decoded_residual;
-    next_value = (int32_t) predicted + decoded_residual;
-    assert(((int16_t) next_value) == next_value);
+    decoded_residual =  decode_signed_value(*encoded_value, *num_bits,
+                                            *num_bits_encoded);
+    next_value = (int32_t)predicted + decoded_residual;
+    assert(next_value == ((int16_t)next_value));
   }
   *next_decompressed_value = next_value;
 }
@@ -310,9 +317,6 @@ static inline int backtracking_encoder_encode_limited(int max_bits_in_sample,
   ssize_t t = encoder->next_sample_to_encode,
       t_most_recent = encoder->most_recent_attempt;
   size_t t_mod = (t & (WIDTH_BUFFER_SIZE - 1)), /* t % buffer_size */
-  /* t1_mod is (t-1) % buffer_size using mathematical modulus, not C modulus,
-     so -1 % buffer_size is positive.
-   */
       t1_mod = ((t - 1) & (WIDTH_BUFFER_SIZE - 1));
 
   int width_t1 = encoder->width[t1_mod],
@@ -339,6 +343,7 @@ static inline int backtracking_encoder_encode_limited(int max_bits_in_sample,
   encode_residual(residual, predicted,
                   width_floor,  /* min_bits */
                   max_bits_in_sample - 1,
+                  1, /* limit to int16 */
                   &width, &num_bits_encoded,
                   &mantissa, next_value);
   if (width <= min_codable_width + 1) {
@@ -409,7 +414,7 @@ static inline int backtracking_encoder_encode_limited(int max_bits_in_sample,
 
 /* See documentation in header */
 static inline int backtracking_encoder_encode(int max_bits_in_sample,
-                                              int32_t residual,
+                                              int32_t value,
                                               struct BacktrackingEncoder *encoder) {
   ssize_t t = encoder->next_sample_to_encode,
       t_most_recent = encoder->most_recent_attempt;
@@ -440,11 +445,20 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
   int width, /* note: width is not any more the width, it is the
                  * num-bits; must rename. */
       num_bits_encoded, mantissa;
-  encode_signed_value(residual,
+  encode_signed_value(value,
                       width_floor,  /* min_bits */
                       max_bits_in_sample - 1,
                       &width, &num_bits_encoded,
                       &mantissa);
+
+#ifdef LILCOM_TEST
+  if (num_bits_encoded < max_bits_in_sample) {
+    int32_t decoded_value =  decode_signed_value(mantissa, width,
+                                                 num_bits_encoded);
+    assert(decoded_value == value);
+  }
+#endif
+
   if (width <= min_codable_width + 1) {
     /* Success. */
     int width_delta = width - min_codable_width;
@@ -474,9 +488,8 @@ static inline int backtracking_encoder_encode(int max_bits_in_sample,
     }
     return 0;
   } else {
-    /* Failure: the width required to most accurately
-       approximate this residual is too large; we will need
-       to backtrack. */
+    /* Failure: the width required to most accurately approximate this value is
+       too large; we will need to backtrack. */
     encoder->width[t_mod] = width;
     while (1) {
       width = LILCOM_COMPUTE_MIN_PRECEDING_WIDTH(t, width);
@@ -690,19 +703,20 @@ void lilcom_test_encode_decode_signed() {
   }
 }
 
-void lilcom_test_encode_residual() {
+void lilcom_test_encode_residual_int16() {
   for (int source = 0; source < 1000; source++)  {
     for (int min_bits = 0; min_bits < 4; min_bits++) {
-      for (int max_bits_encoded = 2; max_bits_encoded <= 6; max_bits_encoded++) {
+      for (int max_bits_encoded = 2; max_bits_encoded <= 16; max_bits_encoded++) {
         int num_bits, num_bits_encoded;
         int32_t encoded;
 
-        int16_t predicted = (source * 23456) % 65535,
-            next_value = (source * 12345) % 65535;
+        int16_t predicted = (source * 23456),
+            next_value = (source * 12345);
         int32_t residual = next_value - (int32_t)predicted;
         int16_t next_decompressed_value;
         encode_residual(residual, predicted,
                         min_bits, max_bits_encoded,
+                        1, /* limit to int16 */
                         &num_bits, &num_bits_encoded,
                         &encoded,
                         &next_decompressed_value);
@@ -710,12 +724,12 @@ void lilcom_test_encode_residual() {
                                               num_bits,
                                               num_bits_encoded),
             decompressed_check = predicted + decoded;
-        assert(next_decompressed_value == decompressed_check);
-        /*
-        printf("residual = %d, predicted = %d, next-value = %d, max-bits=%d, "
+        /*fprintf(stderr, "residual = %d, predicted = %d, next-value = %d, max-bits=%d, "
                "num-bits{,enc}=%d,%d encoded = %d,  next{,decompressed}=%d,%d\n",
                residual, predicted, next_value, max_bits_encoded, num_bits,
                num_bits_encoded, encoded, next_value, next_decompressed_value);*/
+
+        assert(next_decompressed_value == decompressed_check);
       }
     }
   }
@@ -724,7 +738,7 @@ void lilcom_test_encode_residual() {
 
 void lilcom_test_backtracking_encoder() {
   for (int i = 0; i < 2; i++) {
-    for (int max_bits = 3; max_bits < 32; max_bits++) {
+    for (int max_bits = 3; max_bits <= 32; max_bits++) {
       if (max_bits > 16 && i == 1)
         continue;
       /* max_bits includes the width bit. */

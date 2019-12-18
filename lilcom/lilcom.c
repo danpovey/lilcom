@@ -16,6 +16,61 @@
 #include "encoder.h"
 #include "encoder.c"
 
+
+
+typedef struct {
+  int samp_rate;
+  int block_size;
+  int num_channels;
+  int lpc_order;
+  int conversion_exponent;
+  int max_bits_per_sample;
+  int code_version;    /* version of the code */
+  int config_version;  /* version number that will determine the un-written
+                          configuration elements such as diag_smoothing_power,
+                          abs_smoothing_power. */
+
+  /* eta_inv is the inverse of 1 - eta (eta is a decay constant); it can be viewed
+     as the time constant for the decay of the statistics for estimating LPC.
+     (Currently it's not user configurable but is written in the config). */
+  int eta_inv;
+
+
+  /* The next  are not currently user configurable. */
+
+  /* diag_smoothing_power is the power to which we raise 2 to get the smoothing
+     constant for autocorr[0]; we'll do,
+     autocorr[0] += autocorr[0]*10/(1<<diag_smoothing_power)*autocorr[0] + (1<<abs_smoothing_power)
+     1.0e-07 is around 2^-23, so we make diag_smoothing_power default so 23.
+     For abs_smoothing_power we use 40 (this is not critical at all.)
+   */
+  int diag_smoothing_power;
+  int abs_smoothing_power;
+
+} LilcomConfig;
+
+
+void* lilcom_get_config(int samp_rate,
+                                 int num_channels,
+                                 int lpc_order,
+                                 int max_bits_per_sample,
+                                 int block_size) {
+  LilcomConfig *ans = (LilcomConfig*)malloc(sizeof(LilcomConfig));
+  ans->samp_rate = samp_rate;  /* samp_rate is only inspected by user-level code. */
+  ans->num_channels = num_channels;
+  assert(num_channels >= 1);
+
+  ans->lpc_order = lpc_order;
+  /* 64 is a pretty arbitrary limit. */
+  assert(lpc_order >= 0 && lpc_order <= 64);
+
+  /* 31, because that's the maximum the encoder code will */
+  assert(max_bits_per_sample >= 3 && max_bits_per_sample <= 31);
+
+
+}
+
+
 /**
    This contains information related to the computation of the linear prediction
    coefficients (LPC).
@@ -1147,8 +1202,8 @@ static inline int lilcom_decompress_one_sample(
   if (((new_sample + 32768) & ~(int32_t) 65535) != 0) {
     /** If `new_sample` is outside the range [-32768 .. 32767], it
         is an error; we should not be generating such samples. */
-    debug_fprintf(stderr, "lilcom: decompression failure (corruption?), t = %d\n",
-                  (int) t);
+    debug_fprintf(stderr, "lilcom: decompression failure (corruption?), t = %d, new_sample = %d\n",
+                  (int) t, new_sample);
     return 1;
   }
   output_sample[0] = new_sample;
@@ -2026,7 +2081,7 @@ int main() {
   lilcom_test_compute_conversion_exponent();
   lilcom_test_get_max_abs_float_value();
   lilcom_test_encode_decode_signed();
-  lilcom_test_encode_residual();
+  lilcom_test_encode_residual_int16();
   lilcom_test_backtracking_encoder();
 }
 #endif
