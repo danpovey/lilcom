@@ -9,6 +9,8 @@
 #include "bit_packer.h"
 
 
+
+
 /**
    This header contains declarations for some compression code used in
    lilcom; it is an attempt to partition away some of the complexity.
@@ -47,7 +49,7 @@ struct BacktrackingEncoder {
   */
   ssize_t most_recent_attempt;
   /*
-     next_sample_to_encode is the next sample for which the user is
+     next_sample_to_encode is the next sample-index for which the user is
      required to call backtracking_encoder_encode().  This may go
      backwards as well as forwards, but it will never be the case
      that
@@ -236,6 +238,8 @@ static inline int decoder_decode(ssize_t t,
                                  int max_encoded_mantissa_bits,
                                  struct Decoder *decoder,
                                  int32_t *value);
+
+
 
 #ifdef LILCOM_TEST
 void lilcom_test_extract_mantissa();

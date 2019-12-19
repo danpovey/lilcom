@@ -990,7 +990,23 @@ def test_prediction(array):
     # in eq. (17) in the writeup].  The < 2.0 is because for
     # a quadratic objective function, we converge as long as the
     # learning rate is less than twice the "optimal" learning rate.
+
+    # perl -e 'print (log(2.0)/2.0);'
+    # 0.346573590279973mac:lilcom:
+    # Suppose eta is of the form eta = (1.0 - delta), where delta = 1 / eta_inv.
+    # we can use this to get a limit on eta_inv as compared to 'order'.
+    # By taking logs, we have:
+    # log(eta) * -2 * order < log(2.0)
+    # approximating log(eta) as linear:
+    # -delta * -2 * order < log(2.0)
+    #  delta * order < log(2.0)
+    #     2/log(2.0) *  order     < eta_inv
+    # eta_inv > 2.88 * order.
+    # We don't want to get too close to the point of instability, though,
+    # so we'll require that eta_inv > 3 * order.
     assert(eta ** (-2 * order) < 2.0)
+
+
 
     stats = LpcStats(lpc_order=order, eta=eta, dtype=dtype)
     # You can change num_cgd_iters=3 for more complete optimization;

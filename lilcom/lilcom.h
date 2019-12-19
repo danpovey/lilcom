@@ -2,21 +2,64 @@
 #include <sys/types.h>
 
 
-typedef void* LilcomConfigT;
+
+struct LilcomConfig;
 
 /**
    Returns an opaque type which defines a set of configuration values.  The type
    will contain other values other than the ones explicitly provided, but for
    now these will be set to some appropriate default values and are not user
    specifiable.
-*/
-LilcomConfigT* lilcom_get_config(int samp_rate,
-                                 int num_channels,
-                                 int lpc_order,
-                                 int max_bits_per_sample,
-                                 int block_size);
 
-void lilcom_delete_config(LilcomConfigT *config);
+      @param [in] samp_rate   The sampling rate, in Hz.  (This code does not
+                          currently inspect this, it just notes it in the
+                          header).
+      @param [in] block_size   The block size, in samples.  Data is compressed
+                          in blocks to enable decompression of just parts of
+                          the recording (and to prevent bit errors in one part of
+                          the recording from rendering the whole thing
+                          un-decompressible).  Must be > 0.  Recommend,
+                          e.g. 4096.  Must be no larger than 2^30.
+      @param [in] num_channels  The number of channels in the recording,
+                          e.g. 1 for mono, 2 for stereo, but larger values
+                          are supported.
+      @param [in] lpc_order   The order of linear prediction; higher values
+                          will give more compression but at more time expense.
+                          Must be >= 0; 0 means no linear prediction.
+      @param [in] conversion_exponent  A user-specified number which
+                          is required to be in the range [-127, 128]; when
+                          compressing integers it will just be returned to the
+                          user when decompressing without affecting anything
+                          else.  Just set this to 0 if you will be dealing only
+                          with integers.  This affects the scaling of the output
+                          if we decompress to float, and is the mechanism by
+                          which the lilcom_compress_float() and
+                          lilcom_decompress_float() get the data to the correct
+                          dynamic range.  When we convert to float, we will cast
+                          the int16_t to float (or double, if necessary due to
+                          potential overflow or underflow) and then multiply by
+                          2 to the power (conversion_exponent - 15).  If you
+                          plan to convert back to int16_t you can choose any
+                          value.  Setting conversion_exponent = 0 will put the
+                          data in the range [-1,1] if you ever do want to
+                          convert to float; this value might be suitable for
+                          audio data.
+      @param [in] max_bits_per_sample  The maximum allowed number of bits
+                          per encoded sample.  Must be >= 2 and <= 17;
+                          probably values in [4..8] will be the most suitable.
+                          Smaller values mean higher, more lossy compression.
+      @return    Returns a pointer to the (hidden) config class, or NULL if
+                 a parameter was out of the allowed range.
+*/
+struct LilcomConfig* lilcom_get_config(int32_t samp_rate,
+                                       int32_t block_size,
+                                       int num_channels,
+                                       int lpc_order,
+                                       int conversion_exponent,
+                                       int max_bits_per_sample);
+
+
+void lilcom_delete_config(struct LilcomConfig *config);
 
 
 
@@ -74,14 +117,13 @@ void lilcom_delete_config(LilcomConfigT *config);
 */
 
 
-
 int lilcom_compress(const int16_t *input, ssize_t num_samples, int input_stride,
                     int8_t *output, ssize_t num_bytes, int output_stride,
                     int lpc_order, int bits_per_sample,
                     int conversion_exponent);
 /**
 int8_t *lilcom_compress_int16(const int16_t *input,
-                              LilcomConfigT *config,
+                              LilcomConfigT config,
                               ssize_t num_samples,
                               int sample_stride,
                               int channel_stride,

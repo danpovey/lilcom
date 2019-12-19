@@ -438,7 +438,7 @@ void decoder_finish(const struct Decoder *decoder,
 
 /* See documentation in header */
 static inline int decoder_decode(ssize_t t,
-                                 int max_encoded_mantissa_bits,
+                                 int max_bits_in_sample,
                                  struct Decoder *decoder,
                                  int32_t *value) {
   /*
@@ -450,7 +450,8 @@ static inline int decoder_decode(ssize_t t,
       that, and then discard its value using the "comma" operator, using instead
       the value 1.
   */
-  int min_codable_width = LILCOM_COMPUTE_MIN_CODABLE_WIDTH(
+  int max_encoded_mantissa_bits = max_bits_in_sample - 1,
+      min_codable_width = LILCOM_COMPUTE_MIN_CODABLE_WIDTH(
           t, decoder->num_bits),
       width_bit = (min_codable_width >= 0  ?
                    1 & bit_unpacker_read_next_code(1, &decoder->bit_unpacker) :
@@ -546,7 +547,6 @@ void lilcom_test_backtracking_encoder() {
       /* rand can be viewed as a signed integer that fits (with the
          sign bit) into `max_bits` bits. */
       rand =  extend_sign_bit(rand * prime, max_bits - 1);
-      fprintf(stderr, "to-encode[%d] = %d\n", (int)t, (int)rand);
       to_encode[t] = rand;
     }
     while (encoder.next_sample_to_encode < 500) {
@@ -565,7 +565,7 @@ void lilcom_test_backtracking_encoder() {
     struct Decoder decoder;
     decoder_init(500, encoded + 0, stride, &decoder);
     for (t = 0; t < 500; t++) {
-      int ans = decoder_decode(t, max_bits - 1, &decoder, decoded + t);
+      int ans = decoder_decode(t, max_bits, &decoder, decoded + t);
       assert(decoded[t] == to_encode[t]);
       assert(!ans);
     }

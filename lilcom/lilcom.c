@@ -17,17 +17,19 @@
 #include "encoder.c"
 
 
-typedef struct {
-  int samp_rate;
-  int block_size;
+struct LilcomConfig {
+  int code_version;    /* version of the code */
+  int32_t samp_rate;
+  int32_t block_size;
+  /* Things which are just `int` are small enough that 16-bit would be enough. */
   int num_channels;
   int lpc_order;
+  /* see docs for lilcom_compress in lilcom.h, search for
+     conversion_exponent. */
   int conversion_exponent;
+  /* max_bits_per_sample must be in [3,32]. */
   int max_bits_per_sample;
-  int code_version;    /* version of the code */
-  int config_version;  /* version number that will determine the un-written
-                          configuration elements such as diag_smoothing_power,
-                          abs_smoothing_power. */
+
 
   /* eta_inv is the inverse of 1 - eta (eta is a decay constant); it can be viewed
      as the time constant for the decay of the statistics for estimating LPC.
@@ -45,29 +47,207 @@ typedef struct {
    */
   int diag_smoothing_power;
   int abs_smoothing_power;
+  /* Change the following if you modify this struct! */
+#define NUM_MEMBERS_OF_LILCOM_CONFIG 10
+};
 
-} LilcomConfig;
+/*
+  Returns 1 if the configuration class has reasonable values, and
+  0 otherwise.
+  Some of these limits are a little arbitrary.
+ */
+static int lilcom_check_config(const struct LilcomConfig *config) {
+  return config->code_version == 1 &&
+      config->block_size > 0 &&
+      config->num_channels > 0 &&
+      config->lpc_order >= 0 && config->lpc_order <= 64 &&
+      config->conversion_exponent >= -127 && config->conversion_exponent <= 128 &&
+      config->max_bits_per_sample >= 3 && config->max_bits_per_sample <= 32 &&
+      config->eta_inv > 1 && config->eta_inv >= 4 * config->lpc_order &&
+      config->diag_smoothing_power > 10 && config->diag_smoothing_power < 30 &&
+      config->abs_smoothing_power > 20 && config->abs_smoothing_power < 60;
+}
 
 
-LilcomConfigT* lilcom_get_config(int samp_rate,
-                                 int num_channels,
-                                 int lpc_order,
-                                 int max_bits_per_sample,
-                                 int block_size) {
-  LilcomConfig *ans = (LilcomConfig*)malloc(sizeof(LilcomConfig));
+struct LilcomConfig *lilcom_get_config(int32_t samp_rate,
+                                       int32_t block_size,
+                                       int num_channels,
+                                       int lpc_order,
+                                       int conversion_exponent,
+                                       int max_bits_per_sample) {
+  struct LilcomConfig *ans = (struct LilcomConfig*)malloc(sizeof(struct LilcomConfig));
+
+  ans->code_version = 1;
   ans->samp_rate = samp_rate;  /* samp_rate is only inspected by user-level code. */
   ans->num_channels = num_channels;
-  assert(num_channels >= 1);
-
   ans->lpc_order = lpc_order;
-  /* 64 is a pretty arbitrary limit. */
-  assert(lpc_order >= 0 && lpc_order <= 64);
+  ans->conversion_exponent = conversion_exponent;
+  ans->max_bits_per_sample = max_bits_per_sample;
+  ans->block_size = block_size;
+  ans->eta_inv = 64;
+  if (ans->eta_inv < 4 * lpc_order)
+    ans->eta_inv = 4 * lpc_order;
 
-  /* 31, because that's the maximum the encoder code will */
-  assert(max_bits_per_sample >= 3 && max_bits_per_sample <= 31);
-
-
+  ans->diag_smoothing_power = 23;
+  ans->abs_smoothing_power = 40;
+  if (!lilcom_check_config(ans)) {
+    fprintf(stderr, "Error: bad config parameters\n");
+    return NULL;
+  }
+  return (void*)ans;
 }
+
+void lilcom_delete_config(struct LilcomConfig *config) {
+  free(config);
+}
+
+/*
+  EncodedBlock is a kind of holder where we put an encoded data sequence; each
+  EncodedBlock would have been encoded by one BacktrackingEncoder instance.
+ */
+typedef struct {
+  int8_t *buffer;
+  int32_t buffer_size;  /* size of allocated buffer */
+  int32_t num_bytes_used;  /* number of bytes actually used. */
+} EncodedBlock;
+
+
+/*
+  Exactly encodes a 32-bit array (whose members i MUST satisfy -2^30 <= i < 2^30)
+  as an EncodedBlock.   Returns 0 on success, 1 if memory allocation failed.
+
+  See also decode_array32(), although if you are not sure of the sequence length
+  in advance you may need to use lower-level functions to decode the array.
+
+     @param [in] data   Array to be encoded, of length `len`; require len > 0.
+     @param [in] len    Length of the array to be encoded
+     @param [out] output  Encoded block will be put here; it will be a freshly
+                        allocated array (of as long as could possibly be needed
+                        to encode a sequence with that length).
+     @return           Returns 0 on success, 1 if it failed due to memory
+                       allocation error.
+ */
+int encode_array32(const int32_t *data, int32_t len, EncodedBlock *block) {
+  block->buffer_size = len * 4;
+  block->buffer = malloc(block->buffer_size);
+  if (!block->buffer)
+    return 1;
+  struct BacktrackingEncoder encoder;
+  backtracking_encoder_init(len, block->buffer, 1, &encoder);
+  int max_bits_per_sample = 32;
+  for (int t = 0; t < len; t++) {
+    assert(data[t] >= -(((int32_t)1)<<30) && data[t] < (((int32_t)1)<<30));
+  }
+  while (encoder.next_sample_to_encode < len) {
+    ssize_t t = encoder.next_sample_to_encode;
+    int32_t decoded;
+    if (backtracking_encoder_encode(max_bits_per_sample, data[t], &encoder,
+                                    &decoded) == 0) {
+      /* success */
+      assert(decoded == data[t]);
+    }
+  }
+  float bits_written_per_sample;
+  int8_t *next_free_byte;
+  backtracking_encoder_finish(&encoder,
+                              &bits_written_per_sample,
+                              &next_free_byte);
+  block->num_bytes_used = next_free_byte - block->buffer;
+  assert(block->num_bytes_used <= block->buffer_size);
+  return 0;  /* success */
+}
+/*
+  Decode an array of int32_t that was [exactly] encoded with encode_array32.
+     @param [in] block  The start of the code
+     @param [in] len    The number of int32_t elements in the sequence
+     @param [out] data  The array to be written.
+     @return            On success returns the pointer one past the last
+                        byte consumed.  On failure returns NULL.
+                        (this would indicate data corruption or algorithm
+                        error)
+ */
+const int8_t *decode_array32(const int8_t *code, int32_t len, int32_t *data) {
+
+  struct Decoder decoder;
+  decoder_init(len, code, 1, &decoder);
+  int max_bits_per_sample = 32;
+  for (int32_t i = 0; i < len; i++) {
+    if (decoder_decode(i, max_bits_per_sample, &decoder, data + i) != 0)
+      return NULL;  /* failure */
+  }
+  const int8_t *next_compressed_code;
+  decoder_finish(&decoder, &next_compressed_code);
+  return next_compressed_code;
+}
+
+
+/*
+  Encodes the header.
+     @param [in] num_samples   The num-samples (must be > 0), to be encoded
+                     in the header.
+     @param [in] config  The configuration class; its members will also be
+                     encoded in the header.
+     @param [out] header_block  The header block to
+
+     @return  Returns 0 on success, 1 on failure (it can only fail if memory
+              allocation failed, although certain invalid config values might
+              lead to assertion failures).
+ */
+static int lilcom_encode_header(ssize_t num_samples, const struct LilcomConfig *config,
+                                EncodedBlock *header_block) {
+  /* Because the encoder object doesn't handle more than 2^30, break it into num_blocks
+     and remainder_size */
+  int32_t num_blocks = num_samples / config->block_size,
+      remainder_size = num_samples % config->block_size;
+  int32_t a[12];
+  a[0] = num_blocks;
+  a[1] = remainder_size;
+  a[2] = config->code_version;
+  a[3] = config->samp_rate;
+  a[4] = config->block_size;
+  a[5] = config->num_channels;
+  a[6] = config->lpc_order;
+  a[7] = config->conversion_exponent;
+  a[8] = config->max_bits_per_sample;
+  a[9] = config->eta_inv;
+  a[10] = config->diag_smoothing_power;
+  a[11] = config->abs_smoothing_power;
+  return encode_array32(a, 12, header_block);
+}
+
+/*
+  Attempts to decode the header as written by lilcom_encode_header.
+    @param [in] header_start   Start to where the header is encoded
+    @param [out] config        The config class to be written
+    @param [out] num_samples   The number of samples will be written
+                               here
+    @return  On success, returns the byte after the last byte
+           consumed.  On failure, returns NULL.
+ */
+static const int8_t *lilcom_decode_header(const int8_t *header_start,
+                                          struct LilcomConfig *config,
+                                          ssize_t *num_samples) {
+  int32_t a[12];
+  const int8_t *next_code = decode_array32(header_start, 12, a);
+  if (next_code == NULL)
+    return NULL;  /* Error */
+  int32_t num_blocks = a[0], remainder_size = a[1];
+  config->code_version = a[2];
+  config->samp_rate = a[3];
+  config->block_size = a[4];
+  config->num_channels = a[5];
+  config->lpc_order = a[6];
+  config->conversion_exponent = a[7];
+  config->max_bits_per_sample = a[8];
+  config->eta_inv = a[9];
+  config->diag_smoothing_power = a[10];
+  config->abs_smoothing_power = a[11];
+  *num_samples = remainder_size + ((ssize_t)num_blocks) * config->block_size;
+
+  return next_code;
+}
+
+
 
 
 /**
@@ -1289,7 +1469,7 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
   int t;
   for (t = 0; t < AUTOCORR_BLOCK_SIZE && t < num_samples; t++) {
     int32_t residual;
-    if (decoder_decode(t, bits_per_sample - 1, &decoder, &residual) != 0 ||
+    if (decoder_decode(t, bits_per_sample, &decoder, &residual) != 0 ||
         lilcom_decompress_one_sample(t, lpc_order,
                                      lpc.lpc_coeffs, residual,
                                      &(output_buffer[MAX_LPC_ORDER + t])) != 0) {
@@ -1341,7 +1521,7 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
                              t + AUTOCORR_BLOCK_SIZE : num_samples);
       for (; t < local_max_t; t++) {
         int32_t residual;
-        if (decoder_decode(t, bits_per_sample - 1, &decoder, &residual) != 0 ||
+        if (decoder_decode(t, bits_per_sample, &decoder, &residual) != 0 ||
             lilcom_decompress_one_sample(t, lpc_order, lpc.lpc_coeffs, residual,
                                          output + t) != 0) {
           debug_fprintf(stderr, "lilcom: decompression failure for t=%d\n",
@@ -1390,7 +1570,7 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
                              t + AUTOCORR_BLOCK_SIZE : num_samples);
       for (; t < local_max_t; t++) {
         int32_t residual;
-        if (decoder_decode(t, bits_per_sample - 1, &decoder, &residual) != 0 ||
+        if (decoder_decode(t, bits_per_sample, &decoder, &residual) != 0 ||
             lilcom_decompress_one_sample(
                 t, lpc_order, lpc.lpc_coeffs, residual,
                 output_buffer + MAX_LPC_ORDER + (t & (SIGNAL_BUFFER_SIZE - 1))) != 0) {
@@ -2081,6 +2261,42 @@ void lilcom_test_get_max_abs_float_value() {
   assert(max_abs_float_value(array, 100, 1) == lilcom_abs(array[99]));
 }
 
+void lilcom_test_encode_header() {
+  struct LilcomConfig *config = lilcom_get_config(32000, /* samp_rate */
+                                                  4096, /* block_size */
+                                                  2,  /* num_channels */
+                                                  8,  /* lpc_order */
+                                                  0,  /* conversion_exponeont */
+                                                  5);  /* max_bits_per_sample */
+  assert(lilcom_check_config(config));
+  ssize_t num_samples = 12345678;
+  EncodedBlock block;
+  int ret = lilcom_encode_header(num_samples, config, &block);
+  assert(ret == 0);
+  struct LilcomConfig config2;
+  ssize_t num_samples2;
+  const int8_t *next_ptr = lilcom_decode_header(block.buffer,
+                                                &config2,
+                                                &num_samples2);
+  assert(next_ptr == block.buffer + block.num_bytes_used);
+
+  fprintf(stderr, "Bytes used for header %d\n", block.num_bytes_used);
+  assert(config2.code_version == config->code_version);
+  assert(config2.samp_rate == config->samp_rate);
+  assert(config2.num_channels == config->num_channels);
+  assert(config2.lpc_order == config->lpc_order);
+  assert(config2.conversion_exponent == config->conversion_exponent);
+  assert(config2.max_bits_per_sample == config->max_bits_per_sample);
+  assert(config2.eta_inv == config->eta_inv);
+  assert(config2.diag_smoothing_power == config->diag_smoothing_power);
+  assert(config2.abs_smoothing_power == config->abs_smoothing_power);
+
+  assert(num_samples2 == num_samples);
+  free(config);
+  free(block.buffer);
+}
+
+
 int main() {
   lilcom_check_constants();
   lilcom_test_extract_mantissa();
@@ -2092,5 +2308,6 @@ int main() {
   lilcom_test_get_max_abs_float_value();
   lilcom_test_encode_decode_signed();
   lilcom_test_backtracking_encoder();
+  lilcom_test_encode_header();
 }
 #endif
