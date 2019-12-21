@@ -43,9 +43,10 @@ class ToeplitzLpcEstimator:
         self.diag_smoothing = diag_smoothing
         self.abs_smoothing = abs_smoothing
         self.dtype = dtype
-        self.deriv = None
+        self.deriv = np.zeros(lpc_order, dtype=dtype)
         self.autocorr = np.zeros(lpc_order, dtype=dtype)
         self.lpc_coeffs = np.zeros(lpc_order, dtype=dtype)
+        self.scale_vec = None
         self.sqrt_scale_vec = None
         self.eta_power_vec = None
         self.scale_vec = None
@@ -74,8 +75,11 @@ class ToeplitzLpcEstimator:
 
         self.x = np.concatenate((self.x[-self.lpc_order:], x_block))
 
-        self._set_derivative(residual)
-        self._update_autocorr_stats()
+        if False:
+            self._set_deriv(residual)
+            self._update_autocorr_stats()
+        else:
+            self._update_autocorr_stats_and_deriv(residual)
         au = self._get_autocorr_reflected(self.lpc_order)
         # Smooth autocorr stats to avoid NaNs and the like.
         au[0] += self.abs_smoothing + (self.diag_smoothing * au[0])
@@ -128,23 +132,6 @@ class ToeplitzLpcEstimator:
 
         return ans
 
-    def _set_derivative(self, residual):
-        """
-        [For use in simplified update] Sets self.deriv to the deriviative
-        contribution from just this block, at the current values of the LPC
-        coeffs.
-        """
-        N = self.lpc_order
-        T_diff = residual.shape[0]
-        S = T_diff + N  # length of x
-        assert(self.x.shape[0] == S)
-
-        scaled_residual = residual * self._get_scale(residual.shape[0])
-        reverse_deriv = np.zeros(N, dtype=self.dtype)
-        for t in range(T_diff):
-            reverse_deriv += self.x[t:t+N] * scaled_residual[t]
-        self.deriv = np.flip(reverse_deriv)
-
     def _get_scale(self, T):
         """
         Returns self.eta ** (2*(T - np.arange(T))), except it caches this and doesn't do
@@ -174,26 +161,70 @@ class ToeplitzLpcEstimator:
         return self.eta_power_vec[t]
 
 
+    def _set_deriv(self, residual):
+        """
+        [For use in simplified update] Sets self.deriv to the deriviative
+        contribution from just this block, at the current values of the LPC
+        coeffs.
+        """
+        N = self.lpc_order
+        T_diff = residual.shape[0]
+        S = T_diff + N  # length of x
+        assert(self.x.shape[0] == S)
+
+        # Both these methods are tested and give the same results.
+        if True:
+            for n in range(N):
+                self.deriv[n] = np.dot(self.x[N-1-n:T_diff+N-1-n] * residual,
+                                       self._get_scale(residual.shape[0]))
+        else:
+            scaled_residual = residual * self._get_scale(residual.shape[0])
+            reverse_deriv = np.zeros(N, dtype=self.dtype)
+            for t in range(T_diff):
+                reverse_deriv += self.x[t:t+N] * scaled_residual[t]
+            self.deriv = np.flip(reverse_deriv)
+
     def _update_autocorr_stats(self):
         """
         Update the autocorrelation stats (self.autocorr)
         Only need them from 0 to lpc_order - 1.
         """
         N = self.lpc_order
-        reverse_autocorr_stats = np.zeros(N, dtype=self.dtype)
         x = self.x
         S = x.shape[0]
         T_diff = S - N  # T_diff is number of new samples (i.e. excluding history)
 
-        # Now `x_hat` corresponds to the weighted data
-        # which we called \hat{x} in the writeup.
-        for t in range(N, S):
-            # weight that gets smaller as we go far back in time;
-            # would be 1.0 at one sample past the end.
-            reverse_autocorr_stats += x[t-N+1:t+1] * x[t] * self._get_eta_power(2*(S - t) - 1)
 
-        old_weight = self.eta ** (T_diff * 2)  ## self._get_scale(T_diff)[0]  # == self.eta ** (T_diff * 2)
-        self.autocorr = old_weight * self.autocorr + np.flip(reverse_autocorr_stats * self._get_sqrt_scale(N))
+        # The autocorrelation stats accumulation can be done either of the following two ways, with
+        # equivalent results.
+        if True:
+            self.autocorr *= self.eta ** (T_diff * 2)
+            for n in range(N):
+                self.autocorr[n] += np.dot(x[N-n:S-n] * x[N:S], self._get_scale(S-N)) * self._get_eta_power(n)
+        else:
+            reverse_autocorr_stats = np.zeros(N, dtype=self.dtype)
+            for t in range(N, S):
+                reverse_autocorr_stats += x[t-N+1:t+1] * x[t] * self._get_eta_power(2*(S - t) - 1)
+            old_weight = self.eta ** (T_diff * 2)  ## self._get_scale(T_diff)[0]  # == self.eta ** (T_diff * 2)
+            self.autocorr = old_weight * self.autocorr + np.flip(reverse_autocorr_stats * self._get_sqrt_scale(N))
+
+
+    def _update_autocorr_stats_and_deriv(self, residual):
+        N = self.lpc_order
+        x = self.x
+        S = x.shape[0]
+        T_diff = S - N  # T_diff is number of new samples (i.e. excluding history)
+
+
+        # The autocorrelation stats accumulation can be done either of the following two ways, with
+        # equivalent results.
+        if True:
+            self.autocorr *= self.eta ** (T_diff * 2)
+            for n in range(N+1):
+                if n < N:
+                    self.autocorr[n] += np.dot(x[N-n:S-n] * x[N:S], self._get_scale(S-N)) * self._get_eta_power(n)
+                if n > 0:
+                    self.deriv[n-1] = np.dot(x[N-n:S-n] * residual,  self._get_scale(S-N))
 
 
 
