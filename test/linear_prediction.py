@@ -282,11 +282,12 @@ def toeplitz_solve(autocorr, y):
     N = autocorr.shape[0] - 1
     assert y.shape[0] == N + 1
     x = np.zeros(N+1)
+    # Caution: b here is flipped/reversed vs. the b in the technical report
+    # that I am following.  This saves a redundant copy.
     b = np.zeros(N+1)
-    b_temp = np.zeros(N+1)
     r = autocorr
 
-    b[0] = 1.0
+    b[-1] = 1.0
     epsilon = r[0]
     x[0] = y[0] / epsilon
 
@@ -296,13 +297,15 @@ def toeplitz_solve(autocorr, y):
         # the same.  Be careful with the indexing of b.  Notice in Eq.
         # (2.3) that the elements of b are in a very strange order,
         # so you have to interpret (2.6) very carefully.
-        nu_n = (-1.0 / epsilon) * sum([r[j+1] * b[j] for j in range(n)])
+
+        nu_n = (-1.0 / epsilon) * np.dot(r[1:n+1], b[-n:])
 
         # next few lines are Eq. 2.7
-        b_temp[0] = 0.0
-        b_temp[1:n+1] = b[:n]
-        b_temp[:n] += nu_n * np.flip(b[:n])
-        b[:n+1] = b_temp[:n+1]
+        # Because we shifted b to the end, the equations become a bit
+        # simpler.
+        b[-(n+1):-1] += nu_n * np.flip(b[-n:])
+
+        #print("b is ", b);
 
         # Eq. 2.8
         epsilon *= (1.0 - nu_n * nu_n)
@@ -313,9 +316,9 @@ def toeplitz_solve(autocorr, y):
             raise RuntimeError("Something went wrong, nu_n = {}".format(nu_n))
 
         # The following is an unnumbered formula below Eq. 2.9
-        lambda_n = y[n] - sum([ r[n-j] * x[j] for j in range(n)])
+        lambda_n = y[n] - np.dot(np.flip(r[1:n+1]), x[:n])
 
-        x[:n+1] += (lambda_n / epsilon) * b[:n+1];
+        x[:n+1] += (lambda_n / epsilon) * b[-(n+1):]
 
         #print("iter={}, nu_n={} epsilon={}, lambda={}, b[:n+1]={}, x[:n+1] = {}".format(
         #        n, nu_n, epsilon, lambda_n, b[:n+1], x[:n+1]))
