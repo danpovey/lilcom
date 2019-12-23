@@ -24,8 +24,11 @@ fixed_math: fixed_math.c
 prediction_math: prediction_math.c fixed_math.c prediction_math.h fixed_math.h
 	gcc -O0 -Wall -g  -DPREDICTION_MATH_TEST=1 fixed_math.c prediction_math.c -o prediction_math -lm # -ftrapv
 
-int_math_utils_test: int_math_utils_test.cc
+int_math_utils_test: int_math_utils_test.cc int_math_utils.h
 	g++ -O0 -Wall -g  int_math_utils_test.cc -o int_math_utils_test -lm # -ftrapv
 
-int_scalar_test: int_scalar_test.cc
+int_scalar_test: int_scalar_test.cc int_scalar.h int_math_utils.h
 	g++ -O0 -Wall -g  int_scalar_test.cc -o int_scalar_test -lm # -ftrapv
+
+int_vec_test: int_vec_test.cc int_scalar.h int_vec.h int_math_utils.h
+	g++ -O0 -Wall -g  int_vec_test.cc -o int_vec_test -lm # -ftrapv

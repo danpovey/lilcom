@@ -26,7 +26,7 @@ struct IntScalar {
   IntScalar(I value): elem(value), exponent(0) { }
   IntScalar() { }
 
-  operator float() { return elem * powf(2.0, exponent); }
+  operator float() const { return elem * powf(2.0, exponent); }
 };
 
 /**

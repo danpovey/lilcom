@@ -28,9 +28,15 @@ template <typename I> inline I int_math_min(I a, I b) {
    number of bits following the most significant bit that are
    identical to it.
 */
-inline int native_lrsb(int i) {  return __builtin_clrsb(i); }
-inline int native_lrsb(long int i) {  return __builtin_clrsb(i); }
-inline int native_lrsb(long long int i) {  return __builtin_clrsb(i); }
+inline int native_lrsb(int i) {
+  return __builtin_clrsb(i);
+}
+inline int native_lrsb(long int i) {
+  return __builtin_clrsbl(i);
+}
+inline int native_lrsb(long long int i) {
+  return __builtin_clrsbll(i);
+}
 
 
 /* returns number of leading redundant sign bits (for fixed-size types) */
@@ -38,12 +44,11 @@ inline int lrsb(int16_t i) { return native_lrsb((int32_t)i) - 16; }
 inline int lrsb(int32_t i) { return native_lrsb(i); }
 inline int lrsb(int64_t i) { return native_lrsb(i); }
 
-/*
-  num_significant_bits returns the bits apart from the sign bit, that
-  are required to encode this number.
 
-  TODO: see if these are needed.
- */
+/*
+  num_significant_bits returns the number of bits (apart from the sign bit), that
+  are required to encode this number.
+*/
 inline int num_significant_bits(int16_t i) {
   return 31 - lrsb((int32_t)(i));
 }
@@ -55,19 +60,20 @@ inline int num_significant_bits(int64_t i) {
 }
 
 
+
 template <typename I>
 inline bool data_is_zero(I *data, int dim) {
   for (int i = 0; i < dim; i++)
     if (data[i] != 0) return false;
   return true;
-       }
+}
 template <typename I>
 inline void set_data_zero(I *data, int dim) {
   for (int i = 0; i < dim; i++)
     data[i] = 0;
 }
 template <typename I>
-inline int get_nrsb(I *data, int dim) {
+inline int array_lrsb(I *data, int dim) {
   int nrsb = 1000;
   for (int i = 0; i < dim; i++) {
     int n = lrsb(data[i]);
@@ -85,13 +91,15 @@ inline int get_nrsb(I *data, int dim) {
 */
 template <typename IA, typename IB, typename IProd, typename IRet, int B_stride>
 IRet compute_raw_dot_product(const IA *array_A, const IB *array_B, int dim) {
+  /* the following assertions might not really be necessary as long as users
+     know what they are doing. */
   assert(sizeof(IProd) >= sizeof(IA) + sizeof(IB) &&
-         sizeof(IRet) > sizeof(IA) + sizeof(IRet));
+         sizeof(IRet) >= sizeof(IA) + sizeof(IB));
   IRet sum1 = 0, sum2 = 0;  /* separate sums for pipelining */
   int i;
   for (i = 0; i + 2 <= dim; i += 2) {
     sum1 += array_A[i] * static_cast<IProd>(array_B[i * B_stride]);
-    sum2 += array_A[i + 1] * static_cast<IProd>(array_B[(i + 1) + B_stride]);
+    sum2 += array_A[i + 1] * static_cast<IProd>(array_B[(i + 1) * B_stride]);
   }
   if (i < dim)
     sum1 += array_A[i] * static_cast<IProd>(array_B[i * B_stride]);
@@ -112,15 +120,10 @@ IOut compute_raw_dot_product_shifted(const IIn *array_A, const IIn *array_B, int
   return sum1 + sum2;
 }
 
-void raw_right_shift_by(int32_t *a, int dim, int rshift) {
-  assert(static_cast<unsigned int>(rshift) <= 32);
-#pragma unroll
-  for (int i = 0; i < dim; i++)
-    a[i] >>= rshift;
-}
+
 
 int raw_add_product(int dim, const int32_t *a, int32_t scale, int32_t *b,
-                     int prod_rshift) {
+                    int prod_rshift) {
   int min_nrsb = 31;
 #pragma unroll
   for (int i = 0; i < dim; i++) {
@@ -214,6 +217,20 @@ int raw_add_product_and_rshift(int dim, const int32_t *a, int32_t scale, int32_t
 #pragma unroll
   for (int i = 0; i < dim; i++) {
     int32_t new_b = (b[i] >> b_rshift) + ((a[i]*(int64_t)scale) >> prod_rshift);
+    b[i] = new_b;
+    int nrsb = lrsb(new_b);
+    if (nrsb < min_nrsb)
+      min_nrsb = nrsb;
+  }
+  return min_nrsb;
+}
+
+int raw_add_product_and_lshift(int dim, const int32_t *a, int32_t scale, int32_t *b,
+                               int prod_rshift, int b_lshift) {
+  int min_nrsb = 31;
+#pragma unroll
+  for (int i = 0; i < dim; i++) {
+    int32_t new_b = (b[i] << b_lshift) + ((a[i]*(int64_t)scale) >> prod_rshift);
     b[i] = new_b;
     int nrsb = lrsb(new_b);
     if (nrsb < min_nrsb)
