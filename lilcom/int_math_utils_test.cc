@@ -46,6 +46,47 @@ void test_compute_raw_dot_product_shifted() {
   assert(c ==  (2>>1) + (3>>1) + (5>>1));
 }
 
+void test_raw_add_product() {
+  int32_t a [] = { 2, 0, 7, 9 },
+      b [] = { 2, 3, 4, 5};
+  int32_t scale = 8;
+  int32_t prod_rshift = 2,
+      scale_rshifted = (8 >> 2);
+  int64_t b_nrsb = raw_add_product(4, a, scale, b, prod_rshift);
+  assert(b_nrsb == array_lrsb(b, 4));
+  assert(b[0] == (2 + a[0] * scale_rshifted));
+  assert(b[1] == (3 + a[1] * scale_rshifted));
+  assert(b[2] == (4 + a[2] * scale_rshifted));
+  assert(b[3] == (5 + a[3] * scale_rshifted));
+}
+
+void test_raw_copy_product() {
+  int32_t a [] = { 2, 0, 7, 9 },
+      b [] = { 2, 3, 4, 5};
+  int32_t scale = 8;
+  int32_t prod_rshift = 2,
+      scale_rshifted = (8 >> 2);
+  int64_t b_nrsb = raw_copy_product(4, a, scale, b, prod_rshift);
+  assert(b_nrsb == array_lrsb(b, 4));
+  assert(b[0] == (a[0] * scale_rshifted));
+  assert(b[1] == (a[1] * scale_rshifted));
+  assert(b[2] == (a[2] * scale_rshifted));
+  assert(b[3] == (a[3] * scale_rshifted));
+}
+
+
+void test_raw_multiply_elements() {
+  int32_t a [] = { 2, 0, 7, 9 },
+      b [] = { 2, 3, 4, 5},
+      c [] = { 4, 5, 6, 7 };
+  int32_t prod_rshift = 1;
+  int64_t c_nrsb = raw_multiply_elements(4, a, b, prod_rshift, c);
+  assert(c[0] == ((a[0] * b[0]) >> prod_rshift));
+  assert(c[1] == ((a[1] * b[1]) >> prod_rshift));
+  assert(c[3] == ((a[3] * b[3]) >> prod_rshift));
+  assert(c_nrsb == array_lrsb(c, 4));
+}
+
 
 }
 
@@ -64,12 +105,17 @@ int main() {
   assert(num_significant_bits(0) == 0);
   assert(num_significant_bits(1) == 1);
   assert(num_significant_bits(8) == 4);
-
+  assert(num_significant_bits(-1) == 0);
 
   test_data_is_zero();
   test_array_lrsb();
   test_compute_raw_dot_product();
   test_compute_raw_dot_product_shifted();
+
+  test_raw_add_product();
+  test_raw_copy_product();
+  test_raw_multiply_elements();
+
   return 0;
 }
 

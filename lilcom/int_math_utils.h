@@ -151,6 +151,7 @@ int raw_copy_product(int dim, const int32_t *a, int32_t scale, int32_t *b,
 }
 
 
+/* does c[i] = (a[i] * b[i]) >> prod_rshift, returns lrsb of c */
 int raw_multiply_elements(int dim, const int32_t *a, const int32_t *b,
                           int prod_rshift, int32_t *c) {
   int min_nrsb = 31;
