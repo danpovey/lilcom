@@ -195,8 +195,11 @@ class ToeplitzLpcEstimator:
         T_diff = S - N  # T_diff is number of new samples (i.e. excluding history)
 
 
-        # The autocorrelation stats accumulation can be done either of the following two ways, with
-        # equivalent results.
+        # This function updates both self.autocorr and self.deriv.  You can get
+        # the same effect by calling _update_autocorr_stats() and _set_deriv().
+        #
+        # The autocorrelation stats accumulation can be done either of the
+        # following two ways, with equivalent results.
         if True:
             self.autocorr *= self.eta ** (T_diff * 2)
             for n in range(N):
@@ -222,6 +225,7 @@ class ToeplitzLpcEstimator:
             self.autocorr *= self.eta ** (T_diff * 2)
             for n in range(N+1):
                 if n < N:
+                    #self.autocorr[n] += np.dot(x[N-n:S-n] * x[N:S], self.eta ** (2*(S-N)+n  - 2*np.arange(S-N)))
                     self.autocorr[n] += np.dot(x[N-n:S-n] * x[N:S], self._get_scale(S-N)) * self._get_eta_power(n)
                 if n > 0:
                     self.deriv[n-1] = np.dot(x[N-n:S-n] * residual,  self._get_scale(S-N))
