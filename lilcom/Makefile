@@ -8,6 +8,7 @@ lilcom.o: lilcom.cc
 
 fixed_math.o: fixed_math.c
 
+
 # Note: it's OK to use -O1, -O2, -O3, but it wouldn't really be correct to use
 # -Ofast, because that will disable the checks for NaN's and inf's.
 # I was getting mysterious "illegal instruction" errors with -ftrapv that
@@ -22,3 +23,9 @@ fixed_math: fixed_math.c
 
 prediction_math: prediction_math.c fixed_math.c prediction_math.h fixed_math.h
 	gcc -O0 -Wall -g  -DPREDICTION_MATH_TEST=1 fixed_math.c prediction_math.c -o prediction_math -lm # -ftrapv
+
+int_math_utils_test: int_math_utils_test.cc
+	g++ -O0 -Wall -g  int_math_utils_test.cc -o int_math_utils_test -lm # -ftrapv
+
+int_scalar_test: int_scalar_test.cc
+	g++ -O0 -Wall -g  int_scalar_test.cc -o int_scalar_test -lm # -ftrapv
