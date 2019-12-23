@@ -82,7 +82,7 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
 
   CopyVectorElemToScalar64(&y, 0, &y0); /* next 3 lines: x[0] = y[0] / epsilon. */
   DivideScalar64(&y0, &epsilon, &x0);
-  CopyScalarToVector64Elem(&x0, 0, &x);
+  CopyScalarToVector64Elem(&x0, 0, &x); /* HERE: set vector elem to scalar, rest zero. */
 
   for (int n = 1; n <= N; n++) {  /* for n in range(1, N+1): */
 
@@ -94,21 +94,21 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
     InitSubVector64(&r, 1, n, 1, &r1n1);
     InitSubVector64(&b, 0, n, 1, &bn);
     Scalar64 product, nu_n;
-    DotVector64(&r1n1, &bn, &product);
+    DotVector64(&r1n1, &bn, &product);   /* HERE: dot product */
     DivideScalar64(&product, &epsilon, &nu_n);
     NegateScalar64(&nu_n);
 
     CopyIntToVector64Elem(0, 0, 0, &b_temp);  /* b_temp[0] = 0.0 (3rd arg is size_hint==0). */
     Vector64 b_temp_1n1; /* == b_temp[1:n+1] */
     InitSubVector64(&b_temp, 1, n, 1, &b_temp_1n1);
-    CopyVector64(&bn, &b_temp_1n1); /* b_temp[1:n+1] = b[:n] */
+    CopyVector64(&bn, &b_temp_1n1); /* b_temp[1:n+1] = b[:n] */  /* HERE: copy vector. [extra element stays zero] */
     CheckRegion64Size(b_temp.region);
     Vector64 b_temp_n; /* == b_temp[0:n] */
     InitSubVector64(&b_temp, 0, n, 1, &b_temp_n);
     Vector64 b_n_flip; /* == np.flip(b[:n]) */
     InitSubVector64(&b, n - 1, n, -1, &b_n_flip);
-    CheckRegion64Size(b_temp.region);
-    AddScalarVector64(&nu_n, &b_n_flip, &b_temp_n); /* b_temp[:n] += nu_n * np.flip(b[:n]) */
+    AddScalarVector64(&nu_n, &b_n_flip, &b_temp_n); /* HERE: vector += scalar * vector.
+                                                       b_temp[:n] += nu_n * np.flip(b[:n]) */
 
     /* Shallow-swap the vectors b and b_temp.  In the equations this is
        written as:
@@ -120,11 +120,8 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
          epsilon *= (1.0 - nu_n * nu_n) */
     Scalar64 nu_n2,  /* nu_n^2 */
         epsilon_minus_nu_n2;
-    CheckScalar64Size(&nu_n);
     MulScalar64(&nu_n, &nu_n, &nu_n2); /* nu_n2 := nu_n * nu_n */
-    CheckScalar64Size(&nu_n2);
     NegateScalar64(&nu_n2);   /* nu_n2 *= -1 */
-    CheckScalar64Size(&nu_n2);
     MulScalar64(&epsilon, &nu_n2, &epsilon_minus_nu_n2);
     AddScalar64(&epsilon, &epsilon_minus_nu_n2, &epsilon); /* epsilon -= mu_n*mu_n*epsilon */
     if (epsilon.data <= 0) {
@@ -143,7 +140,7 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
       Vector64 x_n, r_1n1_flip;
       InitSubVector64(&x, 0, n, 1, &x_n);
       InitSubVector64(&r, n, n, -1, &r_1n1_flip);
-      DotVector64(&x_n, &r_1n1_flip, &lambda_n);
+      DotVector64(&x_n, &r_1n1_flip, &lambda_n);  /* HERE- dot product. */
       NegateScalar64(&lambda_n);
       /* lambda_n is now
          - sum([ r[n-j] * x[j] for j in range(n)]) == np.dot(np.flip(r[1:n+1]), j[:n]) */
@@ -157,7 +154,7 @@ int ToeplitzSolve(const Vector64 *autocorr_in, const Vector64 *y_in, Vector64 *x
     InitSubVector64(&x, 0, n+1, 1, &x_n1);
     InitSubVector64(&b, 0, n+1, 1, &b_n1);
     /* next line: x[:n+1] += (lambda_n / epsilon) * b[:n+1] */
-    AddScalarVector64(&ratio, &b_n1, &x_n1);
+    AddScalarVector64(&ratio, &b_n1, &x_n1);     /* HERE vec += scalar * vec. */
   }
   return 0;
 }
