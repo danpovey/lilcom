@@ -2,6 +2,7 @@
 #define __LILCOM__INT_VEC_H__
 
 
+
 #include <math.h>
 #include <stdint.h>
 #include <assert.h>
@@ -10,6 +11,10 @@
 #include <stdlib.h>  /* for abs. */
 #include "int_math_utils.h"
 #include "int_scalar.h"
+#ifndef NDEBUG
+#include <string>  /* for std::string, for debug. */
+#include <sstream>  /* for std::ostringstream, for debug. */
+#endif
 
 
 namespace int_math {
@@ -30,12 +35,26 @@ struct IntVec {
                 the sign bit. */
   int exponent;  /* If the data in `data` is all zero, `exponent` must be
                     set to kExponentOfZero. */
-  IntScalar<I> operator [] (int i) { return IntScalar<I>(data[i], exponent); }
+  IntScalar<I> operator [] (int i) const { return IntScalar<I>(data[i], exponent); }
 
   inline void set_nrsb(int nrsb_in) {
     nrsb = nrsb_in;
     if (nrsb + 1 == (sizeof(I)*8) && data_is_zero(data, dim))
       exponent = kExponentOfZero;
+  }
+
+  inline operator std::string () const {  // for debug.
+    std::ostringstream os;
+    os << " [ ";
+    for (int i = 0; i < dim; i++)
+      os << (double)(*this)[i] << ' ';
+    os << "] ";
+    return os.str();
+  }
+
+
+  inline void set_nrsb() {
+    set_nrsb(array_lrsb(data, dim));
   }
 
 #ifdef NDEBUG
@@ -58,7 +77,7 @@ struct IntVec {
     data = new I[d];
     exponent = kExponentOfZero;
     nrsb = 8 * sizeof(I) - 1;
-    zero_data(data, dim);
+    set_data_zero(data, dim);
   }
 };
 
@@ -83,16 +102,24 @@ void compute_dot_product(IntVec<int32_t> *a, IntVec<int16_t> *b, IntScalar<int64
 void compute_dot_product(IntVec<int32_t> *a, IntVec<int32_t> *b, IntScalar<int64_t> *out) {
   assert(a->dim == b->dim);
   int dim = a->dim,
-      rshift = num_significant_bits(dim);
-  out->elem = compute_raw_dot_product_shifted<int32_t, int64_t, 1>(
-      a->data, b->data, dim, rshift);
-  out->exponent = a->exponent + b->exponent + rshift;
+      rshift = num_significant_bits(dim) - a->nrsb - b->nrsb;
+  if (rshift > 0) {
+    out->elem = compute_raw_dot_product_shifted<int32_t, int64_t, 1>(
+        a->data, b->data, dim, rshift);
+    out->exponent = a->exponent + b->exponent + rshift;
+  } else {
+    out->elem = compute_raw_dot_product<int32_t, int32_t, int64_t, int64_t, 1>(
+        a->data, b->data, dim);
+    out->exponent = a->exponent + b->exponent;
+  }
 }
 
 /*
   Computes the dot product that in NumPy would be
      np.dot(a[a_offset:a_offset+dim], b[b_offset:b_offset+dim])
  */
+/*
+  Not needed just now.
 inline void compute_dot_product(int dim,
                                 IntVec<int16_t> *a, int a_offset,
                                 IntVec<int16_t> *b, int b_offset,
@@ -102,6 +129,7 @@ inline void compute_dot_product(int dim,
       a->data + a_offset, b->data + b_offset, dim);
   out->exponent = a->exponent + b->exponent;
 }
+*/
 
 
 /*
@@ -109,6 +137,7 @@ inline void compute_dot_product(int dim,
      np.dot(a[a_offset:a_offset+dim], np.flip(b[b_offset:b_offset+dim]))
   Note: it does not actually matter which of the two arguments is flipped.
  */
+/* Not needed just now.
 inline void compute_dot_product_flip(int dim,
                          IntVec<int16_t> *a, int a_offset,
                          IntVec<int16_t> *b, int b_offset,
@@ -118,8 +147,10 @@ inline void compute_dot_product_flip(int dim,
       a->data + a_offset, b->data + b_offset + dim - 1, dim);
   out->exponent = a->exponent + b->exponent;
 }
+*/
 
-
+/*
+  Not needed just now.
 inline void compute_dot_product_flip(int dim,
                          IntVec<int32_t> *a, int a_offset,
                          IntVec<int32_t> *b, int b_offset,
@@ -133,7 +164,7 @@ inline void compute_dot_product_flip(int dim,
   out->exponent = a->exponent + b->exponent;
 }
 
-
+*/
 
 
 /*
@@ -372,12 +403,18 @@ inline void zero_int_vector(IntVec<I> *v) {
 }
 
 template <typename I> void IntVec<I>::check() const {
-  int recomputed_nrsb = array_lrsb(data, dim);
-  assert(nrsb == recomputed_nrsb);
-  if (nrsb == sizeof(I)*8 - 1 && data_is_zero(data, dim)) {
-    assert(exponent == kExponentOfZero);
+  if (dim == 0) {
+    assert(data == 0);
+    return;
   } else {
-    assert(exponent != kExponentOfZero);
+    assert(dim > 0);
+    int recomputed_nrsb = array_lrsb(data, dim);
+    assert(nrsb == recomputed_nrsb);
+    if (nrsb == sizeof(I)*8 - 1 && data_is_zero(data, dim)) {
+      assert(exponent == kExponentOfZero);
+    } else {
+      assert(exponent != kExponentOfZero);
+    }
   }
 }
 

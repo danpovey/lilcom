@@ -211,10 +211,16 @@ class ToeplitzLpcEstimator {
 
 
   /* This function returns a pointer to the start of an array
-     containg at least block_size_ powers of eta:
+     containing at least block_size_ powers of eta, specifically
+     representing the following quantities:
+
         eta ** [ n, n-2, n-4, ... n-((block_size_-1)*2) ]
+
+     They are represented as integers, the exponent is -31.
    */
   const int32_t *GetEtaPowersStartingAt(int n) const;
+                                        int nrsb_needed,
+                                        int *exponent_out) const;
 
 
   /* raw autocorrelation stats, of dimension lpc_order.  Note:

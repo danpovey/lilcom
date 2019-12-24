@@ -120,7 +120,7 @@ IOut compute_raw_dot_product_shifted(const IIn *array_A, const IIn *array_B, int
     sum2 += (array_A[i + 1] * static_cast<IOut>(array_B[(i + 1) * B_stride])) >> rshift;
   }
   if (i < dim)
-    return sum1 += (array_A[i] * static_cast<IOut>(array_B[i * B_stride])) >> rshift;
+    sum1 += (array_A[i] * static_cast<IOut>(array_B[i * B_stride])) >> rshift;
   return sum1 + sum2;
 }
 
@@ -208,6 +208,25 @@ inline int raw_multiply_elements(int dim, const int32_t *a, const int32_t *b,
    Typically you'll want prod_rshift == num_significant_bits(dim).
  */
 inline int64_t raw_triple_product_a(int dim, const int16_t *a, const int16_t *b,
+                                    const int32_t *c) {
+  assert(dim % 2 == 0);
+  /* breaking the sum into two parts is supposed to aid pipelining
+     by reducing dependencies.  I'm not sure if compilers are smart
+     enough to do this kind of thing. */
+  int64_t sum1 = 0, sum2 = 0;
+  for (int i = 0; i < dim; i += 2) {
+    int32_t ab1 = a[i] * (int32_t)b[i],
+        ab2 = a[i+1] * (int32_t)b[i+1];
+    int64_t abc1 = ab1 * (int64_t)c[i],
+        abc2 = ab2 * (int64_t)c[i+1];
+    sum1 += abc1;
+    sum2 += abc2;
+  }
+  return sum1 + sum2;
+}
+
+
+inline int64_t raw_triple_product_a_shifted(int dim, const int16_t *a, const int16_t *b,
                                     const int32_t *c, int prod_rshift) {
   assert(dim % 2 == 0);
   /* breaking the sum into two parts is supposed to aid pipelining
@@ -234,8 +253,8 @@ inline int64_t raw_triple_product_a(int dim, const int16_t *a, const int16_t *b,
    Requires dim % 2 == 0 (could easily get around this).
    Typically you'll want prod_rshift == num_significant_bits(dim).
  */
-int64_t raw_triple_product_b(int dim, const int16_t *a, const int32_t *b,
-                             const int32_t *c, int prod_rshift) {
+int64_t raw_triple_product_b_shifted(int dim, const int16_t *a, const int32_t *b,
+                                     const int32_t *c, int prod_rshift) {
   assert(dim % 2 == 0);
   int64_t sum1 = 0, sum2 = 0;
   for (int i = 0; i < dim; i += 2) {
@@ -245,6 +264,22 @@ int64_t raw_triple_product_b(int dim, const int16_t *a, const int32_t *b,
         abc2 = ab2 * (int64_t)c[i+1];
     sum1 += (abc1 >> prod_rshift);
     sum2 += (abc2 >> prod_rshift);
+  }
+  return sum1 + sum2;
+}
+
+
+int64_t raw_triple_product_b(int dim, const int16_t *a, const int32_t *b,
+                                     const int32_t *c) {
+  assert(dim % 2 == 0);
+  int64_t sum1 = 0, sum2 = 0;
+  for (int i = 0; i < dim; i += 2) {
+    int32_t ab1 = a[i] * b[i],
+        ab2 = a[i+1] * b[i+1];
+    int64_t abc1 = ab1 * (int64_t)c[i],
+        abc2 = ab2 * (int64_t)c[i+1];
+    sum1 += abc1;
+    sum2 += abc2;
   }
   return sum1 + sum2;
 }

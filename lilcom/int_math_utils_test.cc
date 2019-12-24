@@ -133,31 +133,97 @@ void test_raw_multiply_elements() {
 }
 
 
-void test_raw_triple_product_a() {
+void test_raw_triple_product_a_shifted() {
   int16_t a [] = { 2, 0, 7, 9 },
       b [] = { 2, 3, 4, 5};
  int32_t c [] = { 4, 5, 6, 7 };
 
   int32_t prod_rshift = 1;
-  int64_t sum = raw_triple_product_a(4, a, b, c, prod_rshift);
+  int64_t sum = raw_triple_product_a_shifted(4, a, b, c, prod_rshift);
   assert(sum == ((a[0]*b[0]*c[0]) >> prod_rshift) +
          ((a[1]*b[1]*c[1]) >> prod_rshift) +
          ((a[2]*b[2]*c[2]) >> prod_rshift) +
          ((a[3]*b[3]*c[3]) >> prod_rshift));
 }
+
+
+void test_raw_triple_product_a() {
+  int16_t a [] = { 2, 0, 7, 9 },
+      b [] = { 2, 3, 4, 5};
+ int32_t c [] = { 4, 5, 6, 7 };
+
+  int32_t prod_rshift = 0;
+  int64_t sum = raw_triple_product_a_shifted(4, a, b, c, prod_rshift);
+  assert(sum == ((a[0]*b[0]*c[0]) >> prod_rshift) +
+         ((a[1]*b[1]*c[1]) >> prod_rshift) +
+         ((a[2]*b[2]*c[2]) >> prod_rshift) +
+         ((a[3]*b[3]*c[3]) >> prod_rshift));
+}
+
+
+void test_raw_triple_product_a_nrsb() {
+  /* tests the logic used in
+     void ToeplitzLpcEstimator::UpdateAutocorrStatsAndDeriv()
+     regarding the nrsb of the inputs to raw_triple_product_a
+     and raw_triple_product_a_shifted().
+  */
+
+  for (int nrsb_a = 0; nrsb_a < 15; nrsb_a++) {
+    int16_t a [4];
+    int32_t c [4];
+    for (int i = 0; i < 4; i++) {
+      a[i] = (-1 << 15) >> nrsb_a;
+      c[i] = (((int32_t)1) << 30);  /* note, 1<<30 has zero rsb's */
+      assert(lrsb(c[i]) == 0);
+    }
+    int32_t prod_rshift = 0;
+
+    int dim_significant_bits = 2;  /* actually nrsb(4) == 3, but this is a tighter/more
+                          exact limit that's relevant here...  it's the number
+                          of extra significant bits that could potentially be
+                          added by multiplying by dim. */
+
+    assert(nrsb(a[0] == nrsb_a));
+    int right_shift_needed = dim_significant_bits - 1 - (2 * nrsb_a);
+    if (right_shift_needed >= 0) {
+      int64_t sum = raw_triple_product_a_shifted(4, a, b, c, right_shift_needed);
+      assert(nrsb(sum) == 0);
+    } else {
+      int64_t sum = raw_triple_product_a(4, a, b, c);
+      assert(nrsb(sum) == -right_shift_needed);
+    }
+  }
+}
+
+
+
+void test_raw_triple_product_b_shifted() {
+  int16_t a [] = { 2, 0, 7, 9 };
+  int32_t b [] = { 2, 3, 4, 5},
+       c [] = { 4, 5, 6, 7 };
+
+  int32_t prod_rshift = 1;
+  int64_t sum = raw_triple_product_b_shifted(4, a, b, c, prod_rshift);
+  assert(sum == ((a[0]*b[0]*c[0]) >> prod_rshift) +
+         ((a[1]*b[1]*c[1]) >> prod_rshift) +
+         ((a[2]*b[2]*c[2]) >> prod_rshift) +
+         ((a[3]*b[3]*c[3]) >> prod_rshift));
+}
+
 
 void test_raw_triple_product_b() {
   int16_t a [] = { 2, 0, 7, 9 };
   int32_t b [] = { 2, 3, 4, 5},
        c [] = { 4, 5, 6, 7 };
 
-  int32_t prod_rshift = 1;
-  int64_t sum = raw_triple_product_b(4, a, b, c, prod_rshift);
+  int32_t prod_rshift = 0;
+  int64_t sum = raw_triple_product_b(4, a, b, c);
   assert(sum == ((a[0]*b[0]*c[0]) >> prod_rshift) +
          ((a[1]*b[1]*c[1]) >> prod_rshift) +
          ((a[2]*b[2]*c[2]) >> prod_rshift) +
          ((a[3]*b[3]*c[3]) >> prod_rshift));
 }
+
 
 
 void test_lrsb_of_prod() {
@@ -213,7 +279,9 @@ int main() {
   test_raw_copy_product();
   test_raw_multiply_elements();
   test_raw_triple_product_a();
+  test_raw_triple_product_a_shifted();
   test_raw_triple_product_b();
+  test_raw_triple_product_b_shifted();
 
   test_lrsb_of_prod();
   test_safe_shift_by();

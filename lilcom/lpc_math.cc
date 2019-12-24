@@ -25,6 +25,9 @@ void ToeplitzLpcEstimator::UpdateAutocorrStatsAndDeriv(
     int parity, const int16_t *x, const int32_t *residual) {
   int other_parity = (~parity & 1);
 
+
+  int x_nrsb = array_lrsb(x - lpc_order_, lpc_order_ + block_size_);
+
   int N = lpc_order_, B = block_size_;
   /* Python code for updating autocorrelation could be written
      as follows (Note, block-size B == S-N in the python code)
@@ -32,25 +35,52 @@ void ToeplitzLpcEstimator::UpdateAutocorrStatsAndDeriv(
         self.autocorr *= self.eta ** (T_diff * 2)
         for n in range(N):
            self.autocorr[n] += np.dot(x[N-n:S-n] * x[N:S], self._get_scale(B)) * self._get_eta_power(n)
-
         .. could be written as:
-         self.autocorr[n] += np.dot(x[N-n:S-n] * x[N:S], self.eta ** (2*B + n  - 2*np.arange(B)))
+          self.autocorr[n] += np.dot(x[N-n:S-n] * x[N:S], self.eta ** (2*B + n  - 2*np.arange(B)))
 
        The quantity (self.eta ** (2*(B)+n  - 2*np.arange(B))) we get from
          GetEtaPowersStartingAt(2*B+n).
        Caution: our pointer "x" points to what would be element N of the "x" in the
        Python code.
   */
-  int nrsb = 64;
-  for (int n = 0; n < N; n++) {
-    int64_t sum = raw_triple_product_a(B, x - n, x,
-                                       GetEtaPowersStartingAt(2*B + n));
-    temp64_.data[n] = sum;
-    nrsb = min(nrsb, lrsb(sum));
+
+  /* right_shift_needed is how much we need to right-shift the products
+       x[i] * x[i] * eta_power_[j].
+     If x_nrsb is zero, the number of significant bits in the product is
+     at most
+       15 + 15 + 31 + 1 = 62
+     where the + 1 is in case two negative powers of two are multiplied and
+     become a positive power of 2 which would have one extra significant bit.
+     The nrsb of that product would be 1 = 63 - 62.  Summing over the
+     block size means we need the nrsb of things being summed to be
+     at least num_significant_bits(block_size_).  We subtract 2 * x_nrsb
+     to account for extra redundant sign bits in the input x.
+  */
+  int right_shift_needed = num_significant_bits(block_size_) - 1 - (2 * x_nrsb);
+
+  int autocorr_nrsb = 64;
+
+  if (right_shift_needed <= 0) {
+    for (int n = 0; n < N; n++) {
+      int64_t sum = raw_triple_product_a(B, x - n, x,
+                                         GetEtaPowersStartingAt(2*B + n));
+      temp64_.data[n] = sum;
+      autocorr_nrsb = min(autocorr_nrsb, lrsb(sum));
+    }
+    temp64_.exponent = -31;
+  } else {
+    for (int n = 0; n < N; n++) {
+      int64_t sum = raw_triple_product_a_shifted(B, x - n, x,
+                                                 GetEtaPowersStartingAt(2*B + n),
+                                                 right_shift_needed);
+      temp64_.data[n] = sum;
+      autocorr_nrsb = min(autocorr_nrsb, lrsb(sum));
+    }
+    temp64_.exponent = -31 + right_shift_needed;
   }
   assert(eta_odd_powers_.exponent == -31 && eta_even_powers_.exponent == -31);
-  temp64_.exponent = -31;
-  temp64_.nrsb = nrsb;
+
+  temp64_.nrsb = autocorr_nrsb;
   copy(&temp64_, &autocorr_[parity]);
   add_scaled(&eta_2B_, &autocorr_[other_parity], &autocorr_[parity]);
 
