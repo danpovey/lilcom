@@ -25,8 +25,13 @@ struct IntScalar {
   IntScalar(I elem, int exponent): elem(elem), exponent(exponent) { }
   IntScalar(I value): elem(value), exponent(0) { }
   IntScalar() { }
-
+  IntScalar(const IntScalar<I> &other): elem(other.elem),
+                                        exponent(other.exponent) { }
   operator float() const { return elem * powf(2.0, exponent); }
+  operator double() const { return elem * pow(2.0, exponent); }
+
+
+
 };
 
 /**
@@ -156,6 +161,12 @@ inline void copy(const IntScalar<int64_t> *a,
   }
 }
 
+inline void copy(const IntScalar<int32_t> *a,
+                 IntScalar<int64_t> *b) {
+  b->elem = a->elem;
+  b->exponent = a->exponent;
+}
+
 
 void negate(IntScalar<int32_t> *a) {
   if (a->elem == (1 << 31)) {
@@ -192,19 +203,24 @@ inline void add(IntScalar<I> *a, IntScalar<I> *b, IntScalar<I> *c) {
       a_exponent = a->exponent,
       b_exponent = b->exponent,
       c_exponent = int_math_min(a_exponent, b_exponent);
+  /* the above value for c_exponent (the min of the two) is the
+     value that would avoid any rounding error.  If that turns out
+     to be too low, we'l increase it below. */
 
   /* a_new_nrsb is the nrsb that a would have after being
      shifted to have the same exponent as c currently has. */
-  int a_new_nrsb = (a_nrsb + a->exponent - c_exponent);
+  int a_new_nrsb = (a_nrsb + c_exponent - a_exponent);
   if (a_new_nrsb <= 0) {
+    /* we need the shifted a to have nrsb >= 1 to give room for addition */
     c_exponent += 1 - a_new_nrsb;
   }
-  int b_new_nrsb = (b_nrsb + b->exponent - c_exponent);
+  int b_new_nrsb = (b_nrsb + c_exponent - b_exponent);
   if (b_new_nrsb <= 0) {
+    /* we need the shifted a to have nrsb >= 1 to give room for addition */
     c_exponent += 1 - b_new_nrsb;
   }
-  I a_shifted = safe_shift_by(a->elem, c->exponent - a->exponent),
-      b_shifted = safe_shift_by(b->elem, c->exponent - b->exponent),
+  I a_shifted = safe_shift_by(a->elem, c_exponent - a_exponent),
+      b_shifted = safe_shift_by(b->elem, c_exponent - b_exponent),
       sum = a_shifted + b_shifted;
   assert(lrsb(a_shifted) > 0 && lrsb(b_shifted) > 0);
   c->elem = sum;

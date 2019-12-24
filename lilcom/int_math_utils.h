@@ -17,6 +17,10 @@ template <typename I> inline I int_math_min(I a, I b) {
   return (a < b ? a : b);
 }
 
+template <typename I> inline I int_math_max(I a, I b) {
+  return (a > b ? a : b);
+}
+
 
 /* This header contains some lower-level utilities for integer math, that
    are used in int_math.h/int_math.c (and, a little bit, in lpc_math.h/lpc_math.c). */
@@ -122,7 +126,7 @@ IOut compute_raw_dot_product_shifted(const IIn *array_A, const IIn *array_B, int
 
 
 
-int raw_add_product(int dim, const int32_t *a, int32_t scale, int32_t *b,
+inline int raw_add_product(int dim, const int32_t *a, int32_t scale, int32_t *b,
                     int prod_rshift) {
   int min_nrsb = 31;
 #pragma unroll
@@ -135,81 +139,6 @@ int raw_add_product(int dim, const int32_t *a, int32_t scale, int32_t *b,
   }
   return min_nrsb;
 }
-
-int raw_copy_product(int dim, const int32_t *a, int32_t scale, int32_t *b,
-                    int prod_rshift) {
-  int min_nrsb = 31;
-#pragma unroll
-  for (int i = 0; i < dim; i++) {
-    int32_t new_b = ((a[i]*(int64_t)scale) >> prod_rshift);
-    b[i] = new_b;
-    int nrsb = lrsb(new_b);
-    if (nrsb < min_nrsb)
-      min_nrsb = nrsb;
-  }
-  return min_nrsb;
-}
-
-
-/* does c[i] = (a[i] * b[i]) >> prod_rshift, returns lrsb of c */
-int raw_multiply_elements(int dim, const int32_t *a, const int32_t *b,
-                          int prod_rshift, int32_t *c) {
-  int min_nrsb = 31;
-#pragma unroll
-  for (int i = 0; i < dim; i++) {
-    int32_t new_c = ((a[i]*(int64_t)b[i]) >> prod_rshift);
-    c[i] = new_c;
-    int nrsb = lrsb(new_c);
-    if (nrsb < min_nrsb)
-      min_nrsb = nrsb;
-  }
-  return min_nrsb;
-}
-
-
-/**
-   Computes sum_{i=0}^{dim-1} a[i]*b[i]*c[i].
-   Requires dim % 2 == 0 (could easily get around this).
- */
-int64_t raw_triple_product_a(int dim, const int16_t *a, const int16_t *b,
-                             const int32_t *c) {
-  assert(dim % 2 == 0);
-  /* breaking the sum into two parts is supposed to aid pipelining
-     by reducing dependencies.  I'm not sure if compilers are smart
-     enough to do this kind of thing. */
-  int64_t sum1 = 0, sum2 = 0;
-  for (int i = 0; i < dim; i += 2) {
-    int32_t ab1 = a[i] * (int32_t)b[i],
-        ab2 = a[i+1] * (int32_t)b[i+1];
-    int64_t abc1 = ab1 * (int64_t)c[i],
-        abc2 = ab2 * (int64_t)c[i];
-    sum1 += abc1;
-    sum2 += abc2;
-  }
-  return sum1 + sum2;
-}
-
-/* Another version of raw_triple_product, where b is int32_t not int16_t
-   and the caller asserts that the elements of `b` have absolute values
-   not greater than (2^16 - 1).  THat means the absolute value of
-   any a[i] * b[i] is <= (2^15) * (2^16 - 1) which is strictly less
-   than 2^31, meaning it is representable as an int32.
- */
-int64_t raw_triple_product_b(int dim, const int16_t *a, const int32_t *b,
-                             const int32_t *c) {
-  assert(dim % 2 == 0);
-  int64_t sum1 = 0, sum2 = 0;
-  for (int i = 0; i < dim; i += 2) {
-    int32_t ab1 = a[i] * b[i],
-        ab2 = a[i+1] * b[i+1];
-    int64_t abc1 = ab1 * (int64_t)c[i],
-        abc2 = ab2 * (int64_t)c[i];
-    sum1 += abc1;
-    sum2 += abc2;
-  }
-  return sum1 + sum2;
-}
-
 
 
 int raw_add_product_and_rshift(int dim, const int32_t *a, int32_t scale, int32_t *b,
@@ -241,16 +170,99 @@ int raw_add_product_and_lshift(int dim, const int32_t *a, int32_t scale, int32_t
 }
 
 
+inline int raw_copy_product(int dim, const int32_t *a, int32_t scale, int32_t *b,
+                    int prod_rshift) {
+  int min_nrsb = 31;
+#pragma unroll
+  for (int i = 0; i < dim; i++) {
+    int32_t new_b = ((a[i]*(int64_t)scale) >> prod_rshift);
+    b[i] = new_b;
+    int nrsb = lrsb(new_b);
+    if (nrsb < min_nrsb)
+      min_nrsb = nrsb;
+  }
+  return min_nrsb;
+}
+
+
+/* does c[i] = (a[i] * b[i]) >> prod_rshift, returns lrsb of c */
+inline int raw_multiply_elements(int dim, const int32_t *a, const int32_t *b,
+                                 int prod_rshift, int32_t *c) {
+  int min_nrsb = 31;
+#pragma unroll
+  for (int i = 0; i < dim; i++) {
+    int32_t new_c = ((a[i]*(int64_t)b[i]) >> prod_rshift);
+    c[i] = new_c;
+    int nrsb = lrsb(new_c);
+    if (nrsb < min_nrsb)
+      min_nrsb = nrsb;
+  }
+  return min_nrsb;
+}
+
+
+/**
+   Computes sum_{i=0}^{dim-1} (a[i]*b[i]*c[i]) >> prod_rshift
+
+   Requires dim % 2 == 0 (could easily get around this).
+   Typically you'll want prod_rshift == num_significant_bits(dim).
+ */
+inline int64_t raw_triple_product_a(int dim, const int16_t *a, const int16_t *b,
+                                    const int32_t *c, int prod_rshift) {
+  assert(dim % 2 == 0);
+  /* breaking the sum into two parts is supposed to aid pipelining
+     by reducing dependencies.  I'm not sure if compilers are smart
+     enough to do this kind of thing. */
+  int64_t sum1 = 0, sum2 = 0;
+  for (int i = 0; i < dim; i += 2) {
+    int32_t ab1 = a[i] * (int32_t)b[i],
+        ab2 = a[i+1] * (int32_t)b[i+1];
+    int64_t abc1 = ab1 * (int64_t)c[i],
+        abc2 = ab2 * (int64_t)c[i+1];
+    sum1 += (abc1 >> prod_rshift);
+    sum2 += (abc2 >> prod_rshift);
+  }
+  return sum1 + sum2;
+}
+
+/* Another version of raw_triple_product, where b is int32_t not int16_t
+   and the caller asserts that the elements of `b` have absolute values
+   not greater than (2^16 - 1).  THat means the absolute value of
+   any a[i] * b[i] is <= (2^15) * (2^16 - 1) which is strictly less
+   than 2^31, meaning it is representable as an int32.
+
+   Requires dim % 2 == 0 (could easily get around this).
+   Typically you'll want prod_rshift == num_significant_bits(dim).
+ */
+int64_t raw_triple_product_b(int dim, const int16_t *a, const int32_t *b,
+                             const int32_t *c, int prod_rshift) {
+  assert(dim % 2 == 0);
+  int64_t sum1 = 0, sum2 = 0;
+  for (int i = 0; i < dim; i += 2) {
+    int32_t ab1 = a[i] * b[i],
+        ab2 = a[i+1] * b[i+1];
+    int64_t abc1 = ab1 * (int64_t)c[i],
+        abc2 = ab2 * (int64_t)c[i+1];
+    sum1 += (abc1 >> prod_rshift);
+    sum2 += (abc2 >> prod_rshift);
+  }
+  return sum1 + sum2;
+}
+
+
+
+
 /**
     Analysis of how rsb's interact with multiplication.
     (rsb == redundant sign bit).
 
-    Define the num-significant-bits of an integer i
+    Define the num-significant-bits of a 32-bit integer i as
          nsb(i) = 31 - lrsb(i),
 
     (e.g. 0 or -1 would have 0 significant bits; 1 or -2 would have 1; 3 or -4
-    would have 2...
-
+    would have 2...  note: for negative powers of 2 this is different from
+    the number of significant bits as a human would write the number (with
+    a minus sign).
 
     Assuming 32-bit integers, and that x and y are nonzero, and that
     there is no overflow....
