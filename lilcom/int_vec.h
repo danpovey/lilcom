@@ -53,6 +53,10 @@ struct IntVec {
   }
 
 
+  /* copy constructor (allocates new data as a copy of
+     existing object.  Currently just used in testing.*/
+  IntVec(const IntVec &other);
+
   inline void set_nrsb() {
     set_nrsb(array_lrsb(data, dim));
   }
@@ -93,7 +97,6 @@ void compute_dot_product(IntVec<int32_t> *a, IntVec<int16_t> *b, IntScalar<int64
   out->exponent = a->exponent + b->exponent;
 }
 
-
 /*
   Computes dot product between two int32 vectors.  Caution: it will right shift
   after the multiplication regardless of the nrsb of the inputs, which could
@@ -102,7 +105,7 @@ void compute_dot_product(IntVec<int32_t> *a, IntVec<int16_t> *b, IntScalar<int64
 void compute_dot_product(IntVec<int32_t> *a, IntVec<int32_t> *b, IntScalar<int64_t> *out) {
   assert(a->dim == b->dim);
   int dim = a->dim,
-      rshift = num_significant_bits(dim) - a->nrsb - b->nrsb;
+      rshift = extra_bits_from_factor_of(dim) - a->nrsb - b->nrsb;
   if (rshift > 0) {
     out->elem = compute_raw_dot_product_shifted<int32_t, int64_t, 1>(
         a->data, b->data, dim, rshift);
@@ -117,19 +120,56 @@ void compute_dot_product(IntVec<int32_t> *a, IntVec<int32_t> *b, IntScalar<int64
 /*
   Computes the dot product that in NumPy would be
      np.dot(a[a_offset:a_offset+dim], b[b_offset:b_offset+dim])
+  i.e. dot product with offsets.
  */
-/*
-  Not needed just now.
 inline void compute_dot_product(int dim,
-                                IntVec<int16_t> *a, int a_offset,
-                                IntVec<int16_t> *b, int b_offset,
+                                const IntVec<int32_t> *a, int a_offset,
+                                const IntVec<int32_t> *b, int b_offset,
                                 IntScalar<int64_t> *out) {
-  assert(dim + a_offset <= a->dim && dim + b_offset <= b->dim);
-  out->elem = compute_raw_dot_product<int16_t, int16_t, int32_t, int64_t, 1>(
-      a->data + a_offset, b->data + b_offset, dim);
-  out->exponent = a->exponent + b->exponent;
+  assert(dim >= 0 && a_offset >= 0 && b_offset >= 0 &&
+         dim + a_offset <= a->dim && dim + b_offset <= b->dim);
+  assert(a->dim == b->dim);
+
+  int rshift = extra_bits_from_factor_of(dim) - a->nrsb - b->nrsb;
+  if (rshift > 0) {
+    out->elem = compute_raw_dot_product_shifted<int32_t, int64_t, 1>(
+        a->data + a_offset, b->data + b_offset, dim, rshift);
+    out->exponent = a->exponent + b->exponent + rshift;
+  } else {
+    out->elem = compute_raw_dot_product<int32_t, int32_t, int64_t, int64_t, 1>(
+        a->data + a_offset, b->data + b_offset, dim);
+    out->exponent = a->exponent + b->exponent;
+  }
 }
-*/
+
+
+
+/*
+  Computes the dot product that in NumPy would be
+     np.dot(a[a_offset:a_offset+dim], np.flip(b[b_offset:b_offset+dim]))
+  i.e. dot product with offsets and with one argument flipped.
+  Which one is flipped doesn't matter.
+ */
+inline void compute_dot_product_flip(int dim,
+                                     const IntVec<int32_t> *a, int a_offset,
+                                     const IntVec<int32_t> *b, int b_offset,
+                                     IntScalar<int64_t> *out) {
+  assert(dim + a_offset <= a->dim && dim + b_offset <= b->dim);
+  assert(a->dim == b->dim);
+
+  int rshift = extra_bits_from_factor_of(dim) - a->nrsb - b->nrsb;
+  if (rshift > 0) {
+    out->elem = compute_raw_dot_product_shifted<int32_t, int64_t, -1>(
+        a->data + a_offset, b->data + b_offset + dim - 1, dim, rshift);
+    out->exponent = a->exponent + b->exponent + rshift;
+  } else {
+    out->elem = compute_raw_dot_product<int32_t, int32_t, int64_t, int64_t, -1>(
+        a->data + a_offset, b->data + b_offset + dim - 1, dim);
+    out->exponent = a->exponent + b->exponent;
+  }
+}
+
+
 
 
 /*
@@ -175,7 +215,7 @@ inline void compute_dot_product_flip(int dim,
    a and b must be different pointers.
 
    Note: we assume that b already contains data, which may need to be shifted.
-   CAUTION: this function makes several assumptions about the input,
+   CAUTION: this function makes an assumption about the input,
    which should be studied carefully before using it.
 
        - We assume the elements of b that are not in the range
@@ -188,17 +228,14 @@ inline void add_scaled_special(int dim,
                                const IntVec<int32_t> *a, int a_offset,
                                IntVec<int32_t> *b, int b_offset) {
   assert(b_offset + dim <= b->dim && a_offset + dim <= a->dim && a != b);
-  int a_nrsb = a->nrsb,
-      b_nrsb = b->nrsb,
-      scalar_nrsb = lrsb(scalar->elem);
   a->check();
   b->check();
 #ifndef NDEBUG
   for (int i = 0; i < b_offset; i++) {
-    assert(b->data[i] = 0);
+    assert(b->data[i] == 0);
   }
   for (int i = b_offset + dim; i < b->dim; i++) {
-    assert(b->data[i] = 0);
+    assert(b->data[i] == 0);
   }
 #endif
 
@@ -209,55 +246,67 @@ inline void add_scaled_special(int dim,
     return;
   }
 
-  /* input_rshift will normally be positive.  It's the amount by which we right
-     shift products of a->data[i] * scalar->data (before any shifting of the
-     result and b together).
-  */
-  int input_rshift = b->exponent - (a->exponent + scalar->exponent);
+  int prod_exponent = a->exponent + scalar->exponent,
+      b_exponent = b->exponent,
+      prod_nrsb = lrsb_of_prod<int32_t>(a->nrsb, lrsb(scalar->elem));
 
-  /* See if we need to shift b right */
+  /* Aim for both nrsb's to be 1.  We'll right shift by
+       rshift = (1 - nrsb)
+     (if negative, would be a left shift);
+     and the right shift increases the exponent.
+   */
 
-  int min_nrsb = int_math_min(lrsb_of_prod<int32_t>(a_nrsb, scalar_nrsb) + input_rshift,
-                              b_nrsb);
-  /* We need the smaller of nrsb of b vs. (product) to be at least 1.  (1 is
-     headroom to allow for addition to work; the sum of two quantities that have
-     1 redundant sign bit will still be representable in that type. */
-  int b_rshift = 1 - min_nrsb;
+  /* out_nrsb_as_b is the highest possible nrsb of the output if we shifted
+     it to have the same exponent as b.  The - 1 is because we add two
+     things together, which requires another bit (so one less redundant
+     bit).
+   */
+  int out_nrsb_as_b = int_math_min(b->nrsb,
+                                   prod_nrsb + b_exponent - prod_exponent) - 1,
+      out_exponent = b_exponent - out_nrsb_as_b,
+      prod_rshift = out_exponent - prod_exponent,
+      b_rshift = out_exponent - b_exponent;
 
   int64_t scalar_elem = scalar->elem;
-
-
-  if ((input_rshift & 63) != 0) {  /* if input_rshift is >= 64 or < 0 ... */
-    if (input_rshift < 0) {
-      /* rather than left shifting in the loop, we can just left shift a; this
-       * will never overflow thanks to the nrsb logic above. */
-      input_rshift = 0;
-      scalar_elem <<= input_rshift;
-    } else {
-      /* The thing we're adding is so small that it won't affect the output. */
-      return;
-    }
+  if (prod_rshift < 0) {
+    assert(-prod_rshift <= lrsb(scalar_elem));
+    scalar_elem <<= -prod_rshift;
+    prod_rshift = 0;
+  } else if (prod_rshift >= 63) {
+    /* the output would not be affected, as we'd be adding zero. */
+    return;
   }
-  if ((b_rshift & 31) == 0) {
-    /* normal case. */
-    b->exponent += b_rshift;
-    b->set_nrsb(raw_add_product_and_rshift(dim, a->data + a_offset, scalar_elem,
-                                           b->data + b_offset, input_rshift + b_rshift,
-                                           b_rshift));
+
+  b->exponent = out_exponent;
+
+  if (b_rshift == 0) {
+    b->set_nrsb(raw_add_product(
+        dim, a->data + a_offset,
+        scalar_elem,  b->data + b_offset,
+        prod_rshift));
+  } else if (b_rshift > 31) {
+    /* completely right-shift b away */
+    b->set_nrsb(raw_copy_product(
+        dim, a->data + a_offset,
+        scalar_elem,  b->data + b_offset,
+        prod_rshift));
+  } else if (b_rshift > 0) {
+    assert(prod_rshift == out_exponent - prod_exponent || prod_rshift == 0);
+    assert(b_rshift == out_exponent - b_exponent);
+
+
+    b->set_nrsb(raw_add_product_and_rshift(
+        dim, a->data + a_offset,
+        scalar_elem,  b->data + b_offset,
+        prod_rshift, b_rshift));
   } else {
-    b->exponent += b_rshift;
-    /* unusual case: if b_rshift is >= 32 or < 0 ... */
-    if (b_rshift < 0) {
-      b->set_nrsb(raw_add_product_and_lshift(
-          dim, a->data + a_offset,
-          scalar_elem,  b->data + b_offset,
-          input_rshift + b_rshift, -b_rshift));
-      return;  /* and b's exponent is unchanged. */
-    } else {
-      /* b_rshift >= 32, so assume b's data is discarded by the shift. */
-      b->set_nrsb(raw_copy_product(dim, a->data + a_offset, scalar_elem,
-                                   b->data + b_offset, input_rshift + b_rshift));
-    }
+    /* b_rshift < 0, so left shift. the way we obtained the shift
+       ensures that it cannot exceed 30. */
+    assert(b_rshift >= -30);
+    b->set_nrsb(raw_add_product_and_lshift(
+        dim, a->data + a_offset,
+        scalar_elem,  b->data + b_offset,
+        prod_rshift, -b_rshift));
   }
   b->check();
 }
@@ -278,7 +327,8 @@ inline void add(const IntVec<int32_t> *x,
 }
 
 
-/*  does c := a * b  (elementwise). */
+/*  does c := a * b  (elementwise).  `c` must not be the same as either of
+    the other two args. */
 inline void multiply(const IntVec<int32_t> *a,
                      const IntVec<int32_t> *b,
                      IntVec<int32_t> *c) {
@@ -291,7 +341,7 @@ inline void multiply(const IntVec<int32_t> *a,
   int right_shift = (prod_nrsb < 0 ? -prod_nrsb : 0);
   /* we'll almost always have to right shift; we don't attempt
      to handle the non-right-shift case specially. */
-  c->exponent = a->exponent + b->exponent - right_shift;
+  c->exponent = a->exponent + b->exponent + right_shift;
   c->set_nrsb(raw_multiply_elements(a->dim, a->data, b->data,
                                     right_shift, c->data));
 }
@@ -317,36 +367,35 @@ inline void mul_vec_by_vector(int dim,
 /*
   Initializes `out` to powers of a: out[n] = a^(n+1) for n = 0, 1, 2..
   Requires that 0 < a < 1.
+  (The reason we make it a^(n+1) not a^n is to avoid a 1.0 appearing
+  there, so we can use a smaller exponent).
+
+  This is not particularly efficient/optimized as it's just used
+  in initializion code right now.
  */
-void init_vec_as_powers(int dim,
-                        const IntScalar<int32_t> *a,
+void init_vec_as_powers(const IntScalar<int32_t> *a,
                         IntVec<int32_t> *out) {
-  /* TODO */
   assert(a->elem > 0 && (float)(*a) < 1.0 &&
          a->exponent >= -31);
 
-  int32_t a_int = safe_shift_by(a->elem, (-31) - a->exponent);
-  assert(a_int > 0);
-  out->nrsb = lrsb(a_int);
-  out->exponent = -31;  /* will all be of the form 2^31 * a^(n+1) for n >= 0 */
-  out->data[0] = a_int;
+  int dim = out->dim;
+  out->exponent = -31;
+  int32_t a_elem = safe_shift_by(a->elem, out->exponent - a->exponent);
+  out->nrsb = lrsb(a_elem);  /* probably 0. */
+  out->data[0] = a_elem;
 
-  /* note: a to the power n is located at out->data[n-1]. */
-  for (int power = 2; power <= dim; power++) {
-    int32_t factor1 = out->data[(power / 2) - 1],
-        factor2;
-    if (power % 2 == 0)  factor2 = factor1;
-    else factor2 = out->data[(power / 2 - 1) - 1];
-    out->data[power - 1] = (int32_t) ((factor1 * (int64_t)factor2) >> 31);
+  for (int n = 2; n <= dim; n++) {
+    /* n is the power of `a` */
+    int prev_n1 = n / 2,
+        prev_n2 = n - prev_n1;
+    IntScalar<int32_t> a1 = (*out)[prev_n1 - 1],
+        a2 = (*out)[prev_n2 - 1],
+        prod;
+    multiply(&a1, &a2, &prod);
+    out->data[n - 1] = safe_shift_by(prod.elem, out->exponent - prod.exponent);
   }
 }
 
-
-
-/*
-  reverses the order of the elements of a vector
- */
-void flip_vec(IntVec<int32_t> *a);
 
 
 
@@ -354,32 +403,156 @@ void flip_vec(IntVec<int32_t> *a);
   This is some rather special-purpose code needed in the Toeplitz solver.
   it does what in NumPy would be:
       b[-(n+1):-1] += s * np.flip(b[-n:])
+  (for 0 < n < b.shape[0]-1).
   This amounts to:
      b[-(n+1)] += s * b[-1].
-     b[-(n+1):-1] + s * np.flip(b[-(n+1):-1])
+     b[-n:-1] += s * np.flip(b[-n:-1])
   We also make use of several facts which are true in the context
   in which we need it, which are that:
-    abs(s) < 1.0   [in the algorithm this is nu_n]
-    b[-1] = 1.0.
-    The only nonzero elements of b are those in b[-(n+1):].
+   --  abs(s) < 1.0   [in the algorithm, this is nu_n]
+   --  b[-1] = 1.0.
+   --  The only nonzero elements of b at entry are those in b[-n:].
 
+  This function is probably optimized a little more than it needs to be.
+  It's really not a very difficult thing to do; this function is long
+  because we try to handle various cases as efficiently as possible.
  */
-void special_reflection_function(int n, IntVec<int32_t> *b, IntScalar<int32_t> *s) {
+void special_reflection_function(int n, const IntScalar<int32_t> *s, IntVec<int32_t> *b) {
   int dim = b->dim;
-  assert(abs(static_cast<float>(*s)) < 1.0 &&
-         static_cast<float>((*b)[dim-1]) == 1.0);
+  assert(fabs(static_cast<float>(*s)) < 1.0);
+  int32_t *bdata = b->data;
+  assert(s->exponent >= -31);  /* since abs(s) is less than one. */
+
+
+#ifndef NDEBUG
+  for (int i = 0; i + n < dim; i++)
+    assert(bdata[i] == 0.0);
+#endif
+
+  b->check();
+  if (b->nrsb > 1 && b->exponent != kExponentOfZero) {
+    /* This should rarely happen, and if it does, it will usually be
+       when the used part of the vector is still quite small, so we
+       pre-shift instead of shifting in the loop. */
+    int lshift = b->nrsb - 1;
+    b->exponent -= lshift;
+    for (int i = dim - n; i < dim; i++) {
+      /* We only need to left-shift this part because the user asserts that
+         the remainder is zero. */
+      bdata[i] <<= lshift;
+    }
+    b->nrsb = 1;
+  }
+  b->check();
+
+
+  /* we shift s->elem to have a known exponent of -31 so that we can treat its
+     exponent as fixed; that way, we don't have to shift by an unknown value in
+     the loops. */
+  int32_t s_elem_shifted = safe_shift_by(s->elem, (-31) - s->exponent);
+
+  if (b->nrsb == 0) {
+    b->exponent++;
+    /* this algorithm requires at least one spare bit, since things can increase
+       by a factor that's strictly less than 2.  So we'll have to right-shift
+       b by one bit as we go.  We have to right shift the products
+       b->data[i] * s_elem_shifted by 31 because of s's exponent, and then
+       1 extra because we're right-shifting b, so it's an even 32.
+       (nice because in machine code there's no need to explicitly shift.)
+    */
+
+
+    /* b[-(n+1)] = s * b[-1].   [we don't need to do +=, since it was zero at entry.]
+       Record the nrsb.
+     */
+    int nrsb = lrsb(
+        (bdata[b->dim - (n+1)] = (s_elem_shifted * (int64_t)bdata[b->dim - 1]) >> 32));
+    /* Shift the last element of b to account for the new exponent (it is not
+       otherwise modified by this function). */
+    b->data[b->dim - 1] >>= 1;
+    /* Now,
+       b[-n:-1] += s * np.flip(b[-n:-1])
+    */
+    for (int i = 0; i < (n-1) / 2; i++) {
+      /* We are taking elements that have opposite positions in the
+         range [dim-n .. dim-2]. */
+      int j = dim - n + i,
+          k = dim - 2 - i;
+      int32_t bj = bdata[j], bk = bdata[k];
+      nrsb = int_math_min(nrsb, lrsb(
+          (bdata[k] = (bk >> 1) + ((bj * (int64_t)s_elem_shifted) >> 32))));
+      nrsb = int_math_min(nrsb, lrsb(
+          (bdata[j] = (bj >> 1) + ((bk * (int64_t)s_elem_shifted) >> 32))));
+    }
+    if (n % 2 == 0) {
+      /* the following expression could also equivalently be written as:
+         int j = dim - (n - 2) / 2   */
+      int j = dim - ((n-1)>>1);
+      int32_t bj = bdata[j];
+      nrsb = int_math_min(nrsb, lrsb(
+          (bdata[j] = (bj >> 1) + ((bj * (int64_t)s_elem_shifted) >> 32))));
+    }
+    b->set_nrsb(nrsb);
+  } else {
+    assert(b->exponent == kExponentOfZero || b->nrsb == 1);  /* We ensured this above. */
+
+    /* There is no need to right-shift the elements of bdata as we go.  The most
+       obvious implementation of the following would require right-shifting the
+       product by 31 in the loop, but if s_elem_shifted is small enough, we can
+       left-shift it by one now and then right-shift by exactly 32 in the loop
+       (which is no right shift at all, since it's just a matter of selecting
+       the appropriate register).
+    */
+    if (s_elem_shifted < (1<<30) && s_elem_shifted >= -(1<<30)) {
+      s_elem_shifted = safe_shift_by(s->elem, (-32) - s->exponent);
+      /* Note: the rest of the code here is like the code following
+         `if (b->nrsb == 0) { ... ` but with the comments taken out and
+         taking out the right-shift by one of the elements of b. */
+
+      int nrsb = lrsb(
+          (bdata[b->dim - (n+1)] = (s_elem_shifted * (int64_t)bdata[b->dim - 1]) >> 32));
+      for (int i = 0; i < (n-1) / 2; i++) {
+        int j = dim - n + i,
+            k = dim - 2 - i;
+        int32_t bj = bdata[j], bk = bdata[k];
+        nrsb = int_math_min(nrsb, lrsb(
+            (bdata[k] = bk + ((bj * (int64_t)s_elem_shifted) >> 32))));
+        nrsb = int_math_min(nrsb, lrsb(
+            (bdata[j] = bj + ((bk * (int64_t)s_elem_shifted) >> 32))));
+      }
+      if (n % 2 == 0) {
+        int j = dim - ((n-1) >> 1);
+        int32_t bj = bdata[j];
+        nrsb = int_math_min(nrsb, lrsb(
+            (bdata[j] = (bj >> 1) + ((bj * (int64_t)s_elem_shifted) >> 32))));
+      }
+      b->set_nrsb(nrsb);
+    } else {
+      int nrsb = lrsb(
+          (bdata[b->dim - (n+1)] = (s_elem_shifted * (int64_t)bdata[b->dim - 1]) >> 31));
+      for (int i = 0; i < (n-1) / 2; i++) {
+        int j = dim - n + i,
+            k = dim - 2 - i;
+        int32_t bj = bdata[j], bk = bdata[k];
+        nrsb = int_math_min(nrsb, lrsb(
+            (bdata[k] = bk + ((bj * (int64_t)s_elem_shifted) >> 31))));
+        nrsb = int_math_min(nrsb, lrsb(
+            (bdata[j] = bj + ((bk * (int64_t)s_elem_shifted) >> 31))));
+      }
+      if (n % 2 == 0) {
+        int j = dim - ((n-1)>>1);
+        int32_t bj = bdata[j];
+        nrsb = int_math_min(nrsb, lrsb(
+            (bdata[j] = bj + ((bj * (int64_t)s_elem_shifted) >> 31))));
+
+      }
+      b->set_nrsb(nrsb);
+    }
+  }
   // TODO.
   // [a] see if we have to rshift b; do it if so.
   // [b] compute rshift on multiplication, will be exponent of s.
 }
-
-
-void get_elem(IntVec<int32_t> *a, int i, IntScalar<int32_t> *value) {
-  assert(static_cast<unsigned int>(i) < static_cast<unsigned int>(a->dim));
-  value->exponent = a->exponent;
-  value->elem = a->data[i];
-}
-
 
 
 /*
@@ -391,15 +564,87 @@ void get_elem(IntVec<int32_t> *a, int i, IntScalar<int32_t> *value) {
  */
 void set_only_nonzero_elem_to(const IntScalar<int32_t> *s, int i, IntVec<int32_t> *v) {
   assert(static_cast<unsigned int>(i) < static_cast<unsigned int>(v->dim));
+  /* The following is just a spot-check that other elements of the vector are zero. */
+  assert(v->data[(i + 1) % v->dim] == 0);
   v->data[i] = s->elem;
   v->exponent = s->exponent;
   v->set_nrsb(lrsb(s->elem));
 }
 
+
+/*
+  This function gets the exponent that we'd want to use when combining two
+  quantities a and b (but not adding them together; just selecting elements from each)...
+
+  It tries to avoid precision loss at all costs, but doesn't left shift by any
+  more than necessary.
+
+  This function assumes that neither a's nor b's data is zero.
+
+*/
+inline int get_exponent(int a_exponent, int a_nrsb, int b_exponent, int b_nrsb) {
+  /* a_exponent0 and b_exponent0 are the exponents if their nrsb's were zero,
+     i.e. if a and b were left-shifted to have no redundant sign bits.
+  */
+  int a_exponent0 = a_exponent - a_nrsb,
+      b_exponent0 = b_exponent - b_nrsb,
+      out_exponent = int_math_max(a_exponent0, b_exponent0),
+      a_rshift = out_exponent - a_exponent,
+      b_rshift = out_exponent - b_exponent;
+  if (a_rshift < 0 && b_rshift < 0) {
+    /* There is no point left-shifting both of them.. */
+    out_exponent -= int_math_max(a_rshift, b_rshift);
+    assert(out_exponent - a_exponent == 0 ||
+           out_exponent - b_exponent == 0);
+  }
+  return out_exponent;
+}
+
+/* Caution: this will take time O(s->dim) if we have to recompute the nrsb.
+ */
+void set_elem_to(const IntScalar<int32_t> *s, int i, IntVec<int32_t> *v) {
+  assert(static_cast<unsigned int>(i) < static_cast<unsigned int>(v->dim));
+  int v_exponent = v->exponent, s_exponent = s->exponent,
+      s_nrsb = lrsb(s->elem);
+  int old_elem_nrsb = lrsb(v->data[i]);
+
+  if (s->elem == 0) {
+    v->data[i] = 0;
+    if (v->nrsb == old_elem_nrsb)
+      v->set_nrsb();
+    return;
+  } else if (v->exponent == kExponentOfZero) {
+    set_only_nonzero_elem_to(s, i, v);
+    return;
+  }
+
+  int out_exponent = get_exponent(v_exponent, v->nrsb, s_exponent, s_nrsb);
+
+  safe_shift_array_by(v->data, v->dim, out_exponent - v_exponent);
+  v->data[i] = safe_shift_by(s->elem, out_exponent - s_exponent);
+
+  int v_nrsb_shifted = v->nrsb + out_exponent - v_exponent,
+      s_nrsb_shifted = s_nrsb + out_exponent - s_exponent;
+  if (s_nrsb_shifted <= v_nrsb_shifted) {
+    v->nrsb = s_nrsb_shifted;  /* new elem has lowest nrsb */
+    assert(s_nrsb_shifted == lrsb(v->data[i]));
+  } else if (v->nrsb != old_elem_nrsb) {
+    v->nrsb = v_nrsb_shifted;  /* overwritten elem did not determine the nrsb of
+                                * v. */
+  } else {
+    v->set_nrsb();  /* we have to recompute the nrsb. */
+  }
+  v->exponent = out_exponent;
+}
+
+
 template <typename I>
 inline void zero_int_vector(IntVec<I> *v) {
   for (int i = 0; i < v->dim; i++)
     v->data[i] = 0;
+  v->nrsb = 8 * sizeof(I) - 1;
+  v->exponent = kExponentOfZero;
+  v->check();
 }
 
 template <typename I> void IntVec<I>::check() const {
@@ -418,8 +663,24 @@ template <typename I> void IntVec<I>::check() const {
   }
 }
 
+template <typename I>
+IntVec<I>::IntVec(const IntVec<I> &other) {
+  if (other.dim == 0) {
+    dim = 0;
+    data = NULL;
+  } else {
+    dim = other.dim;
+    data = new I[dim];
+    nrsb = other.nrsb;
+    exponent = other.exponent;
+    for (int i = 0; i < dim; i++)
+      data[i] = other.data[i];
+  }
+  check();  // TODO: remove?
+}
 
-}  // int_math.h
+
+}  // namespace int_math
 
 #endif /* include guard */
 

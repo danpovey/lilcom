@@ -21,6 +21,10 @@ template <typename I> inline I int_math_max(I a, I b) {
   return (a > b ? a : b);
 }
 
+template <typename I> inline I int_math_abs(I a) {
+  return (a > 0 ? a : -a);
+}
+
 
 /* This header contains some lower-level utilities for integer math, that
    are used in int_math.h/int_math.c (and, a little bit, in lpc_math.h/lpc_math.c). */
@@ -61,6 +65,15 @@ inline int num_significant_bits(int32_t i) {
 }
 inline int num_significant_bits(int64_t i) {
   return 63 - lrsb(i);
+}
+
+
+inline int extra_bits_from_factor_of(int32_t i) {
+  assert(i > 0);
+  int ans = 31 - lrsb((int32_t)(i));
+  if (i == (1 << (ans-1)))
+    ans--;
+  return ans;
 }
 
 
@@ -334,9 +347,36 @@ inline I safe_shift_by(I i, int shift) {
     if (shift >= 8 * sizeof(I)) return 0;
     else return i >> shift;
   } else {
+    /* It wouldn't make sense to shift by more than this... */
+    assert(shift > -8 * sizeof(I));
     return i << -shift;
   }
 }
+
+/*
+  Shift array by `shift`, with positive values interpreted as right-shift
+  and negative interpreted as left-shift.  `shift` must not be <=
+  -8 * sizeof(I).
+ */
+template <typename I>
+inline void safe_shift_array_by(I *data, int dim, int shift) {
+  if (shift >= 0) {
+    if (shift >= 8 * sizeof(I)) {
+      for (int i = 0; i < dim; i++)
+        data[i] = 0;
+    } else {
+      if (shift != 0)
+        for (int i = 0; i < dim; i++)
+          data[i] >>= shift;
+    }
+  } else {
+    assert(shift > -8 * sizeof(I));
+    for (int i = 0; i < dim; i++)
+      data[i] <<= -shift;
+  }
+}
+
+
 
 }  // namespace int_math
 

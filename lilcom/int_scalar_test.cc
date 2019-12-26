@@ -148,13 +148,14 @@ void test_convert() {
 }
 
 
+template <typename T>
 void test_negate() {
   for (int r = 0; r < 4000; r++) {
-    IntScalar<int32_t> i;
+    IntScalar<T> i;
     init_scalar(r, &i);
-    IntScalar<int32_t> j(i);
+    IntScalar<T> j(i);
     negate(&j);
-    IntScalar<int32_t> k(j);
+    IntScalar<T> k(j);
     negate(&k);
     if ((float)i == 0.0) {
       assert((float)j == 0.0 && (float)k == 0.0);
@@ -179,7 +180,8 @@ int main() {
   test_constructor<int64_t>();
   test_divide<int32_t>();
   test_convert();
-  test_negate();
+  test_negate<int32_t>();
+  test_negate<int64_t>();
   test_multiply<int32_t>();
   test_add<int32_t>();
   test_add<int64_t>();

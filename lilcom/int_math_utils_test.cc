@@ -166,35 +166,61 @@ void test_raw_triple_product_a_nrsb() {
      void ToeplitzLpcEstimator::UpdateAutocorrStatsAndDeriv()
      regarding the nrsb of the inputs to raw_triple_product_a
      and raw_triple_product_a_shifted().
+
+     RE products of int16 x int16 x int32: consider some
+     extremal cases where have the sources have nrsb=0.
+       -2^15 * -2^15 * -2^31 = -2^61 (nrsb = 2)
+       -2^15 * -2^15 *  2^30 =  2^60 (nrsb = 2)
+    Making that 2^60 into (2^61 - 1) wouldn't make any difference
+    to the nrsb of the product.
   */
 
   for (int nrsb_a = 0; nrsb_a < 15; nrsb_a++) {
-    int16_t a [4];
-    int32_t c [4];
-    for (int i = 0; i < 4; i++) {
-      a[i] = (-1 << 15) >> nrsb_a;
-      c[i] = (((int32_t)1) << 30);  /* note, 1<<30 has zero rsb's */
-      assert(lrsb(c[i]) == 0);
-    }
-    int32_t prod_rshift = 0;
+    for (int dim = 2; dim < 16; dim += 2) {  /* dim must be even, currently, or will
+                                                crash in raw_triple_product_a. */
+      int16_t a [16];
+      int32_t c [16];
+      for (int i = 0; i < dim; i++) {
+        /* negative power of 2 * negative power of 2 * positive number is a 'worst
+           case' that can give us an extra significant bit in the product.
+           e.g. -2*-2 = 4 changes the number of significant bits from 1+1 to 3.
+        */
+        a[i] = (-1 << 15) >> nrsb_a; /* compiler warning here is expected.
+                                        this code does depend on left-shifting
+                                        signed values working 'as expected'
+                                        for 2s-complement integers.
+                                     */
 
-    int dim_significant_bits = 2;  /* actually nrsb(4) == 3, but this is a tighter/more
-                          exact limit that's relevant here...  it's the number
-                          of extra significant bits that could potentially be
-                          added by multiplying by dim. */
+        /* The following is the most positive representable number, == 2^31 - 1. */
+        c[i] = (((int32_t)1 << 30) - 1 + ((int32_t)1 << 30));
 
-    assert(nrsb(a[0] == nrsb_a));
-    int right_shift_needed = dim_significant_bits - 1 - (2 * nrsb_a);
-    if (right_shift_needed >= 0) {
-      int64_t sum = raw_triple_product_a_shifted(4, a, b, c, right_shift_needed);
-      assert(nrsb(sum) == 0);
-    } else {
-      int64_t sum = raw_triple_product_a(4, a, b, c);
-      assert(nrsb(sum) == -right_shift_needed);
+        assert(lrsb(c[i]) == 0);
+        assert(lrsb(a[i]) == nrsb_a);
+      }
+      /*
+        The product here is -2^15 * -2^15 * (2^31 - 1) < 2^61; the
+        nrsb is the same as for 2^60, which is 2.
+      */
+      assert(lrsb(c[0] * (int64_t)a[0] * (int64_t)a[0]) == 2 + (2 * nrsb_a));
+
+      assert(lrsb(2 * (c[0] * (int64_t)a[0] * (int64_t)a[0])) == 1 + (2 * nrsb_a));
+
+      int dim_significant_bits = extra_bits_from_factor_of(dim);
+
+
+      assert(lrsb(a[0]) == nrsb_a);
+      int right_shift_needed = dim_significant_bits - 2 - (2 * nrsb_a);
+      if (right_shift_needed >= 0) {
+        int64_t sum = raw_triple_product_a_shifted(dim, a, a, c, right_shift_needed);
+        printf("right shift is %d, lrsb-sum = %d, sum is %lld, dim is %d\n", right_shift_needed, lrsb(sum), sum, dim);
+        assert(lrsb(sum) == 0);
+      } else {
+        int64_t sum = raw_triple_product_a(dim, a, a, c);
+        assert(lrsb(sum) == -right_shift_needed);
+      }
     }
   }
 }
-
 
 
 void test_raw_triple_product_b_shifted() {
@@ -248,6 +274,15 @@ void test_safe_shift_by() {
 }
 
 
+void test_safe_shift_array_by() {
+  int32_t a[] = { 1, 1, 1 };
+  safe_shift_array_by(a, 3, -20);
+  assert(a[0] == (1 << 20) && a[2] == (1 << 20));
+  safe_shift_array_by(a, 3, 10);
+  assert(a[0] == (1 << 10) && a[2] == (1 << 10));
+  safe_shift_array_by(a, 3, 100);
+  assert(a[0] == 0 && a[2] == 0);
+}
 
 }
 
@@ -268,6 +303,13 @@ int main() {
   assert(num_significant_bits(8) == 4);
   assert(num_significant_bits(-1) == 0);
 
+  assert(extra_bits_from_factor_of(1) == 0);
+  assert(extra_bits_from_factor_of(2) == 1);
+  assert(extra_bits_from_factor_of(3) == 2);
+  assert(extra_bits_from_factor_of(4) == 2);
+  assert(extra_bits_from_factor_of(5) == 3);
+  assert(extra_bits_from_factor_of(8) == 3);
+
   test_data_is_zero();
   test_array_lrsb();
   test_compute_raw_dot_product();
@@ -280,11 +322,13 @@ int main() {
   test_raw_multiply_elements();
   test_raw_triple_product_a();
   test_raw_triple_product_a_shifted();
+  test_raw_triple_product_a_nrsb();
   test_raw_triple_product_b();
   test_raw_triple_product_b_shifted();
 
   test_lrsb_of_prod();
   test_safe_shift_by();
+  test_safe_shift_array_by();
 
   return 0;
 }

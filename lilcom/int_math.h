@@ -25,7 +25,7 @@ inline int native_lrsb(long long int i) {  return __builtin_clrsb(i); }
 /* returns number of leading redundant sign bits (for fixed-size types) */
 inline int lrsb(int16_t i) { return native_lrsb((int32_t)i) - 16; }
 inline int lrsb(int32_t i) { return native_lrsb(i); }
-inline int lrsb(int32_t i) { return native_lrsb(i); }
+inline int lrsb(int64_t i) { return native_lrsb(i); }
 
 /*
   num_significant_bits returns the bits apart from the sign bit, that

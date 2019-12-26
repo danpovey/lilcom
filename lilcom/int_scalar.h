@@ -168,13 +168,13 @@ inline void copy(const IntScalar<int32_t> *a,
 }
 
 
-void negate(IntScalar<int32_t> *a) {
-  if (a->elem == (1 << 31)) {
-    /* handle the special case where a->elem is -2^31,
-       which cannot be negated (it just becomes itself).
-       Set a->elem to +2^30 and increase the exponent
-       by one. */
-    a->elem = (1 << 30);
+template <typename T>
+void negate(IntScalar<T> *a) {
+  if (a->elem == ((T)1) << (sizeof(T)*8 - 1)) {
+    /* handle the special case where a->elem is -2^31 or -2^63, which cannot be
+       negated (it just becomes itself).  Set a->elem to +2^30 or +2^62 and
+       increase the exponent by one. */
+    a->elem = (1 << (sizeof(T)*8 - 2));
     a->exponent++;
   } else {
     a->elem *= -1;
