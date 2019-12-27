@@ -94,7 +94,7 @@ struct LilcomConfig *lilcom_get_config(int32_t samp_rate,
     fprintf(stderr, "Error: bad config parameters\n");
     return NULL;
   }
-  return (void*)ans;
+  return ans;
 }
 
 void lilcom_delete_config(struct LilcomConfig *config) {
@@ -129,7 +129,7 @@ typedef struct {
  */
 int encode_array32(const int32_t *data, int32_t len, EncodedBlock *block) {
   block->buffer_size = len * 4;
-  block->buffer = malloc(block->buffer_size);
+  block->buffer = (int8_t*)malloc(block->buffer_size);
   if (!block->buffer)
     return 1;
   struct BacktrackingEncoder encoder;

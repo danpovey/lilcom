@@ -14,15 +14,15 @@ fixed_math.o: fixed_math.c
 # I was getting mysterious "illegal instruction" errors with -ftrapv that
 # i had trouble
 lilcom: lilcom.c lilcom.h bit_packer.c bit_packer.h encoder.c encoder.h lilcom_common.h
-	gcc -O0 -Wall -g -DLILCOM_TEST=1 lilcom.c -o lilcom -lm # -ftrapv
+	g++ -O0 -Wall -g -DLILCOM_TEST=1 lilcom.c -o lilcom -lm # -ftrapv
 
 
 fixed_math: fixed_math.c
-	gcc -O0 -Wall -g -o fixed_math -DFIXED_MATH_TEST=1 fixed_math.c -o fixed_math -lm # -ftrapv
+	g++ -O0 -Wall -g -o fixed_math -DFIXED_MATH_TEST=1 fixed_math.c -o fixed_math -lm # -ftrapv
 
 
 prediction_math: prediction_math.c fixed_math.c prediction_math.h fixed_math.h
-	gcc -O0 -Wall -g  -DPREDICTION_MATH_TEST=1 fixed_math.c prediction_math.c -o prediction_math -lm # -ftrapv
+	g++ -O0 -Wall -g  -DPREDICTION_MATH_TEST=1 fixed_math.c prediction_math.c -o prediction_math -lm # -ftrapv
 
 int_math_utils_test: int_math_utils_test.cc int_math_utils.h
 	g++ -O0 -Wall -g  int_math_utils_test.cc -o int_math_utils_test -lm # -ftrapv

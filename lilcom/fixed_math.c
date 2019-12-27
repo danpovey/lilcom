@@ -1680,7 +1680,7 @@ void TestDotVector() {
 
     double f = Scalar64ToDouble(&scalar);
     fprintf(stderr, "shift = %d, f = %f, ref_sum = %lld, size = %d, scalar exponent = %d\n",
-            shift, f, ref_sum, scalar.size, scalar.exponent);
+            shift, f, (long long int)ref_sum, scalar.size, scalar.exponent);
     assert(f == ref_sum);
   }
 }

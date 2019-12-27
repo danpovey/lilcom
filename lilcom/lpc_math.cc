@@ -60,7 +60,7 @@ void toeplitz_solve(const IntVec<int32_t> *autocorr,
     IntScalar<int32_t> nu_n;
     divide(&prod, &epsilon, &nu_n);
     negate(&nu_n);
-    assert(std::abs(static_cast<float>(nu_n)) < 1.0);
+    assert(int_math_abs(static_cast<float>(nu_n)) < 1.0);
     /* next line does b[-(n+1):-1] += nu_n * np.flip(b[-n:]) */
 
     std::cout << "n = " << n << ", nu_n = " << nu_n << ", epsilon = "

@@ -480,6 +480,7 @@ static inline int decoder_decode(ssize_t t,
 
 #ifdef LILCOM_TEST
 void lilcom_test_extract_mantissa() {
+
   for (int bits_per_sample = 4;
        bits_per_sample <= 32; bits_per_sample++) {
     for (int i = 0; i < 1000; i++) {

@@ -5,6 +5,7 @@
 #include "int_math_utils.h"
 #include "int_scalar.h"
 #include "int_vec.h"
+#include <stdexcept>
 
 namespace int_math {
 

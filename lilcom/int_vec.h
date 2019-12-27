@@ -532,7 +532,7 @@ inline void special_reflection_function(int n, const IntScalar<int32_t> *s,
       nrsb = int_math_min(nrsb, lrsb(
           (bdata[j] = (bj >> 1) + ((bk * (int64_t)s_elem_shifted) >> 32))));
     }
-    if (n % 2 == 0) {
+    if (n % 2 == 0 && n > 0) {
       /* the following expression could also equivalently be written as:
          int j = dim - (n - 2) / 2   */
       int j = dim - ((n-1)>>1);
@@ -570,7 +570,7 @@ inline void special_reflection_function(int n, const IntScalar<int32_t> *s,
         nrsb = int_math_min(nrsb, lrsb(
             (bdata[j] = bj + ((bk * (int64_t)s_elem_shifted) >> 32))));
       }
-      if (n % 2 == 0) {
+      if (n % 2 == 0 && n > 0) {
         int j = dim - ((n-1) >> 1);
         int32_t bj = bdata[j];
         nrsb = int_math_min(nrsb, lrsb(
@@ -591,7 +591,7 @@ inline void special_reflection_function(int n, const IntScalar<int32_t> *s,
         nrsb = int_math_min(nrsb, lrsb(
             (bdata[j] = bj + ((bk * (int64_t)s_elem_shifted) >> 31))));
       }
-      if (n % 2 == 0) {
+      if (n % 2 == 0 && n > 0) {
         int j = dim - ((n-1)>>1);
         int32_t bj = bdata[j];
         nrsb = int_math_min(nrsb, lrsb(
