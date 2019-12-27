@@ -1,6 +1,11 @@
 [MIT license]
 
 Copyright 2019  Daniel Povey, Soroush Zargar, Mahsa Yarmohammadi, Jian Wu
+   [NOTE from Dan: since around Dec 1st I have been working for Xiaomi corp.,
+   which possibly muddies the copyrights on this a bit, e.g. it
+   should also say Xiaomi corporation at the top, but I have to have
+   some discussions here about this, I'd probably need permission
+   RE the exact license.]
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 

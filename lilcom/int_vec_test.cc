@@ -310,10 +310,10 @@ void test_powers() {
   int dim = 376;
   for (int p = 1; p < 4; p++) {
     for (int j = 1; j < 25; j++) {
-      int num = (j << p),
-          den = (j << p) - 1;
+      int num = (j << p) - 1,
+          den = (j << p);
       IntScalar<int32_t> a(num), b(den), r;
-      divide(&b, &a, &r);
+      divide(&a, &b, &r);
 
       IntVec<int32_t> powers(dim);
       init_vec_as_powers(&r, &powers);
