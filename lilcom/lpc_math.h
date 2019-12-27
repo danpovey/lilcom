@@ -8,104 +8,79 @@
 
 namespace int_math {
 
+
+/*
+    Let y be a vector of dimension N and let
+    `autocorr` be vector of dimension N representing, conceptually,
+    an NxN Toeplitz matrix A with elements A(i,j) = autocorr[abs(i-j)].
+
+    This function solves the linear system A x = y, giving x.
+
+    We require for the Toeplitz matrix to satisfy the usual conditions for
+    algorithms on Toeplitz matrices, meaning no singular leading minor may be
+    singular (i.e. not det(A[0:n,0:n])==0 for any n).  This will naturally be
+    satisfied if A is the autocorrelation of a finite nonzero sequence (I
+    believe).
+
+    This function solves for x using the Levinson-Trench-Zohar
+    algorithm/recursion..  I had to look this up... in this case
+    y is an arbitrary vector, so the Levinson-Durbin recursion as normally
+    used in signal processing doesn't apply.
+
+    I am looking at:
+       https://core.ac.uk/download/pdf/4382193.pdf:
+      "Levinson and fast Choleski algorithms for Toeplitz and almost
+      Toeplitz matrices", RLE technical report no. 538 by Bruce R Muscius,
+      Research Laboratory of Electronics, MIT,
+
+    particularly equations 2.4, 2.6, 2.7, 2.8, (unnumbered formula below 2.9),
+    2.10.  There is opportunity for simplification because this Toeplitz matrix
+    is symmetric.
+
+      @param [in] autocorr    The input autocorrelation coefficients.  All
+                              args to this function must have the same
+                              dimension.
+      @param [in] y           The vector y in A x = y, where
+                              A[i,j] = autocorr[abs(i-j)]
+      @param     temp         Temporary vector used in this function
+      @param [out] x          The quantity being solved for
+ */
 void toeplitz_solve(const IntVec<int32_t> *autocorr,
                     const IntVec<int32_t> *y,
                     IntVec<int32_t> *temp,
-                    IntVec<int32_t> *x) {
+                    IntVec<int32_t> *x);
 
-  IntVec<int32_t> b = *temp;
-  zero_int_vector(&b);
-  zero_int_vector(x);
-  /* CAUTION with this N, it is the dimension of the vectors MINUS ONE.
-     This is for compatibility with the literature on Toeplitz solvers.
-   */
-  int N1 = b.dim, N = b.dim - 1;  /* all dims are the same. */
-
-  { /* b[-1] = 1.0 */
-    const int b_nsb = 29;  /* initial number of significant bits in b.  Must be
-                              <= 30, which is the max allowed for int32_t.  We
-                              make it a bit smaller than 30 (i.e., 29) in order
-                              to reduce the probability of needing to shift it
-                              right later on if elements of it start getting
-                              larger. */
-    b.exponent = b_nsb - 1;
-    b.data[N] = 1 << (b_nsb - 1);
-    assert(static_cast<float>(b[N]) == 1.0);
-  }
-
-  /* epsilon = r[0]. */
-  IntScalar<int32_t> epsilon((*autocorr)[0]);
-
-  {  /* x[0] = y[0] / epsilon */
-    IntScalar<int32_t> x0 = (*y)[0];
-    divide(&x0, &epsilon, &x0);
-    set_only_nonzero_elem_to(&x0, 0, x);
-  }
-
-  /* for n in range(1, N+1): */
-  for (int n = 1; n <= N; n++) {
-    IntScalar<int64_t> prod;  /* np.dot(r[1:n+1], b[-n:]) */
-    compute_dot_product(n, autocorr, 1, &b, N1 - n, &prod);
-
-    /* note: abs(nu_n) < 1.0.  mathematically it's <= 1.0, but we
-       added a little smoothing to the zeroth autocorr element. */
-    IntScalar<int32_t> nu_n;
-    divide(&prod, &epsilon, &nu_n);
-    assert(std::abs(static_cast<float>(nu_n)) < 1.0);
-    /* next line does b[-(n+1):-1] += nu_n * np.flip(b[-n:]) */
-    special_reflection_function(n, &nu_n, &b);
-
-
-    /* epsilon *= (1.0 - nu_n * nu_n)
-       [Note: could have slightly less roundoff by computing
-       1-nu_n*nu_n directly using special code?]
-     */
-    multiply(&nu_n, &nu_n, &nu_n);
-    multiply(&nu_n, &epsilon, &nu_n);
-    negate(&nu_n);
-    add(&epsilon, &nu_n, &epsilon);
-    assert(epsilon.elem > 0);
-
-
-    /* lambda_n = y[n] - np.dot(np.flip(r[1:n+1]), x[:n]) */
-
-    IntScalar<int64_t> lambda_n;
-    /* next line sets lambda_n = np.dot(np.flip(r[1:n+1]), x[:n]) */
-    compute_dot_product_flip(n, autocorr, 1, x, 0, &lambda_n);
-    negate(&lambda_n);
-    /* next two lines do lambda_n += y[n]. */
-    IntScalar<int32_t> lambda_n32;
-    copy(&lambda_n, &lambda_n32);
-    IntScalar<int32_t> y_n = (*y)[n];
-    add(&lambda_n32, &y_n, &lambda_n32);
-
-    /* new few lines do x[:n+1] += (lambda_n / epsilon) * b[-(n+1):] */
-    IntScalar<int32_t> lambda_n_over_epsilon;
-    divide(&lambda_n32, &epsilon, &lambda_n_over_epsilon);
-    add_scaled_special(n + 1, &lambda_n_over_epsilon,
-                       &b, (N+1) - (n+1),
-                       x, 0);
-  }
-}
+/* Custom exception type */
+class InvalidParamsError: public std::runtime_error {
+ public:
+  InvalidParamsError(const std::string &str): runtime_error(str) { }
+};
 
 class ToeplitzLpcEstimator {
  public:
+  /* Constructor raises InvalidParamsError if eta_inv is too small
+     compared to the block size. */
   ToeplitzLpcEstimator(int lpc_order,
                        int block_size,
                        int eta_inv,
                        int diag_smoothing_power,
                        int abs_smoothing_power):
       lpc_order_(lpc_order),
-      diag_smoothing_power_(1, -diag_smoothing_power),
-      abs_smoothing_power_(1, -abs_smoothing_power),
-      temp_(lpc_order),
-      eta_even_powers_(lpc_order + block_size),
-      eta_odd_powers_(lpc_order + block_size),
-      temp_deriv_(lpc_order) {
+      temp64_(lpc_order),
+      temp32_a_(lpc_order),
+      temp32_b_(lpc_order) {
+
+    /* The following will zero these values, which is all the initialization
+       we need. */
     autocorr_[0].resize(lpc_order);
     autocorr_[1].resize(lpc_order);
     lpc_coeffs_[0].resize(lpc_order);
     lpc_coeffs_[1].resize(lpc_order);
+
+    assert(diag_smoothing_power > 0 && abs_smoothing_power > 0);
+    init_as_power_of_two(-diag_smoothing_power, &diag_smoothing_);
+    init_as_power_of_two(-abs_smoothing_power, &abs_smoothing_);
+
     InitEta(eta_inv);
     // TODO
   }
@@ -157,14 +132,13 @@ class ToeplitzLpcEstimator {
   ~ToeplitzLpcEstimator() { }
  private:
 
-  void InitEtaPowers(int eta_inv) {
-    // set eta_ to 1.0 - 1/eta_inv.
-    assert(eta_inv > 1);
-    IntScalar one(1), eta_inv(eta_inv);
-    divide(&one, &eta_inv, &eta_);
-    negate(&eta_);
-    add(&eta_, &one, &eta_);
-  }
+
+  /**
+     Sets eta_ to 1.0 - 1/eta_inv, and sets up eta_even_powers_,
+     eta_odd_powers_ and eta_2B_
+   */
+  void InitEta(int eta_inv);
+
 
   /*  Updates autocorr_[parity] and deriv_.  Similar to
       ToeplitzLpcEstimator._update_autocorr_and_deriv in
@@ -172,7 +146,7 @@ class ToeplitzLpcEstimator {
       x_nrsb is the smallest number of redudant sign bits
       for any x[-lpc_order_].. through x[block_size_ - 1].
    */
-  void UpdateAutocorrStatsAndDeriv(
+  void UpdateAutocorrStats(
       int parity, const int16_t *x, int x_nrsb);
 
   void UpdateDeriv(
@@ -211,22 +185,21 @@ class ToeplitzLpcEstimator {
   IntVec<int32_t> eta_even_powers_;
   IntVec<int32_t> eta_odd_powers_;
 
-  /* reflection_coeffs_ is a vector of dimension lpc_order_ whose
-       i'th element contains 0.5 * (eta_ ** (i + 1)).
-    It is initialized once and never changes.
-    It is a scale/coefficient on each term in the
-    `reflection part` of the autocorrelation stats.
-    (the part that arises from adding the signal to its
-    mirror-image)
-   */
-  IntVec<int32_t> reflection_coeffs_;
-
 
   /* temp_ is a vector of dimension lpc_order_, used for the autocorrelation
      accumulations*/
   IntVec<int64_t> temp64_;
-  /* temp2_ is another temporary vector of dimension lpc_order_. */
-  IntVec<int32_t> temp32_;
+  /* temp32_a_ and temp32_b_ are two other temporary vectors of dimension
+     lpc_order_. */
+  IntVec<int32_t> temp32_a_;
+  IntVec<int32_t> temp32_b_;
+
+  /*
+    reflection_coeffs_ is of dimension lpc_order_ and element k contains 0.5 *
+    (eta ** (k+1)).  It appears in the formula for the signal-reflection part of
+    the autocorrelation stats.
+   */
+  IntVec<int32_t> reflection_coeffs_;
 
   /* eta_2B_ is eta to the power 2B where B == block_size_. */
 
@@ -249,7 +222,11 @@ class ToeplitzLpcEstimator {
      This vector is indexed by `parity`, which is 0 or 1;
      we alternate on different blocks.  This allows us to
      easily revert to the previous block when the algorithm
-     requirs it.
+     requires it.
+
+     For block indexed b, autocorr_[b%2] contains block b's
+     stats as the most recent stats (and previous ones
+     included in its weighted sum).
   */
   IntVec<int32_t> autocorr_[2];
 
@@ -263,8 +240,12 @@ class ToeplitzLpcEstimator {
   */
   IntVec<int32_t> autocorr_final_;
 
-  /* lpc_coeffs_[parity] is the LPC coeffs estimated for the most recent block with
-     parity `parity`. dim is lpc_order_. */
+  /* lpc_coeffs_[parity] is the LPC coeffs estimated from stats including those
+     of the the most recent block with parity `parity`. dim is lpc_order_.
+     When doing the prediction for any given block, we always use the lpc
+     stats for the block of the *other* parity, as to avoid transmitting
+     the LPC coeffs we always estimate them from previous samples.
+  */
   IntVec<int32_t> lpc_coeffs_[2];
 
 

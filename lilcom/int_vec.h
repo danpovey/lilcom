@@ -76,7 +76,7 @@ struct IntVec {
     set_data_zero(data, dim);
   }
   void resize(int d) {
-    delete data;
+    delete [] data;
     dim = d;
     data = new I[d];
     exponent = kExponentOfZero;
@@ -86,23 +86,68 @@ struct IntVec {
 };
 
 
+#ifndef NDEBUG
+template <typename I>
+inline std::ostream &operator << (std::ostream &os, const IntVec<I> &s) {
+  return os << (std::string)s;
+}
+#endif
+
+
+
+template <typename I>
+inline void copy(const IntVec<I> *a, IntVec<I> *b) {
+  assert(b->dim == a->dim);
+  b->exponent = a->exponent;
+  b->nrsb = a->nrsb;
+  for (int i = 0; i < a->dim; i++)
+    b->data[i] = a->data[i];
+}
+
+inline void copy(const IntVec<int64_t> *a, IntVec<int32_t> *b) {
+  assert(b->dim == a->dim);
+  int a_lrsb = a->nrsb,
+      rshift = 32 - a_lrsb;  /* e.g. if a_lrsb == 0, shift right by 32 and will
+                              * still have lrsb == 0. */
+
+  if (rshift > 0) {
+    b->exponent = a->exponent + rshift;
+    b->nrsb = 0;
+    int dim = a->dim;
+    for (int i = 0; i < dim; i++)
+      b->data[i] = static_cast<int32_t>(a->data[i] >> rshift);
+  } else {
+    b->exponent = a->exponent;
+    b->nrsb = a_lrsb - 32;
+    int dim = a->dim;
+    for (int i = 0; i < dim; i++)
+      b->data[i] = static_cast<int32_t>(a->data[i]);
+  }
+  b->check();
+}
+
+
 
 /*
   Computes dot product between an int32 and an int16 vector
  */
-void compute_dot_product(IntVec<int32_t> *a, IntVec<int16_t> *b, IntScalar<int64_t> *out) {
+inline void compute_dot_product(IntVec<int32_t> *a, IntVec<int16_t> *b,
+                                IntScalar<int64_t> *out) {
   assert(a->dim == b->dim);
   out->elem = compute_raw_dot_product<int32_t, int16_t, int64_t, int64_t, 1>(
       a->data, b->data, a->dim);
   out->exponent = a->exponent + b->exponent;
 }
 
+
+
 /*
   Computes dot product between two int32 vectors.  Caution: it will right shift
   after the multiplication regardless of the nrsb of the inputs, which could
   lead to loss of precision.
  */
-void compute_dot_product(IntVec<int32_t> *a, IntVec<int32_t> *b, IntScalar<int64_t> *out) {
+inline void compute_dot_product(IntVec<int32_t> *a, IntVec<int32_t> *b,
+                                IntScalar<int64_t> *out) {
   assert(a->dim == b->dim);
   int dim = a->dim,
       rshift = extra_bits_from_factor_of(dim) - a->nrsb - b->nrsb;
@@ -373,8 +418,8 @@ inline void mul_vec_by_vector(int dim,
   This is not particularly efficient/optimized as it's just used
   in initializion code right now.
  */
-void init_vec_as_powers(const IntScalar<int32_t> *a,
-                        IntVec<int32_t> *out) {
+inline void init_vec_as_powers(const IntScalar<int32_t> *a,
+                               IntVec<int32_t> *out) {
   assert(a->elem > 0 && (float)(*a) < 1.0 &&
          a->exponent >= -31);
 
@@ -417,11 +462,11 @@ void init_vec_as_powers(const IntScalar<int32_t> *a,
   It's really not a very difficult thing to do; this function is long
   because we try to handle various cases as efficiently as possible.
  */
-void special_reflection_function(int n, const IntScalar<int32_t> *s, IntVec<int32_t> *b) {
+inline void special_reflection_function(int n, const IntScalar<int32_t> *s,
+                                        IntVec<int32_t> *b) {
   int dim = b->dim;
   assert(fabs(static_cast<float>(*s)) < 1.0);
   int32_t *bdata = b->data;
-  assert(s->exponent >= -31);  /* since abs(s) is less than one. */
 
 
 #ifndef NDEBUG
@@ -449,6 +494,8 @@ void special_reflection_function(int n, const IntScalar<int32_t> *s, IntVec<int3
   /* we shift s->elem to have a known exponent of -31 so that we can treat its
      exponent as fixed; that way, we don't have to shift by an unknown value in
      the loops. */
+  assert(s->exponent - lrsb(s->elem) <= -31);  /* since abs(s) is less than one. */
+
   int32_t s_elem_shifted = safe_shift_by(s->elem, (-31) - s->exponent);
 
   if (b->nrsb == 0) {
@@ -469,7 +516,8 @@ void special_reflection_function(int n, const IntScalar<int32_t> *s, IntVec<int3
         (bdata[b->dim - (n+1)] = (s_elem_shifted * (int64_t)bdata[b->dim - 1]) >> 32));
     /* Shift the last element of b to account for the new exponent (it is not
        otherwise modified by this function). */
-    b->data[b->dim - 1] >>= 1;
+    nrsb = int_math_min(nrsb,
+                        lrsb(b->data[b->dim - 1] >>= 1));
     /* Now,
        b[-n:-1] += s * np.flip(b[-n:-1])
     */
@@ -509,8 +557,10 @@ void special_reflection_function(int n, const IntScalar<int32_t> *s, IntVec<int3
          `if (b->nrsb == 0) { ... ` but with the comments taken out and
          taking out the right-shift by one of the elements of b. */
 
-      int nrsb = lrsb(
-          (bdata[b->dim - (n+1)] = (s_elem_shifted * (int64_t)bdata[b->dim - 1]) >> 32));
+      int nrsb = int_math_min(
+          lrsb(bdata[b->dim - 1]),
+          lrsb(bdata[b->dim - (n+1)] = (s_elem_shifted * (int64_t)bdata[b->dim - 1]) >> 32));
+
       for (int i = 0; i < (n-1) / 2; i++) {
         int j = dim - n + i,
             k = dim - 2 - i;
@@ -527,9 +577,11 @@ void special_reflection_function(int n, const IntScalar<int32_t> *s, IntVec<int3
             (bdata[j] = (bj >> 1) + ((bj * (int64_t)s_elem_shifted) >> 32))));
       }
       b->set_nrsb(nrsb);
+      b->check();
     } else {
-      int nrsb = lrsb(
-          (bdata[b->dim - (n+1)] = (s_elem_shifted * (int64_t)bdata[b->dim - 1]) >> 31));
+      int nrsb = int_math_min(
+          lrsb(bdata[b->dim - 1]),
+          lrsb(bdata[b->dim - (n+1)] = (s_elem_shifted * (int64_t)bdata[b->dim - 1]) >> 31));
       for (int i = 0; i < (n-1) / 2; i++) {
         int j = dim - n + i,
             k = dim - 2 - i;
@@ -562,7 +614,8 @@ void special_reflection_function(int n, const IntScalar<int32_t> *s, IntVec<int3
   exponent to whatever we want.  It is the caller's job to make sure that
   no other elements of 'v' are nonzero.
  */
-void set_only_nonzero_elem_to(const IntScalar<int32_t> *s, int i, IntVec<int32_t> *v) {
+inline void set_only_nonzero_elem_to(const IntScalar<int32_t> *s, int i,
+                                     IntVec<int32_t> *v) {
   assert(static_cast<unsigned int>(i) < static_cast<unsigned int>(v->dim));
   /* The following is just a spot-check that other elements of the vector are zero. */
   assert(v->data[(i + 1) % v->dim] == 0);
@@ -602,7 +655,7 @@ inline int get_exponent(int a_exponent, int a_nrsb, int b_exponent, int b_nrsb) 
 
 /* Caution: this will take time O(s->dim) if we have to recompute the nrsb.
  */
-void set_elem_to(const IntScalar<int32_t> *s, int i, IntVec<int32_t> *v) {
+inline void set_elem_to(const IntScalar<int32_t> *s, int i, IntVec<int32_t> *v) {
   assert(static_cast<unsigned int>(i) < static_cast<unsigned int>(v->dim));
   int v_exponent = v->exponent, s_exponent = s->exponent,
       s_nrsb = lrsb(s->elem);

@@ -154,7 +154,7 @@ inline int raw_add_product(int dim, const int32_t *a, int32_t scale, int32_t *b,
 }
 
 
-int raw_add_product_and_rshift(int dim, const int32_t *a, int32_t scale, int32_t *b,
+inline int raw_add_product_and_rshift(int dim, const int32_t *a, int32_t scale, int32_t *b,
                                int prod_rshift, int b_rshift) {
   int min_nrsb = 31;
 #pragma unroll
@@ -168,8 +168,9 @@ int raw_add_product_and_rshift(int dim, const int32_t *a, int32_t scale, int32_t
   return min_nrsb;
 }
 
-int raw_add_product_and_lshift(int dim, const int32_t *a, int32_t scale, int32_t *b,
-                               int prod_rshift, int b_lshift) {
+inline int raw_add_product_and_lshift(int dim, const int32_t *a,
+                                      int32_t scale, int32_t *b,
+                                      int prod_rshift, int b_lshift) {
   int min_nrsb = 31;
 #pragma unroll
   for (int i = 0; i < dim; i++) {
@@ -266,8 +267,8 @@ inline int64_t raw_triple_product_a_shifted(int dim, const int16_t *a, const int
    Requires dim % 2 == 0 (could easily get around this).
    Typically you'll want prod_rshift == num_significant_bits(dim).
  */
-int64_t raw_triple_product_b_shifted(int dim, const int16_t *a, const int32_t *b,
-                                     const int32_t *c, int prod_rshift) {
+inline int64_t raw_triple_product_b_shifted(int dim, const int16_t *a, const int32_t *b,
+                                            const int32_t *c, int prod_rshift) {
   assert(dim % 2 == 0);
   int64_t sum1 = 0, sum2 = 0;
   for (int i = 0; i < dim; i += 2) {
@@ -282,8 +283,8 @@ int64_t raw_triple_product_b_shifted(int dim, const int16_t *a, const int32_t *b
 }
 
 
-int64_t raw_triple_product_b(int dim, const int16_t *a, const int32_t *b,
-                                     const int32_t *c) {
+inline int64_t raw_triple_product_b(int dim, const int16_t *a, const int32_t *b,
+                                    const int32_t *c) {
   assert(dim % 2 == 0);
   int64_t sum1 = 0, sum2 = 0;
   for (int i = 0; i < dim; i += 2) {

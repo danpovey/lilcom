@@ -9,6 +9,9 @@
 #include <strings.h>
 #include <stdlib.h>  /* for abs. */
 #include "int_math_utils.h"
+#ifndef NDEBUG
+#include <iostream>
+#endif
 
 namespace int_math {
 
@@ -29,10 +32,14 @@ struct IntScalar {
                                         exponent(other.exponent) { }
   operator float() const { return elem * powf(2.0, exponent); }
   operator double() const { return elem * pow(2.0, exponent); }
-
-
-
 };
+
+#ifndef NDEBUG
+template <typename I>
+inline std::ostream &operator << (std::ostream &os, IntScalar<I> &s) {
+  return os << (double)s;
+}
+#endif
 
 /**
    Find the ratio a / b between two int64_t scalars a and b, as an int32_t
@@ -146,6 +153,11 @@ void divide(IntScalar<IA> *a, IntScalar<IB> *b,
   }
 }
 
+template <typename I>
+inline void init_as_power_of_two(int power, IntScalar<I> *s) {
+  s->exponent = power;
+  s->elem = 1;
+}
 
 inline void copy(const IntScalar<int64_t> *a,
                  IntScalar<int32_t> *b) {
@@ -155,6 +167,7 @@ inline void copy(const IntScalar<int64_t> *a,
   if (rshift > 0) {
     b->elem = a->elem >> rshift;
     b->exponent = a->exponent + rshift;
+    assert(lrsb(b->elem) == 0);
   } else {
     b->elem = a->elem;
     b->exponent = a->exponent;
@@ -169,20 +182,20 @@ inline void copy(const IntScalar<int32_t> *a,
 
 
 template <typename T>
-void negate(IntScalar<T> *a) {
+inline void negate(IntScalar<T> *a) {
   if (a->elem == ((T)1) << (sizeof(T)*8 - 1)) {
     /* handle the special case where a->elem is -2^31 or -2^63, which cannot be
        negated (it just becomes itself).  Set a->elem to +2^30 or +2^62 and
        increase the exponent by one. */
-    a->elem = (1 << (sizeof(T)*8 - 2));
+    a->elem = (((T)1) << (sizeof(T)*8 - 2));
     a->exponent++;
   } else {
     a->elem *= -1;
   }
 }
 
-void multiply(IntScalar<int32_t> *a, IntScalar<int32_t> *b,
-              IntScalar<int32_t> *c) {
+inline void multiply(IntScalar<int32_t> *a, IntScalar<int32_t> *b,
+                     IntScalar<int32_t> *c) {
   int64_t a_elem = a->elem, b_elem = b->elem,
       prod = a_elem * b_elem;
   int prod_lrsb = lrsb(prod),

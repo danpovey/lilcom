@@ -93,7 +93,6 @@ template <typename I> void init_scalar(int i,
 
 
 
-
 void test_constructor() {
   IntVec<int32_t> a;
   assert(a.dim == 0);
@@ -101,17 +100,17 @@ void test_constructor() {
   assert(b.dim == 4 && data_is_zero(b.data, b.dim) &&
          b.exponent == kExponentOfZero && b.nrsb == 31);
   IntVec<int64_t> c(5);
-  assert(c.dim == 5 && data_is_zero(c.data, c.dim) &&
-         c.exponent == kExponentOfZero && c.nrsb == 63);
-  assert( (float)c[4] == 0);
+  rand_init_vec(&c);
+  IntVec<int32_t> d(5);
+  rand_init_vec(&d);
+  /* test copy() */
+  copy(&c, &d);
+  assert(int_math_abs((largest_abs_value(&c) - largest_abs_value(&d))) <=
+         1.0e-05);
+
   a.check();
   b.check();
   c.check();
-
-  c.set_nrsb(63);
-  c.set_nrsb(61);
-  c.data[0] = 1;
-  c.set_nrsb(63);
 
   c.resize(6);
   assert(c.dim == 6 && c.data[5] == 0);
@@ -366,6 +365,7 @@ void test_special_reflection_function() {
 
       double den = largest_abs_value(&b);
       special_reflection_function(n, &s, &b);
+      b.check();
 
       /* now the reference version. */
       for (int j = 0; j < n; j++) {
