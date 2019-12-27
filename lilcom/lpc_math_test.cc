@@ -31,7 +31,9 @@ void test_toeplitz_solve_compare() {
   y.exponent = 0;
   y.set_nrsb();
   toeplitz_solve(&autocorr, &y, &temp, &x);
-
+  /* I'm just verifying that it gives the same numbers as the Python version.
+     In Python there were some more exhaustive tests, which required generating
+     autocorrelations from fake data. */
   std::cout << "x = " << x;
 }
 

@@ -455,7 +455,7 @@ inline void init_vec_as_powers(const IntScalar<int32_t> *a,
   We also make use of several facts which are true in the context
   in which we need it, which are that:
    --  abs(s) < 1.0   [in the algorithm, this is nu_n]
-   --  b[-1] = 1.0.
+   --  b[-1] = 1.0.  XX no we dont use this.
    --  The only nonzero elements of b at entry are those in b[-n:].
 
   This function is probably optimized a little more than it needs to be.
@@ -534,8 +534,8 @@ inline void special_reflection_function(int n, const IntScalar<int32_t> *s,
     }
     if (n % 2 == 0 && n > 0) {
       /* the following expression could also equivalently be written as:
-         int j = dim - (n - 2) / 2   */
-      int j = dim - ((n-1)>>1);
+         int j = dim - (n + 2) / 2  */
+      int j = dim - ((n + 2) >> 1);
       int32_t bj = bdata[j];
       nrsb = int_math_min(nrsb, lrsb(
           (bdata[j] = (bj >> 1) + ((bj * (int64_t)s_elem_shifted) >> 32))));
@@ -571,10 +571,10 @@ inline void special_reflection_function(int n, const IntScalar<int32_t> *s,
             (bdata[j] = bj + ((bk * (int64_t)s_elem_shifted) >> 32))));
       }
       if (n % 2 == 0 && n > 0) {
-        int j = dim - ((n-1) >> 1);
+        int j = dim - ((n + 2) >> 1);
         int32_t bj = bdata[j];
         nrsb = int_math_min(nrsb, lrsb(
-            (bdata[j] = (bj >> 1) + ((bj * (int64_t)s_elem_shifted) >> 32))));
+            (bdata[j] = bj + ((bj * (int64_t)s_elem_shifted) >> 32))));
       }
       b->set_nrsb(nrsb);
       b->check();
@@ -592,7 +592,7 @@ inline void special_reflection_function(int n, const IntScalar<int32_t> *s,
             (bdata[j] = bj + ((bk * (int64_t)s_elem_shifted) >> 31))));
       }
       if (n % 2 == 0 && n > 0) {
-        int j = dim - ((n-1)>>1);
+        int j = dim - ((n + 2) >> 1);
         int32_t bj = bdata[j];
         nrsb = int_math_min(nrsb, lrsb(
             (bdata[j] = bj + ((bj * (int64_t)s_elem_shifted) >> 31))));

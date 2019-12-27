@@ -363,8 +363,8 @@ def test_toeplitz_solve_compare():
     print("Comparing toeplitz solver")
     autocorr = np.array([ 10.0, 5.0, 2.0, 1.0 ])
     y = np.array([ 1.0, 2.0, 3.0, 4.0 ])
-    b = toeplitz_solve(autocorr, y)
-    print("b is {}".format(b))
+    x = toeplitz_solve(autocorr, y)
+    print("x is {}".format(x))
 
 
 def compute_residual(x, t_begin, t_end, lp_coeffs):

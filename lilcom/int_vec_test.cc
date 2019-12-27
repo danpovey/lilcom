@@ -336,7 +336,7 @@ void test_special_reflection_function() {
       IntVec<int32_t> b(dim);
       rand_init_vec(&b);
 
-      int n = 1 % dim;
+      int n = i % dim;
       if (n == 0)
         continue;
 
@@ -345,6 +345,8 @@ void test_special_reflection_function() {
       for (int j = 0; j < dim - n; j++)
         b.data[j] = 0;
       b.set_nrsb();
+
+      IntVec<int32_t> b_orig(b);
 
       double b_double[10], b_double2[10];
       for (int j = 0; j < dim; j++) {
@@ -361,6 +363,9 @@ void test_special_reflection_function() {
         s.exponent = -2;
         /* s = -1/4 */
       }
+      int lshift = i % 30;
+      s.elem <<= lshift;
+      s.exponent -= lshift;
 
 
       double den = largest_abs_value(&b);
@@ -381,7 +386,7 @@ void test_special_reflection_function() {
         assert(error == 0.0);
       } else {
         double rel_error = error / den;
-        assert(rel_error < 1.0e-05);
+        assert(int_math_abs(rel_error) < 1.0e-05);
       }
     }
   }

@@ -44,9 +44,6 @@ void toeplitz_solve(const IntVec<int32_t> *autocorr,
     set_only_nonzero_elem_to(&x0, 0, x);
   }
 
-  std::cout << "y = " << *y << ", autocorr = "
-            << *autocorr << ", x = " << *x << "\n";
-
   /* for n in range(1, N+1): */
   for (int n = 1; n <= N; n++) {
     IntScalar<int64_t> prod;  /* np.dot(r[1:n+1], b[-n:]) */
@@ -62,15 +59,7 @@ void toeplitz_solve(const IntVec<int32_t> *autocorr,
     negate(&nu_n);
     assert(int_math_abs(static_cast<float>(nu_n)) < 1.0);
     /* next line does b[-(n+1):-1] += nu_n * np.flip(b[-n:]) */
-
-    std::cout << "n = " << n << ", nu_n = " << nu_n << ", epsilon = "
-              << epsilon << ", prod = " << prod
-              << ", b = " << b << ", x = " << *x << "\n";
-
-
-
     special_reflection_function(n, &nu_n, &b);
-    b.check();
 
     /* epsilon *= (1.0 - nu_n * nu_n)
        [Note: could have slightly less roundoff by computing
