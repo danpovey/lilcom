@@ -729,8 +729,48 @@ IntVec<I>::IntVec(const IntVec<I> &other) {
     for (int i = 0; i < dim; i++)
       data[i] = other.data[i];
   }
-  check();  // TODO: remove?
+  check();  // TODO: remove
 }
+
+/*
+  Computes and returns the LPC prediction for a single sample of the signal.
+
+     @param [in] signal  Pointer to the sample for which we want the
+                    prediction.  It is omly samples signal[-1], signal[-2], ...,
+                    signal[-(lpc_coeffs->dim-1)] that are inspected.
+     @return      Returns the predicted signal value, truncated to
+                  fit in int16_t.
+ */
+inline int16_t compute_lpc_prediction(const int16_t *signal,
+                                      const IntVec<int32_t> *lpc_coeffs) {
+  int num_lpc_coeffs = lpc_coeffs->dim;
+  int right_shift = -lpc_coeffs->exponent;
+  /* round_to_nearest_offset is something we add to the signal so that
+     it will do rounding-to-nearest instead of rounding-down.
+     (Note: right-shift >> will have the effect of rounding even
+     negative numbers down for any normal machine, although actually
+     according to the C++ standard the behavior is undefined.
+   */
+  int64_t round_to_nearest_offset = (((int64_t)1) << (right_shift - 1));
+  /* The casting to unsigned is just to avoid a compiler warning. */
+  int32_t ans = static_cast<int32_t>(
+      static_cast<uint64_t>(
+          (round_to_nearest_offset +
+          compute_raw_dot_product<int32_t, int16_t, int64_t, int64_t, -1>(
+              lpc_coeffs->data, signal - 1, num_lpc_coeffs)) >> right_shift));
+  if (ans == static_cast<int16_t>(ans)) {
+    return ans;  /* Fits within int16_t */
+  } else  {
+    /* truncate */
+    if (ans > 0) {
+      return 32767;
+    } else {
+      return -32768;
+    }
+  }
+}
+
+
 
 
 }  // namespace int_math

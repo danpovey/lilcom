@@ -83,6 +83,7 @@ class ToeplitzLpcEstimator:
         au = self._get_autocorr_reflected(self.lpc_order)
         # Smooth autocorr stats to avoid NaNs and the like.
         au[0] += self.abs_smoothing + (self.diag_smoothing * au[0])
+        #print("autocorr after smoothing is {}, deriv is {}".format(au, self.deriv))
         self.lpc_coeffs += toeplitz_solve(au, self.deriv)
         return self.lpc_coeffs
 
@@ -547,49 +548,50 @@ def test_new_lpc_compare():
     method of stats accumulation, and that the LpcStats object behaves as
     expected.
     """
+    print("LPC compare\n");
     T = 10
-    signal = np.asarray([1,2,3,4,5,7,9,11,13,15], dtype=np.float64)
+    signal = np.asarray([1,2,3,4,5,6,9,11,13,15,17,18], dtype=np.float64)
 
 
-    eta = 0.5  # Just for test, will change later!
+    eta = 127.0 / 128.0
     dtype=np.float64
     N = 4  # Order of filter
     N1 = N+1
 
-    lpc = ToeplitzLpcEstimator(N, eta, dtype=dtype)
+    # Give large constants for smoothing, since we want it to have a big
+    #  enough effect to be detectable if there is a code mismatch.
+    lpc = ToeplitzLpcEstimator(N, eta, dtype=dtype,
+                               diag_smoothing = 2 ** -5,
+                               abs_smoothing = 2 ** -3)
 
     # two blocks.
-    lpc.accept_block(signal[:5])
+    coeffs = lpc.accept_block(signal[:6], residual=signal[:6])
 
-    print("autocorr[1] is: ", stats.autocorr)
-    print("autocorr_reflected[1] is: ", stats.get_autocorr_reflected())
-    print("x[1] is: ", stats.x)
+    print("autocorr1 = {}, autocorr1+reflected={}".format(lpc.autocorr,
+                                                          lpc._get_autocorr_reflected(N)))
+    print("Coeffs1 = {}".format(coeffs))
 
+    coeffs_rev = np.flip(coeffs)
 
-    autocorr_r = stats.get_autocorr_reflected(aux_order)
-    print("autocorr-reflected[1] is: ", autocorr_r)
-    print("x[1] is ", solver.estimate(A[1:,1:], A[0,1:], autocorr_r[:-1]))
+    residual2 = np.zeros((6), dtype=np.float64)
+    for i in range(6):
+        t=i+6
+        residual2[i] = round(signal[t] - np.dot(signal[t-N:t], coeffs_rev))
 
-    stats.accept_block(signal[5:])
+    print("residual2 = {}".format(residual2));
 
-    print("autocorr[2] is: ", stats.autocorr)
-    print("x[2] is: ", stats.x)
-    autocorr_r = stats.get_autocorr_reflected(aux_order)
-    print("autocorr-reflected[2] is: ", autocorr_r)
+    coeffs2 = lpc.accept_block(signal[6:], residual=residual2)
 
-    stats._get_A_minus(aux_order)
-    print("A'^-[2] is: ", stats.A_minus[aux_order])
-    print("A^+[2] is: ", stats._get_A_plus(aux_order))
-    print("A^all[2] is: ", stats._get_A_all(aux_order))
-    A = stats.get_A()
-    print("A[2] is: ", A)
-    print("x[2] is ", solver.estimate(A[1:,1:], A[0,1:], autocorr_r[:-1]))
+    print("autocorr2 = {}, autocorr2+reflected={}".format(lpc.autocorr,
+                                                          lpc._get_autocorr_reflected(N)))
+    print("Coeffs2 = {}".format(coeffs2))
 
 
 
 test_toeplitz_solve()
 test_toeplitz_solve_compare()
 test_get_toeplitz_mat()
+test_new_lpc_compare()
 
 for file in fileList:
     audioArray = waveRead(file, settings["sample-rate"])

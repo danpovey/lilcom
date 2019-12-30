@@ -3,6 +3,7 @@
 #include <assert.h>
 #include "int_vec.h"
 #include <math.h>
+#include <cmath>
 #include <iostream>
 
 
@@ -330,6 +331,27 @@ void test_powers() {
 }
 
 
+void test_compute_prediction() {
+  IntVec<int32_t> lpc_coeffs(3);
+  lpc_coeffs.exponent = -2;
+  lpc_coeffs.data[0] = 2;
+  lpc_coeffs.data[1] = -1;
+  lpc_coeffs.data[2] = 1;
+  lpc_coeffs.set_nrsb();
+  int16_t data [] = { 3, 2, 3, 4 };
+  /*
+  2*3 - 2*1 + 3*1
+      6 - 2 + 3 = 7.
+      7 / 4 = 1 3/4, round ->2 */
+
+  int16_t predicted = compute_lpc_prediction(data + 3,
+                                             &lpc_coeffs);
+  assert(predicted == (int)std::round(0.25 * (
+      lpc_coeffs.data[0] * data[2] +  // 2*3 = 6
+      lpc_coeffs.data[1] * data[1] +  // -1*2 = -2
+      lpc_coeffs.data[2] * data[0])));  // 1*3 = 3
+}
+
 void test_special_reflection_function() {
   for (int dim = 2; dim < 10; dim++) {
     for (int i = 0; i < 1000; i++) {
@@ -436,5 +458,6 @@ int main() {
   test_powers();
   test_special_reflection_function();
   test_set_elem_to();
+  test_compute_prediction();
 }
 

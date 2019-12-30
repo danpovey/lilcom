@@ -60,16 +60,50 @@ class InvalidParamsError: public std::runtime_error {
 class ToeplitzLpcEstimator {
  public:
   /* Constructor raises InvalidParamsError if eta_inv is too small
-     compared to the block size. */
+     compared to the block size.
+         @param [in]  lpc_order   The LPC order, i.e. the number of LPC
+                          coefficients we are estimating
+         @param [in]  block_size  The block size, determines how frequently
+                          the LPC coefficients are updated.   Should probably
+                          not be less than the LPC order, as that could make
+                          things significantly slower.  MUST BE EVEN (this
+                          enables some optimization in the internal code), and
+                          must be at least half lpc_order.
+         @param [in]  eta_inv  Constant that determines the per-sample
+                          'forgetting factor' eta (which affects how
+                          fast the LPC parameters will change).  eta will equal
+                          (1-eta_inv)/eta_inv.   eta_inv should be
+                          at least 3 * lpc_order.  This
+                          code will fail with an assertion if eta_inv is
+                          too small relative to lpc_order (although
+                          the condition it checks is less strict, more
+                          like 2.88 * lpc_order).
+         @param [in]  diag_smoothing_power  This number, raised to a power of
+                          2, will be a smoothing constant for the 0'th
+                          autocorrelation coefficient (to ensure invertibility
+                          of the Toeplitz matrix)...
+                            autocorr[0] := autocorr[0] * 2**diag_smoothing_power +
+                                           2 ** abs_smoothing_power
+                          Suitable value: -23, corresponding to a coefficient
+                          of around 10^-7.
+         @param [in]  abs_smoothing_power  Number that determines smoothing
+                          of autocorr[0], relevant only for zero signals.
+                          E.g. suggest -33, corresponding to 10^-10.
+  */
   ToeplitzLpcEstimator(int lpc_order,
                        int block_size,
                        int eta_inv,
-                       int diag_smoothing_power,
-                       int abs_smoothing_power):
+                       int diag_smoothing_power,  /* e.g. -23 ~ 10^-7 */
+                       int abs_smoothing_power):  /* e.g. -33 ~ 10^-10 */
       lpc_order_(lpc_order),
+      block_size_(block_size),
       temp64_(lpc_order),
       temp32_a_(lpc_order),
-      temp32_b_(lpc_order) {
+      temp32_b_(lpc_order),
+      deriv_(lpc_order),
+      autocorr_final_(lpc_order) {
+    assert(block_size % 2  == 0);
+    assert(eta_inv >= 3 * lpc_order);
 
     /* The following will zero these values, which is all the initialization
        we need. */
@@ -78,12 +112,11 @@ class ToeplitzLpcEstimator {
     lpc_coeffs_[0].resize(lpc_order);
     lpc_coeffs_[1].resize(lpc_order);
 
-    assert(diag_smoothing_power > 0 && abs_smoothing_power > 0);
-    init_as_power_of_two(-diag_smoothing_power, &diag_smoothing_);
-    init_as_power_of_two(-abs_smoothing_power, &abs_smoothing_);
+    assert(diag_smoothing_power < 0 && abs_smoothing_power < 0);
+    init_as_power_of_two(diag_smoothing_power, &diag_smoothing_);
+    init_as_power_of_two(abs_smoothing_power, &abs_smoothing_);
 
     InitEta(eta_inv);
-    // TODO
   }
 
 
@@ -125,13 +158,20 @@ class ToeplitzLpcEstimator {
     to avoid having to transmit them).  Of course each block has different
     LPC coeffs, but we never backtrack further than one block, so storing
     two blocks' worth of LPC coefficients is sufficient.
+
+    We guarantee that the exponent will not be positive.  (This is required
+    by the code that computes the residual).
    */
   inline const IntVec<int32_t> &GetLpcCoeffsForBlock(int parity) {
     return lpc_coeffs_[ (~parity) & 1];
   }
 
   ~ToeplitzLpcEstimator() { }
- private:
+
+#ifndef LPC_MATH_TEST
+  private:
+#endif
+
 
 
   /**
@@ -150,7 +190,13 @@ class ToeplitzLpcEstimator {
   void UpdateAutocorrStats(
       int parity, const int16_t *x, int x_nrsb);
 
-  void UpdateDeriv(
+  /*
+    Computes the objective function derivative (the new part, from
+    the new block)... the assumption is that the old part of the
+    deriv is now zero because we `trust` the previous iteration's
+    solver.
+   */
+  void ComputeDeriv(
       int parity, const int16_t *x, int x_nrsb,
       const int32_t *residual);
 
@@ -248,7 +294,6 @@ class ToeplitzLpcEstimator {
      the LPC coeffs we always estimate them from previous samples.
   */
   IntVec<int32_t> lpc_coeffs_[2];
-
 
   /* eta_2B_ is eta_ to the power 2 * B_. */
   IntScalar<int32_t> eta_2B_;
