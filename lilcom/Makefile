@@ -35,3 +35,6 @@ int_vec_test: int_vec_test.cc int_scalar.h int_vec.h int_math_utils.h
 
 lpc_math_test: lpc_math_test.cc lpc_math.cc lpc_math.h int_scalar.h int_vec.h int_math_utils.h
 	g++ -O0 -Wall -g  lpc_math.cc lpc_math_test.cc -o lpc_math_test -lm # -ftrapv
+
+bit_stream_test: bit_stream_test.cc bit_stream.h
+	g++ -O0 -Wall -g  bit_stream_test.cc -o bit_stream_test -lm # -ftrapv

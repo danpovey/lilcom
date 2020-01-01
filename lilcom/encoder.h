@@ -180,10 +180,18 @@ static inline void backtracking_encoder_regress_most_recent_t(
    decoder_finish().
 */
 struct Decoder {
+#ifndef NDEBUG
+  int even_den;
+  int even_ones;
+  int odd_den;
+  int odd_ones;
+#endif
+
   struct BitUnpacker bit_unpacker;
 
-  int num_bits;  /* num_bits is the number of bits in the signed integer for
-                    the current sample, excluding the width bit. */
+  int width;  /* num_bits is the number of bits in the signed integer for
+                 the current sample (before truncation of lower-order bits),
+                 excluding the bit used to encode the width itself. */
 };
 
 

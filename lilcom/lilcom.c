@@ -1,5 +1,5 @@
 #include <assert.h>
-#include <stdlib.h>  /* for malloc */
+#include <stdlib.h>  /* for malloc, rand(), ... */
 #include <math.h>  /* for frexp and frexpf and pow, used in floating point compression. */
 
 /*#undef NDEBUG  */
@@ -1530,6 +1530,9 @@ int lilcom_decompress(const int8_t *input, ssize_t num_bytes, int input_stride,
         }
       }
     }
+
+    const int8_t *next_compressed_code;
+    decoder_finish(&decoder, &next_compressed_code);
     return 0;  /** Success */
   } else {
     /** output_stride != 1, so we need to continue to use `output_buffer` and
@@ -2009,6 +2012,75 @@ void lilcom_test_compress_sine() {
 }
 
 
+inline double rand_uniform() {
+  int64_t r = rand();
+  assert(r >= 0 && r < RAND_MAX);
+  float ans = (1.0 + r) / (static_cast<double>(RAND_MAX) + 2);
+  assert(ans > 0.0 && ans < 1.0 && ans == ans);
+  return ans;
+}
+inline float rand_gauss() {
+  return sqrtf(-2 * logf(rand_uniform())) *
+      cosf(2 * M_PI * rand_uniform());
+}
+
+
+void lilcom_test_compress_gauss() {
+  int16_t buffer[4096];
+  int lpc_order = 10;
+
+  for (int stddev = 2; stddev <= 4096; stddev *= 2) {
+    /* Entropy of Gaussian distribution is
+          H(x) = 1/2 (1 + log(2 sigma^2 pi))
+       since we are integerizing without any scaling, for large
+       enough variance this is the same as the entropy of the discretized
+       distribution.  (Of course, the definitions of entropy are a little
+       different).
+     */
+    double sumsq = 0.0;
+    float entropy = 0.5 * (1.0 + log(2.0 * stddev * stddev * M_PI));
+    int bits_per_sample = LILCOM_MAX_BPS;
+    for (int i = 0; i < 4096; i++) {
+      float f = rand_gauss() * stddev;
+      int f_int = (int)round(f);
+      buffer[i] = f_int;
+      sumsq += f_int * (double)f_int;
+    }
+
+    fprintf(stderr,
+            "About to compress; stddev=%d (measured=%f), theoretical entropy in base-2 (i.e. min bits per sample) is %f\n",
+            stddev, (float)(sqrtf(sumsq / 4096)), entropy / log(2.0));
+
+    int conversion_exponent = 0;
+    ssize_t num_bytes = lilcom_get_num_bytes(4096, bits_per_sample);
+    int8_t *compressed = (int8_t*)malloc(num_bytes);
+
+    int ret = lilcom_compress(buffer, 4096, 1,
+                              compressed, num_bytes, 1,
+                              lpc_order, bits_per_sample,
+                              conversion_exponent);
+    assert(!ret);
+    int sum = 0;
+    for (int32_t i = 0; i < num_bytes; i++)
+      sum += compressed[i];
+    fprintf(stderr, "hash = %d\n", sum);
+    int16_t decompressed[4096];
+    int conversion_exponent2;
+    if (lilcom_decompress(compressed, num_bytes, 1,
+                          decompressed, 4096, 1,
+                          &conversion_exponent2) != 0) {
+      debug_fprintf(stderr, "Decompression failed\n");
+    }
+    assert(conversion_exponent2 == conversion_exponent);
+    fprintf(stderr, "...  snr (dB) = %f [should be inf]\n",
+            lilcom_compute_snr(4096 , buffer, 1, decompressed, 1));
+    free(compressed);
+  }
+}
+
+
+
+
 void lilcom_test_compress_maximal() {
   /** this is mostly to check for overflow when computing autocorrelation. */
 
@@ -2301,6 +2373,7 @@ int main() {
   lilcom_check_constants();
   lilcom_test_extract_mantissa();
   lilcom_test_compress_sine();
+  lilcom_test_compress_gauss();
   lilcom_test_compress_maximal();
   lilcom_test_compress_sine_overflow();
   lilcom_test_compress_float();

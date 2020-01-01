@@ -419,7 +419,11 @@ void decoder_init(ssize_t num_samples_to_read,
                   int compressed_code_stride,
                   struct Decoder *decoder) {
   int width_m1 = *compressed_code;  /* num-bits for t = -1. */
-  decoder->num_bits = width_m1;
+  decoder->width = width_m1;
+#ifndef NDEBUG
+  decoder->even_ones = 0;
+  decoder->odd_ones = 0;
+#endif
   compressed_code += compressed_code_stride;
   /* we give num_samples_to_read * 2 to bit_unpacker_init because
      we will be extracting the width bit and the mantissa separately.
@@ -434,6 +438,13 @@ void decoder_finish(const struct Decoder *decoder,
                     const int8_t **next_compressed_code) {
   bit_unpacker_finish(&decoder->bit_unpacker,
                       next_compressed_code);
+#ifndef NDEBUG
+  float even_one_prob = decoder->even_ones * 1.0 / decoder->even_den,
+      odd_one_prob = decoder->odd_ones * 1.0 / decoder->odd_den;
+  fprintf(stderr, "Even prob of 1 is %f [over %d], odd prob of 1 is %f [over %d], tot samples %d\n",
+          even_one_prob, decoder->even_den, odd_one_prob, decoder->odd_den,
+          (int)decoder->bit_unpacker.num_samples_read);
+#endif
 }
 
 /* See documentation in header */
@@ -452,7 +463,7 @@ static inline int decoder_decode(ssize_t t,
   */
   int max_encoded_mantissa_bits = max_bits_in_sample - 1,
       min_codable_width = LILCOM_COMPUTE_MIN_CODABLE_WIDTH(
-          t, decoder->num_bits),
+          t, decoder->width),
       width_bit = (min_codable_width >= 0  ?
                    1 & bit_unpacker_read_next_code(1, &decoder->bit_unpacker) :
                    (bit_unpacker_read_next_code(0, &decoder->bit_unpacker), 1)),
@@ -463,8 +474,17 @@ static inline int decoder_decode(ssize_t t,
           bit_unpacker_read_next_code(num_bits_encoded,
                                       &decoder->bit_unpacker),
       num_bits_encoded);
-
-  decoder->num_bits = width;
+#ifndef NDEBUG
+  if (min_codable_width >= 0) {
+    if (width_bit != 0) {
+      if (((int)t + decoder->width)  % 2 == 0) decoder->even_ones++;
+      else decoder->odd_ones++;
+    }
+    if (((int)t + decoder->width) % 2 == 0) decoder->even_den++;
+    else decoder->odd_den++;
+  }
+#endif
+  decoder->width = width;
 
   if (width < 0) {
     debug_fprintf(stderr, "Decompression failed, negative width %d at t=%d\n",

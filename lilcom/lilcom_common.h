@@ -32,7 +32,7 @@
 /*  These document the minimum and maximum allowed number of bits per
     sample.  The normal values would be 6 or 8. */
 #define LILCOM_MIN_BPS 4
-#define LILCOM_MAX_BPS 16
+#define LILCOM_MAX_BPS 17
 
 /**
    max_lpc_order is the maximum allowed order of the linear prediction
