@@ -71,8 +71,7 @@ uint32_t rand_special() {
 }
 
 void int_stream_test_two() {
-  int input[150];
-
+  int input[500];
 
   for (int num_ints = 1; num_ints < 500; num_ints++) {
     for (int n = 0; n < 20; n++) {  /* multiple tries for each size.. */
@@ -91,7 +90,10 @@ void int_stream_test_two() {
         uint32_t r;
         bool ans = rus.Read(&r);
         assert(ans);
-        assert(r == input[i]);
+        if (r != input[i]) {
+          std::cout << "Failure, " << r << " != " << input[i] << "\n";
+          exit(1);
+        }
       }
       for (int i = 0; i < 8; i++) {
         uint32_t r;
@@ -104,8 +106,57 @@ void int_stream_test_two() {
   }
 }
 
+
+inline double rand_uniform() {
+  int64_t r = rand();
+  assert(r >= 0 && r < RAND_MAX);
+  float ans = (1.0 + r) / (static_cast<double>(RAND_MAX) + 2);
+  assert(ans > 0.0 && ans < 1.0 && ans == ans);
+  return ans;
+}
+inline float rand_gauss() {
+  return sqrtf(-2 * logf(rand_uniform())) *
+      cosf(2 * M_PI * rand_uniform());
+}
+
+void int_stream_test_gauss() {
+  uint32_t buffer[4096];
+
+  for (int stddev = 2; stddev <= 4096; stddev *= 2) {
+    /* Entropy of Gaussian distribution is
+          H(x) = 1/2 (1 + log(2 sigma^2 pi))
+       since we are integerizing without any scaling, for large
+       enough variance this is the same as the entropy of the discretized
+       distribution.  (Of course, the definitions of entropy are a little
+       different).
+     */
+    double sumsq = 0.0;
+    float entropy = 0.5 * (1.0 + log(2.0 * stddev * stddev * M_PI));
+    for (int i = 0; i < 4096; i++) {
+      float f = rand_gauss() * stddev;
+      int f_int = (int)round(f);
+      buffer[i] = (f_int >= 0 ? 2 * f_int : - (2 * f_int) - 1);
+      sumsq += f_int * (double)f_int;
+    }
+
+    std::cout <<  "About to compress; stddev=" << stddev << " (measured=" << (float)(sqrtf(sumsq / 4096))
+              << "), theoretical entropy in base-2 (i.e. min bits per sample) is " <<
+        (entropy / log(2.0)) << "\n";
+
+    UintStream us;
+    for (int i = 0; i < 4096; i++) {
+      us.Write(buffer[i]);
+    }
+    us.Flush();
+    size_t num_bits = us.Code().size() * 8;
+    std::cout << "Actual bits per sample was " << (num_bits * 1.0 / 4096) << "\n";
+  }
+}
+
+
 int main() {
   int_stream_test_one();
   int_stream_test_two();
+  int_stream_test_gauss();
   printf("Done\n");
 }

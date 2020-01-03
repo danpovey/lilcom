@@ -123,13 +123,13 @@ class UintStream {
                                                                next_num_bits - 1);
     }
     /*
+    size_t size = buffer_.size();
     std::cout << "size = " << size;
     for (int i = 0; i < size; i++) {
       std::cout << "  n=" << buffer_[i] << ", nbits=" << (*num_bits_out)[i];
-      }
-        std::cout << std::endl;
+    }
+    std::cout << std::endl;
     */
-
   }
 
   /**
@@ -371,6 +371,36 @@ class ReverseUintStream {
   int cur_num_bits_;
 
 };
+
+/*
+ */
+class IntStream: public UintStream {
+ public:
+  IntStream() { }
+
+  inline void Write(int32_t value) {
+    UintStream::Write(value >= 0 ? 2 * value : -(2 * value) - 1);
+  }
+};
+
+class ReverseIntStream: public ReverseUintStream {
+
+  ReverseIntStream(const int8_t *code,
+                   const int8_t *code_memory_end):
+      ReverseUintStream(code, code_memory_end) { }
+
+  inline bool Read(int32_t *value) {
+    uint32_t i;
+    if (!ReverseUintStream::Read(&i)) {
+      return false;
+    } else {
+      *value = (i % 2 == 0 ? (int32_t)(i/2) : -(int32_t)(i/2) - 1);
+      return true;
+    }
+  }
+
+};
+
 
 
 #endif /* LILCOM_INT_STREAM_H_ */
