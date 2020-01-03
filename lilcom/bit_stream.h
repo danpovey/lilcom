@@ -4,12 +4,12 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <vector>
-#include "lilcom_common.h"
 
 
 /**
-   This header contains declarations for a BitStream object whose job is to pack
-   codes containing variable numbers of bits into a byte stream.
+   This header contains the implementation of a BitStream object
+   whose job is to pack codes containing variable numbers of bits into a byte
+   stream.
 
    There is a ReverseBitStream object which reverses the process.  The lengths
    of the codes, and the number of codes, are not encoded in the stream; the
@@ -41,6 +41,7 @@ class BitStream {
                        The remaining bits MUST BE ZERO.
    */
   inline void Write(int num_bits_in, uint32_t bits_in) {
+    //std::cout << "[Writing " << bits_in << " as " << num_bits_in << " bits].";
     assert(static_cast<unsigned int>(num_bits_in) <= 32);
     /* assert out-of-range bits are zero. */
     assert((bits_in & ~((1 << num_bits_in) - 1)) == 0);
@@ -113,7 +114,15 @@ class ReverseBitStream {
   }
 
   /*
-    Read some bits of the code.
+    Read some bits of the code.  If you create this object
+    with the output of class BitStream() and call with the same
+    sequence of num_bits, you'll get the same sequence of bits_out
+    values.  If the sequence of num_bits values is different
+    (e.g. write 4 bits then 4 bits, and read 8 bits), then
+    the numbers which are the *first to be written become
+    the lower-order bits.  E.g. if you read 3 as 4-bit then 0 as 4-bit,
+    then read 8-bit, you will get 3, not 3*16.
+
         @param [in] num_bits  The number of bits to be read.
                           Must be in [0,32].
         @param [out] bits_out  On success the bits will be written to the
@@ -128,13 +137,16 @@ class ReverseBitStream {
     int remaining_num_bits = remaining_num_bits_;
     uint64_t remaining_bits = remaining_bits_;
     while (remaining_num_bits < num_bits) {
-      if (next_code_ >= code_memory_end_)
+      if (next_code_ >= code_memory_end_) {
+        //std::cout << "Past stream end!\n";
         return false;
+      }
       unsigned char code = *(next_code_++);
       remaining_bits |= (((uint64_t) ((unsigned char) (code))) << remaining_num_bits);
       remaining_num_bits += 8;
     }
     *bits_out = remaining_bits & (((uint64_t)1 << num_bits) - 1);
+    //std::cout << "[Read " << *bits_out << " as " << num_bits << " bits.";
     remaining_num_bits_ = remaining_num_bits - num_bits;
     remaining_bits_ = remaining_bits >> num_bits;
     return true;
@@ -145,7 +157,7 @@ class ReverseBitStream {
      may be needed, for instance, if we know another bit stream is
      directly after this one.
    */
-  const int8_t *NextCode() { return next_code_; }
+  const int8_t *NextCode() const { return next_code_; }
 
  private:
       /* next_code_ is advanced each time we read a byte; it always points to

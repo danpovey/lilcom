@@ -34,8 +34,25 @@ void bit_stream_test_two() {
   assert(rbs.NextCode() == &(bs.Code()[0]) + bs.Code().size());
 }
 
+void bit_stream_test_order() {
+  BitStream bs;
+  bs.Write(1, 1);
+  bs.Write(1, 0);
+  bs.Flush();
+  ReverseBitStream rbs(&(bs.Code()[0]), &(bs.Code()[0]) + bs.Code().size());
+  uint32_t i;
+  rbs.Read(2, &i);
+  /*  the next line prints 'i is 1'.  Shows that the first bits written
+      become the lower-order bits.  (This is relevant when writing and reading
+      different-sized chunks).
+  */
+  printf("i is %d\n", (int)i);
+
+}
+
 int main() {
   bit_stream_test_one();
   bit_stream_test_two();
+  bit_stream_test_order();
   printf("Done\n");
 }

@@ -242,7 +242,7 @@ inline void compute_dot_product_flip(int dim,
                          IntScalar<int64_t> *out) {
   assert(dim + a_offset <= a->dim && dim + b_offset <= b->dim);
 
-  int rshift = num_significant_bits(dim);
+  int rshift = num_bits_except_sign(dim);
 
   out->elem = compute_raw_dot_product_shifted<int32_t, int64_t, -1>(
       a->data + a_offset, b->data + b_offset + dim - 1, dim, rshift);

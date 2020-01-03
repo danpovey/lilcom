@@ -38,3 +38,6 @@ lpc_math_test: lpc_math_test.cc lpc_math.cc lpc_math.h int_scalar.h int_vec.h in
 
 bit_stream_test: bit_stream_test.cc bit_stream.h
 	g++ -O0 -Wall -g  bit_stream_test.cc -o bit_stream_test -lm # -ftrapv
+
+int_stream_test: int_stream_test.cc int_stream.h bit_stream.h
+	g++ -O0 -Wall -g  int_stream_test.cc -o int_stream_test -lm # -ftrapv

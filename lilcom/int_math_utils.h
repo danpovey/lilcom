@@ -29,12 +29,17 @@ template <typename I> inline I int_math_abs(I a) {
 /* This header contains some lower-level utilities for integer math, that
    are used in int_math.h/int_math.c (and, a little bit, in lpc_math.h/lpc_math.c). */
 
-/* num_lrsb should not be called for int16, only for int32 and int64;
-   for int16 you can cast to int32.
+/*
+  The lrsb functions return the number of leading redundant sign bits, which is
+  the number of bits following the sign bit that are the same as the sign bit.
 
-   It returns the number of leading redundant sign bits, i.e. the
-   number of bits following the most significant bit that are
-   identical to it.
+  native_lrsb should not be called for int16, only for int32 and int64, as in
+  most cases none of these types will be int16.  For int16 you can cast to
+  int32.
+
+  It returns the number of leading redundant sign bits, i.e. the
+  number of bits following the most significant bit that are
+  identical to it.
 */
 inline int native_lrsb(int i) {
   return __builtin_clrsb(i);
@@ -47,25 +52,75 @@ inline int native_lrsb(long long int i) {
 }
 
 
-/* returns number of leading redundant sign bits (for fixed-size types) */
+/* These overloaded functions return the number of leading redundant sign bits
+ * in the arguments. */
 inline int lrsb(int16_t i) { return native_lrsb((int32_t)i) - 16; }
 inline int lrsb(int32_t i) { return native_lrsb(i); }
 inline int lrsb(int64_t i) { return native_lrsb(i); }
 
+/*
+   The native_clz functions return the number of leading zeros in the argument;
+   HOWEVER, they are undefined for zero input.  (I think this is because of
+   peculiarities/differences between processors).
+   You shouldn't try to call this with uint16, as with most compilers none
+   of these types will be uint16.
+*/
+inline int native_clz(unsigned int i) {
+  return __builtin_clz(i);
+}
+inline int native_clz(unsigned long int i) {
+  return __builtin_clzl(i);
+}
+inline int native_clz(unsigned long long int i) {
+  return __builtin_clzll(i);
+}
+
+
+/* These versions of clz with fixed-size types return the number of leading
+   zeros in the argument, and also give the expected results when the
+   input is zero. */
+inline int clz(uint16_t i) {
+  return i == 0 ? 16 : native_clz((uint32_t)i) - 16;
+}
+inline int clz(uint32_t i) {
+  return i == 0 ? 32 : native_clz(i);
+}
+inline int clz(uint64_t i) {
+  return i == 0 ? 64 : native_clz(i);
+}
+
 
 /*
-  num_significant_bits returns the number of bits (apart from the sign bit), that
-  are required to encode this number.
+  num_significant_bits returns the number of bits (apart from the sign bit),
+  that are required to encode this number, i.e. plus the count of bits from the
+  least significant bit up to to the most significant bit that is different from
+  the sign bit.
 */
-inline int num_significant_bits(int16_t i) {
-  return 31 - lrsb((int32_t)(i));
+inline int num_bits_except_sign(int16_t i) {
+  return 16 - lrsb(i);
 }
-inline int num_significant_bits(int32_t i) {
+inline int num_bits_except_sign(int32_t i) {
   return 31 - lrsb(i);
 }
-inline int num_significant_bits(int64_t i) {
+inline int num_bits_except_sign(int64_t i) {
   return 63 - lrsb(i);
 }
+
+/*
+  Returns the number of bits we'd need to write this number down in binary,
+  i.e. starting from the most significant nonzero digit, to the least.
+ */
+inline int num_bits(uint16_t i) {
+  return 16 - clz(i);
+}
+inline int num_bits(uint32_t i) {
+  return 32 - clz(i);
+}
+inline int num_bits(uint64_t i) {
+  return 64 - clz(i);
+}
+
+
 
 
 inline int extra_bits_from_factor_of(int32_t i) {
@@ -219,7 +274,7 @@ inline int raw_multiply_elements(int dim, const int32_t *a, const int32_t *b,
    Computes sum_{i=0}^{dim-1} (a[i]*b[i]*c[i]) >> prod_rshift
 
    Requires dim % 2 == 0 (could easily get around this).
-   Typically you'll want prod_rshift == num_significant_bits(dim).
+   Typically you'll want prod_rshift == num_bits_except_sign(dim).
  */
 inline int64_t raw_triple_product_a(int dim, const int16_t *a, const int16_t *b,
                                     const int32_t *c) {
@@ -265,7 +320,7 @@ inline int64_t raw_triple_product_a_shifted(int dim, const int16_t *a, const int
    than 2^31, meaning it is representable as an int32.
 
    Requires dim % 2 == 0 (could easily get around this).
-   Typically you'll want prod_rshift == num_significant_bits(dim).
+   Typically you'll want prod_rshift == num_bits_except_sign(dim).
  */
 inline int64_t raw_triple_product_b_shifted(int dim, const int16_t *a, const int32_t *b,
                                             const int32_t *c, int prod_rshift) {

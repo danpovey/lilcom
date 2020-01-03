@@ -284,6 +284,18 @@ void test_safe_shift_array_by() {
   assert(a[0] == 0 && a[2] == 0);
 }
 
+void test_clz() {
+  assert(clz((uint16_t)0) == 16);
+  assert(clz((uint16_t)1) == 15);
+  assert(clz((uint16_t)8) == 12);
+  assert(clz((uint32_t)0) == 32);
+  assert(clz((uint32_t)1) == 31);
+  assert(clz((uint32_t)8) == 28);
+  assert(clz((uint64_t)0) == 64);
+  assert(clz((uint64_t)1) == 63);
+  assert(clz((uint64_t)8) == 60);
+}
+
 }
 
 int main() {
@@ -298,10 +310,17 @@ int main() {
   assert(lrsb(int64_t(0)) == 63);
   assert(lrsb(int64_t(-1)) == 63);
 
-  assert(num_significant_bits(0) == 0);
-  assert(num_significant_bits(1) == 1);
-  assert(num_significant_bits(8) == 4);
-  assert(num_significant_bits(-1) == 0);
+  assert(num_bits_except_sign(0) == 0);
+  assert(num_bits_except_sign(1) == 1);
+  assert(num_bits_except_sign(8) == 4);
+  assert(num_bits_except_sign(-1) == 0);
+
+
+  for (int i = 0; i < 15; i++) {
+    assert(num_bits((uint16_t) (1 << i)) == i + 1);
+    assert(num_bits((uint32_t) (1 << i)) == i + 1);
+    assert(num_bits((uint64_t) (1 << i)) == i + 1);
+  }
 
   assert(extra_bits_from_factor_of(1) == 0);
   assert(extra_bits_from_factor_of(2) == 1);
@@ -329,6 +348,7 @@ int main() {
   test_lrsb_of_prod();
   test_safe_shift_by();
   test_safe_shift_array_by();
+  test_clz();
 
   return 0;
 }
