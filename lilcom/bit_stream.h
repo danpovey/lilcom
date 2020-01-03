@@ -146,7 +146,7 @@ class ReverseBitStream {
       remaining_num_bits += 8;
     }
     *bits_out = remaining_bits & (((uint64_t)1 << num_bits) - 1);
-    //std::cout << "[Read " << *bits_out << " as " << num_bits << " bits.";
+    //std::cout << "[Read " << *bits_out << " as " << num_bits << " bits.]";
     remaining_num_bits_ = remaining_num_bits - num_bits;
     remaining_bits_ = remaining_bits >> num_bits;
     return true;

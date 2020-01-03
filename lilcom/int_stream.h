@@ -32,7 +32,8 @@ class UintStream {
   /*  Constructor */
   UintStream(): most_recent_num_bits_(0),
                 started_(false),
-                flushed_(false) { }
+                flushed_(false),
+                num_pending_zeros_(0) { }
 
 
   /*
@@ -60,7 +61,46 @@ class UintStream {
     assert(!buffer_.empty());  /* check that data has been written. */
     flushed_ = true;
     FlushSome(buffer_.size());
+    if (num_pending_zeros_) {
+      //std::cout << "In Flush():";
+      FlushPendingZeros();
+    }
     bit_stream_.Flush();
+  }
+
+  inline void FlushPendingZeros() {
+    assert(num_pending_zeros_ >= 1);
+    /*
+      This writes the code that dictates how many zeros are in a run of zeros.
+      (this is, of course, after we already got into a situation where
+      the num_bits is zero, which would have been a code '1, then 0' starting
+      from num_bits=1.)
+
+      The code is:
+           1 -> 1 zero, then a 1 [or end of stream]
+           01x -> 2+x zeros, then a 1 [or end of stream].  (could be 2 or 3 zeros)
+           001xx -> 4+xx zeros, then a 1 [or end of stream].  (could be 4,5,6,7 zeros)
+           0001xxx -> 8+xxx zeros, then a 1 [or end of stream]. ...
+              and so on.
+       Note:
+     */
+
+    /* -1 below because we don't need to write the most significant bit. */
+    int num_bits_written = int_math::num_bits(num_pending_zeros_) - 1;
+
+    /* think of the following as writing `num_bits_written` zeros, then
+       a 1. */
+    bit_stream_.Write(num_bits_written + 1, 1 << num_bits_written);
+
+    /* Write `num_pending_zeros_`, except for the top bit.  We couldn't just
+       write num_bits_written zeros, then num_pending_zeros_ in
+       num_bits_written+1 bits, because they'd be in the wrong order; we need
+       the `1` to be first so we can identify where the zeros end.
+     */
+    bit_stream_.Write(num_bits_written,
+                      num_pending_zeros_ & ((1 << num_bits_written) - 1));
+    //std::cout << "In FlushPendingZeros, nz = " << num_pending_zeros_ << "\n";
+    num_pending_zeros_ = 0;
   }
 
   /* Gets the code that was written.  You should not call thes
@@ -146,8 +186,8 @@ class UintStream {
 
         @param [in] prev_num_bits  The num_bits of the previous integer...
                              see ComputeNumBits() for what this means.
-        @param [in] cur_num_bits  The num_bits of the previous 'integer'...
-                             see ComputeNumBits() for what this means.
+        @param [in] cur_num_bits  The num_bits of the current 'integer'...
+                             see ComputeNumBits() for what num_bits means.
                              It will be greater than or equal to num_bits(i).
                              (search int_math_utils.h for num_bits).
         @param [in] next_num_bits  The num_bits for the next integer
@@ -159,8 +199,21 @@ class UintStream {
                         int cur_num_bits,
                         int next_num_bits,
                         uint32_t i) {
+    if (cur_num_bits == 0) {
+      num_pending_zeros_++;
+      /* Nothing is actually written in this case, until FlushPendingZeros()
+         is called.  Since there are 0 bits in this integer, we don't have
+         to write any to encode the actual value.
+      */
+      return;
+    } else {
+      if (num_pending_zeros_)
+        FlushPendingZeros();
+    }
+
+
     /*std::cout << "Called WriteCode: " << prev_num_bits << ", "
-      << cur_num_bits << ", " << next_num_bits << ", " << i << std::endl; */
+      << cur_num_bits << ", " << next_num_bits << ", " << i << std::endl;*/
     assert(int_math::num_bits(i) <= cur_num_bits);
     /* We write things out of order.. we encode the num_bits of the *next* sample
        before the actual value of this sample.  Ths is needed because of how the
@@ -268,6 +321,12 @@ class UintStream {
 
   /* flushed_ will be set when Flush() has been called by the user. */
   bool flushed_;
+
+  /* num_pending_zeros_ has to do with run-length encoding of sequences
+     of 0's. It's the number of zeros in the sequence that we
+     need to write. */
+  uint32_t num_pending_zeros_;
+
 };
 
 
@@ -287,7 +346,8 @@ class ReverseUintStream {
    */
   ReverseUintStream(const int8_t *code,
                     const int8_t *code_memory_end):
-      bit_reader_(code, code_memory_end) {
+      bit_reader_(code, code_memory_end),
+      zero_runlength_(-1) {
     assert(code_memory_end > code);
     uint32_t num_bits;
     bool ans = bit_reader_.Read(5, &num_bits);
@@ -314,26 +374,94 @@ class ReverseUintStream {
   */
   inline bool Read(uint32_t *int_out) {
     int prev_num_bits = prev_num_bits_,
-        cur_num_bits = cur_num_bits_;
+        cur_num_bits = cur_num_bits_,
+        next_num_bits;
     uint32_t bit1, bit2;
-    if (!bit_reader_.Read(1, &bit1))
-      return false;  /* truncated code? */
-    int next_num_bits;
-    if (bit1 == 0) {
-      next_num_bits = cur_num_bits;
-    } else {
-      if (!bit_reader_.Read(1, &bit2))
+
+    /* The following big if/else statement sets next_num_bits. */
+
+    if (cur_num_bits != 0) {  /* the normal case, cur_num_bits > 0 */
+      if (!bit_reader_.Read(1, &bit1))
         return false;  /* truncated code? */
-      if (bit2) {
-        next_num_bits = cur_num_bits + 1;
-        if (next_num_bits > 32)
-          return false;  /* corrupted code? */
+      if (bit1 == 0) {
+        next_num_bits = cur_num_bits;
       } else {
-        next_num_bits = cur_num_bits - 1;
-        if (next_num_bits < 0)
-          return false;  /* corrupted code? */
+        if (!bit_reader_.Read(1, &bit2))
+          return false;  /* truncated code? */
+        if (bit2) {
+          next_num_bits = cur_num_bits + 1;
+          if (next_num_bits > 32)
+            return false;  /* corrupted code? */
+        } else {
+          next_num_bits = cur_num_bits - 1;
+          if (next_num_bits < 0)
+            return false;  /* corrupted code? */
+        }
+      }
+    } else {
+      /* cur_num_bits == 0; this is treated specially. */
+      if (zero_runlength_ >= 0) {
+        /* We have already read the code for the sequence of zeros,
+           and set zero_runlength_; we are in the middle of consuming
+           it. */
+        if (zero_runlength_ == 0) {
+          /* we came to the end of the run and now need to output next_num_bits = 1. */
+          next_num_bits = 1;
+        } else {
+          next_num_bits = 0;
+        }
+        /* note: zero_runlength_ may go to -1 below, which is by design. */
+        zero_runlength_--;
+      } else {
+        /* Assume we have just arrived at the situation where
+           cur_num_bits == 0, i.e. the previous num_bits was 1 and
+           we encountered the code "1, then 0".
+           We have to interpret the following bits to figure out the
+           run-length, i.e. the number of zeros.  The code once we reach
+           the cur_num_bits=0 situation is as follows:
+
+              1 -> 1 zero, then a 1 [or end of stream]
+              01x -> 2+x zeros, then a 1 [or end of stream].  (could be 2 or 3 zeros)
+              001xx -> 4+xx zeros, then a 1 [or end of stream].  (could be 4,5,6,7 zeros)
+              0001xxx -> 8+xxx zeros, then a 1 [or end of stream]. ...
+                and so on.
+
+           Please note that in the explanation above, the binary digits are
+           displayed in the order in which they are written, which is from least
+           to most significant, rather than the way a human would normally write
+           them.
+        */
+        int num_zeros_read = 0;
+        uint32_t bit;
+        while (1) {
+          if (!bit_reader_.Read(1, &bit) || num_zeros_read > 31)
+            return false;  /* truncated or corrupted code? */
+          if (bit == 0)
+            num_zeros_read++;
+          else  /* the bit was 1. */
+            break;
+        }
+        uint32_t x;
+        bit_reader_.Read(num_zeros_read, &x);
+        //std::cout << "Num-zeros-read=" << x << "\n";
+
+        int num_zeros_in_run = (1 << num_zeros_read) + x;
+        /* minus 2 because we already have cur_num_bits == 0,
+           so that's the first zero; then we are about to set
+           next_num_bits, so that's potentially the second zero.
+           If num_zeros_in_run is 1 (the lowest possible value),
+           then zero_runlength_ will be -1, which is intended.
+        */
+        zero_runlength_ = num_zeros_in_run - 2;
+        if (num_zeros_in_run == 1) {
+          /* the next num_bits is 1. */
+          next_num_bits = 1;
+        } else {
+          next_num_bits = 0;
+        }
       }
     }
+
     bool top_bit_redundant = (prev_num_bits <= cur_num_bits &&
                               next_num_bits <= cur_num_bits &&
                               cur_num_bits > 0);
@@ -370,9 +498,18 @@ class ReverseUintStream {
      read from the stream. */
   int cur_num_bits_;
 
+  /*  */
+  std::vector<int> pending_num_bits_;
+  /* the number of 0-bits we've just seen in the stream starting from
+     where the num-bits first became zero (however, this gets reset
+     if we have just encoded a run of zeros
+  */
+  int zero_runlength_;
 };
 
 /*
+  This encodes signed integers (will be effective when the
+  values are close to zero).
  */
 class IntStream: public UintStream {
  public:
@@ -383,8 +520,11 @@ class IntStream: public UintStream {
   }
 };
 
+/*
+  This class is for decoding data encoded by class IntStream.
+ */
 class ReverseIntStream: public ReverseUintStream {
-
+ public:
   ReverseIntStream(const int8_t *code,
                    const int8_t *code_memory_end):
       ReverseUintStream(code, code_memory_end) { }

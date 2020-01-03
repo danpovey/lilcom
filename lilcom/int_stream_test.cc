@@ -36,6 +36,31 @@ void int_stream_test_one() {
 
   {
     UintStream us;
+    us.Write(0);
+    us.Flush();
+    /*
+      OK, when we write 0 we write as follows:
+     -  00000  as the first_num_bits (0 written as 5 bits).  [search for started_ in the code]
+
+     -  1 to indicate that the runlength of zeros was 1.  [since the stream is
+            terminated.  Note: runlength of 2 would be fine too, it doesn't change anything]
+
+    */
+    assert(us.Code().size() == 1 &&
+           us.Code()[0] == (char)32);
+
+
+    ReverseUintStream rus(&(us.Code()[0]),
+                          &(us.Code()[0]) + us.Code().size());
+    uint32_t i;
+    bool ans = rus.Read(&i);
+    assert(ans);
+    assert(i == 0);
+  }
+
+
+  {
+    UintStream us;
     us.Write(17);
     us.Flush();
 
@@ -168,5 +193,5 @@ int main() {
   int_stream_test_one();
   int_stream_test_two();
   int_stream_test_gauss();
-  printf("Done\n");
+  std::cout << "Done\n";
 }
