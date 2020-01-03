@@ -120,9 +120,9 @@ inline float rand_gauss() {
 }
 
 void int_stream_test_gauss() {
-  uint32_t buffer[4096];
+  int32_t buffer[10000];
 
-  for (int stddev = 2; stddev <= 4096; stddev *= 2) {
+  for (int stddev = 2; stddev <= 10000; stddev *= 2) {
     /* Entropy of Gaussian distribution is
           H(x) = 1/2 (1 + log(2 sigma^2 pi))
        since we are integerizing without any scaling, for large
@@ -132,24 +132,34 @@ void int_stream_test_gauss() {
      */
     double sumsq = 0.0;
     float entropy = 0.5 * (1.0 + log(2.0 * stddev * stddev * M_PI));
-    for (int i = 0; i < 4096; i++) {
+    for (int i = 0; i < 10000; i++) {
       float f = rand_gauss() * stddev;
       int f_int = (int)round(f);
-      buffer[i] = (f_int >= 0 ? 2 * f_int : - (2 * f_int) - 1);
+      buffer[i] = f_int;
       sumsq += f_int * (double)f_int;
     }
 
-    std::cout <<  "About to compress; stddev=" << stddev << " (measured=" << (float)(sqrtf(sumsq / 4096))
+    std::cout <<  "About to compress; stddev=" << stddev << " (measured=" << (float)(sqrtf(sumsq / 10000))
               << "), theoretical entropy in base-2 (i.e. min bits per sample) is " <<
         (entropy / log(2.0)) << "\n";
 
-    UintStream us;
-    for (int i = 0; i < 4096; i++) {
-      us.Write(buffer[i]);
+    IntStream is;
+    for (int i = 0; i < 10000; i++) {
+      is.Write(buffer[i]);
     }
-    us.Flush();
-    size_t num_bits = us.Code().size() * 8;
-    std::cout << "Actual bits per sample was " << (num_bits * 1.0 / 4096) << "\n";
+    is.Flush();
+
+
+    ReverseIntStream ris(&(is.Code()[0]),
+                         &(is.Code()[0]) + is.Code().size());
+    for (int i = 0; i < 10000; i++) {
+      int32_t r;
+      bool ans = ris.Read(&r);
+      assert(ans);
+      assert(r == buffer[i]);
+    }
+    size_t num_bits = is.Code().size() * 8;
+    std::cout << "Actual bits per sample was " << (num_bits * 1.0 / 10000) << "\n";
   }
 }
 
