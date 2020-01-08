@@ -147,7 +147,7 @@ inline float rand_gauss() {
 void int_stream_test_gauss() {
   int32_t buffer[10000];
 
-  for (int stddev = 2; stddev <= 10000; stddev *= 2) {
+  for (int stddev = 1; stddev <= 10000; stddev *= 2) {
     /* Entropy of Gaussian distribution is
           H(x) = 1/2 (1 + log(2 sigma^2 pi))
        since we are integerizing without any scaling, for large

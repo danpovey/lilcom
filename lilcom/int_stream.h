@@ -538,6 +538,130 @@ class ReverseIntStream: public ReverseUintStream {
       return true;
     }
   }
+};
+
+
+/* class Truncation operates on a stream of ints and tells us how much
+   to truncate them, based on a user-specified configuration.  (The idea
+   is that this operates on an audio stream, and tells us how many of
+   the least significant bits to remove depending on the current
+   volume of the residual).
+
+   The number of bits to truncate is always determined by previously
+   decoded samples, so it does not have to be transmitted (once the
+   configuration values of this class are known).
+*/
+class Truncation {
+
+  /*
+    Construtor.
+
+
+     @param [in] num_significant_bits
+           This is the number of significant bits we'll use FOR QUIET SOUNDS.
+           (We may use more for loud sounds, see alpha).  Specifically: we will
+           only start truncating once the rms value of the input exceeds
+           num_significant_bits.  Must be > 2.
+     @param [in] alpha
+
+           Alpha, which must be in the range [3..64], determines how many more
+           significant bits we will allocate as the sound gets louder.
+           The rule is as follows: suppose `energy` is the average energy
+           per sample of the signal, and `num_bits(energy)` is the number of
+           bits in it (see int_math::num_bits())... we will
+           compute the number of bits to truncate (`bits_to_truncate`) as
+           follows:
+
+              # note: extra_bits is the number of extra bits in the energy above
+              # what it would be if the rms value of the signal was equal to
+              # `num_significant_bits`.  If we remove extra_bits/2 bits from the
+              # signal, we'll get about `num_significant_bits` significant bits
+              # remaining.
+
+              extra_bits = num_bits(energy) - (2*num_significant_bits)
+
+              bits_to_truncate = extra_bits/2 - extra_bits/alpha
+
+           If alpha is large (e.g. 64) then extra_bits/alpha will always be
+           zero and we'll have about `num_significant_bits`
+           bits in the signal.  If alpha is very small (e.g. 4), the
+           number of significant bits will rise rapidly as the signal
+           gets louder.  You will probably want to tune alpha
+           (and block_size, which is the size of the block from which
+           the average energy is computed) based on perceptual
+           considerations.
+   */
+  Truncator(int num_significant_bits,
+            int alpha,
+            int block_size):
+      num_significant_bits_(num_significant_bits),
+      block_size_(block_size),  /* e.g. 32 */
+      count_(0),
+      truncated_bits_(0) { }
+
+  /* This function will return the current number of bits to truncate (while
+     compressing) or the number of bits that have been truncated (while
+     decompressing). */
+  int GetNumTruncatedBits() const {
+    return num_truncated_bits_;
+  }
+
+  /**
+     This function is to be called in sequence for each integer in the stream
+     (after GetNumTruncatedBits(), because you'll need that to get the input).
+
+     It updates the state of this object, which will eventually have the
+     effect of updating the number of bits to truncate.
+
+       @param [in] i   The element of the stream AFTER TRUNCATION, i.e.
+                    the value that would be written to the stream.
+                    It would have to be shifted left by num_truncated_bits_
+                    to get the actual signal value.
+                    CAUTION: although i_truncated is of type int32_t you
+                    are not allowed to use the full range of int32_t:
+                    specifically, i_truncated * block_size_ must still
+                    be representable as int32_t.  (This is no problem
+                    for our applications, as block_size will be small,
+                    e.g. 32 bits, and the elements of the stream will
+                    have either max 17 bits (for residuals of a 16-bit
+                    stream) or 25 bits (for residuals of a 24-bit
+                    stream, which is not implemented yet).
+   */
+  void Step(int32_t i_truncated) {
+    count_++;
+    sumsq_ += i_truncated * (int64_t)i_truncated;
+
+    if (count_ == block_size_)
+      Update();
+  }
+
+ private:
+  void Update() {
+
+  }
+
+
+  int num_truncated_bits_;
+  int block_size_;
+
+  /* count_ is the number of */
+  int count_;
+  int64_t sumsq_;
+
+};
+
+class TruncatedIntStream: public IntStream {
+ public:
+  /* e.g. num_significant_bits = 5, 6, 7, 8 depending on desired quality;
+     block_size might be 32 for instance. */
+  TruncatedIntStream(int num_significant_bits,
+                     int block_size):
+      num_significant_bits_(num_significant_bits),
+      block_size_(block_size),  /* e.g. 32 */
+      count_(0),
+      truncated_bits_(0) { }
+
+
 
 };
 
