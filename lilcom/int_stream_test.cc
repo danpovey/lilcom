@@ -4,14 +4,14 @@
 
 
 
-void int_stream_test_one() {
+void uint_stream_test_one() {
   {
     UintStream us;
     us.Write(1);
     us.Flush();
     /*
-      OK, when we write 1 we write as follows:
-     -  00001  as the first_num_bits (1 written as 5 bits).  [search for started_ in the code]
+      OK, when we write [ 1 ], i.e. a stream with just 1 in it, we write as follows:
+     -  00001 as the first_num_bits (a 1 written as 5 bits).  [search for started_ in the code]
 
      - 0 to indicate that the num_bits following the first num_bits is also 1.
         [i.e. unchanged.]  Search for "assert(delta_num_bits == 0);" to see where
@@ -144,6 +144,69 @@ inline float rand_gauss() {
       cosf(2 * M_PI * rand_uniform());
 }
 
+void truncated_int_stream_test() {
+  int input[500],
+      compressed_input[500];
+
+
+  for (int num_ints = 1; num_ints < 500; num_ints+= (1 + num_ints / 4)) {
+
+    int num_significant_bits = 3 + num_ints % 28,
+        alpha = 3 + (num_ints % 62),
+        block_size = 2 << (num_ints % 10);
+    TruncationConfig config(num_significant_bits,
+                            alpha, block_size);
+
+    for (int n = 0; n < 20; n++) {  /* multiple tries for each size.. */
+      int64_t error_sumsq = 0, data_sumsq = 0;
+
+      TruncatedIntStream tis(config);
+      for (int i = 0; i < num_ints; i++) {
+        int32_t r = (int)(rand_gauss() * 1000);
+        input[i] = r;
+        int32_t r_compressed;
+        tis.Write(r, &r_compressed);
+        //std::cout << "r_compressed = " << r_compressed << "\n";
+        compressed_input[i] = r_compressed;
+
+        error_sumsq += (r - r_compressed) * (r - r_compressed);
+        data_sumsq += r * r;
+      }
+      std::cout << " For nsb=" << num_significant_bits
+                << ", num_ints=" << num_ints
+                << ", alpha=" << alpha
+                << ", block-size=" << block_size
+                << ": avg-data=" << (sqrt(data_sumsq * 1.0 / num_ints))
+                << ": avg-compression-error=" << (sqrt(error_sumsq * 1.0 / num_ints))
+                << std::endl;
+
+      tis.Flush();
+      ReverseTruncatedIntStream rtis(config,
+                                     &(tis.Code()[0]),
+                                     &(tis.Code()[0]) + tis.Code().size());
+
+
+      for (int i = 0; i < num_ints; i++) {
+        int32_t r;
+        bool ans = rtis.Read(&r);
+        assert(ans);
+        if (r != compressed_input[i]) {
+          std::cout << "Failure, " << r << " != " << compressed_input[i] << "\n";
+          exit(1);
+        }
+      }
+      for (int i = 0; i < 8; i++) {
+        int32_t r;
+        rtis.Read(&r);  /*these should mostly fail. */
+      }
+      int32_t r;
+      assert(!rtis.Read(&r));  /* we have now definitely overflowed,
+                                  so this will definitely fail. */
+    }
+  }
+}
+
+
 void int_stream_test_gauss() {
   int32_t buffer[10000];
 
@@ -190,8 +253,9 @@ void int_stream_test_gauss() {
 
 
 int main() {
-  int_stream_test_one();
+  uint_stream_test_one();
   int_stream_test_two();
   int_stream_test_gauss();
+  truncated_int_stream_test();
   std::cout << "Done\n";
 }

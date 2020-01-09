@@ -62,7 +62,6 @@ class UintStream {
     flushed_ = true;
     FlushSome(buffer_.size());
     if (num_pending_zeros_) {
-      //std::cout << "In Flush():";
       FlushPendingZeros();
     }
     bit_stream_.Flush();
@@ -99,7 +98,6 @@ class UintStream {
      */
     bit_stream_.Write(num_bits_written,
                       num_pending_zeros_ & ((1 << num_bits_written) - 1));
-    //std::cout << "In FlushPendingZeros, nz = " << num_pending_zeros_ << "\n";
     num_pending_zeros_ = 0;
   }
 
@@ -518,6 +516,9 @@ class IntStream: public UintStream {
   inline void Write(int32_t value) {
     UintStream::Write(value >= 0 ? 2 * value : -(2 * value) - 1);
   }
+
+  /* Flush() and Code() are inherited from class IntStream. */
+
 };
 
 /*
@@ -541,18 +542,8 @@ class ReverseIntStream: public ReverseUintStream {
 };
 
 
-/* class Truncation operates on a stream of ints and tells us how much
-   to truncate them, based on a user-specified configuration.  (The idea
-   is that this operates on an audio stream, and tells us how many of
-   the least significant bits to remove depending on the current
-   volume of the residual).
 
-   The number of bits to truncate is always determined by previously
-   decoded samples, so it does not have to be transmitted (once the
-   configuration values of this class are known).
-*/
-class Truncation {
-
+struct TruncationConfig {
   /*
     Construtor.
 
@@ -590,19 +581,59 @@ class Truncation {
            (and block_size, which is the size of the block from which
            the average energy is computed) based on perceptual
            considerations.
-   */
-  Truncator(int num_significant_bits,
-            int alpha,
-            int block_size):
-      num_significant_bits_(num_significant_bits),
-      block_size_(block_size),  /* e.g. 32 */
+
+           Note: alpha=4 would mean that if we multiply the signal by 2^n,
+           the number of bits in the truncated signal would increase by 2^(n/2).
+      @param [in] block_size        Size of blocks; on each block we potentially
+           change the number of bits to truncate, based on a re-estimated local
+           magnitude of the integers to be coded.  On each block, the sum-squared
+           statistics are divided by 2, so the block size also dictates how fast
+           these stats decay.
+  */
+  TruncationConfig(
+      int num_significant_bits,
+      int alpha,
+      int block_size):
+      num_significant_bits(num_significant_bits),
+      alpha(alpha),
+      block_size(block_size) { }
+
+  bool IsValid() {
+    return (num_significant_bits > 2 && alpha >= 3 && alpha <= 64 &&
+            block_size > 1 && block_size < 10000);
+  }
+  TruncationConfig(const TruncationConfig &other):
+      num_significant_bits(other.num_significant_bits),
+      alpha(other.alpha),
+      block_size(other.block_size) { }
+
+  int num_significant_bits;
+  int alpha;
+  int block_size;
+};
+
+
+/* class Truncation operates on a stream of int32_t and tells us how much
+   to truncate them, based on a user-specified configuration.  (The idea is that
+   it will tell us how many of the least significant bits to remove depending
+   on the current volume of the residual).
+
+   The number of bits to truncate is always determined by previously
+   decoded samples, so it does not have to be transmitted (once the
+   configuration values of this class are known).
+*/
+class Truncation {
+ public:
+  Truncation(const TruncationConfig &config):
+      config_(config),
       count_(0),
-      truncated_bits_(0) { }
+      sumsq_(0),
+      num_truncated_bits_(0) { }
 
   /* This function will return the current number of bits to truncate (while
      compressing) or the number of bits that have been truncated (while
      decompressing). */
-  int GetNumTruncatedBits() const {
+  int NumTruncatedBits() const {
     return num_truncated_bits_;
   }
 
@@ -631,40 +662,145 @@ class Truncation {
     count_++;
     sumsq_ += i_truncated * (int64_t)i_truncated;
 
-    if (count_ == block_size_)
+    if (count_ == config_.block_size)
       Update();
   }
 
- private:
-  void Update() {
 
+  inline static int32_t Truncate(int32_t value, int num_truncated_bits) {
+    //std::cout << " Truncating " << value << " to " << (value >> num_truncated_bits);
+    return value >> num_truncated_bits;
+  }
+  inline static int32_t Restore(int32_t truncated_value,
+                                int num_truncated_bits) {
+    /* The extra term below, + (1 << (num_truncated_bits - 1)) : 0),
+       is to split the difference when restoring it, i.e. to use
+       the middle of the range of where the number could have been.
+
+       [Note: this argument only applies exactly only in the limit where
+       num_truncated_bits is large; for small values, e.g. num_truncated_bits=2,
+       it's less exact.]
+     */
+    int32_t ans = (truncated_value << num_truncated_bits) +
+        (num_truncated_bits - 1 > 0 ? (1 << (num_truncated_bits - 1)) : 0);
+
+    return ans;
   }
 
+ private:
+  /*
+    Updates the state of this object.  (Called when
+    count_ == block_size_.
+   */
+  void Update() {
+    assert(count_ == config_.block_size);
 
-  int num_truncated_bits_;
-  int block_size_;
+    /* nbits_sq is the number of bits in the variance of the signal.
 
-  /* count_ is the number of */
+       We divide by (2*block_size_), treating it as the number of points
+       in the variance stats.  (We decay the stats by 1/2 each time, so
+       2*block_size_ should be understood as:
+       block_size_ + block_size_/2 + block_size_/4 + .... ).
+
+       We have to add 2*num_truncated_bits_ because we actually store the
+       variance of the numbers *after truncation*.  And the numbers are
+       squared, hence the factor of 2.
+    */
+    int nbits_sq = int_math::num_bits(sumsq_ / (2*config_.block_size)) +
+                 (2*num_truncated_bits_),
+        extra_bits = nbits_sq - (2*config_.num_significant_bits);
+    int num_truncated_bits;  /* will be new value of num_truncated_bits_ */
+    if (extra_bits <= 0) {
+      num_truncated_bits = 0;
+    } else {
+      num_truncated_bits = extra_bits / 2 - extra_bits / config_.alpha;
+    }
+    /*
+      To understand the following, first imagine the +1 and -1 were
+      not there.   In that case, it shifts sumsq_ by twice the
+      difference between num_truncated_bits and num_truncated_bits_,
+      because we compute the variance after the truncation (so we
+      need to keep the old part of the stats consistent); we shift
+      to match the new representation of the stats.
+
+      The +- 1 can be understood as one extra right-shift, introduced
+      in order to decay the variance stats by a factor of 2 each time.
+     */
+    if (2*num_truncated_bits + 1 > 2*num_truncated_bits_) {
+      sumsq_ >>= (2*num_truncated_bits + 1 - 2*num_truncated_bits_);
+    } else {
+      /* The cast to uint32_t is to suppress warnings about arithmetic
+         left shift not being defined. */
+      sumsq_ = ((uint32_t)sumsq_ << (2*num_truncated_bits_ - 1 - 2*num_truncated_bits));
+    }
+    num_truncated_bits_ = num_truncated_bits;
+    count_ = 0;
+    sumsq_ = 0;
+  }
+  TruncationConfig config_;
+
+  /* count_ is the number of samples in this block; once is reaches block_size_,
+     we recompute num_truncated_bits_, decay the sumsq_ stats, and reset the
+     count to 0.
+  */
   int count_;
-  int64_t sumsq_;
+  uint64_t sumsq_;
 
+  /* number of truncated bits (output) */
+  int num_truncated_bits_;
 };
 
-class TruncatedIntStream: public IntStream {
+/*
+  class TruncatedIntStream is a lossy version of IntStream, where the least
+  significant bits may not be written.  The interface is slightly different
+  because the prediction code needs to know what the value would look like
+  after being decompressed (which may not be the same as the input).
+ */
+class TruncatedIntStream: public IntStream, private Truncation {
  public:
-  /* e.g. num_significant_bits = 5, 6, 7, 8 depending on desired quality;
-     block_size might be 32 for instance. */
-  TruncatedIntStream(int num_significant_bits,
-                     int block_size):
-      num_significant_bits_(num_significant_bits),
-      block_size_(block_size),  /* e.g. 32 */
-      count_(0),
-      truncated_bits_(0) { }
+  /* Please see constructor of class Truncation for the meaning of the configuration
+     values accepted by the constructor.
+  */
+  TruncatedIntStream(const TruncationConfig &config):
+      IntStream(),
+      Truncation(config) { }
 
+  inline void Write(int32_t value, int32_t *decompressed_value) {
+    int num_truncated_bits = NumTruncatedBits();
+    int32_t truncated_value = Truncate(value, num_truncated_bits);
+    *decompressed_value = Restore(truncated_value, num_truncated_bits);
+    IntStream::Write(truncated_value);
+    /* Update the truncation base-class, which keeps NumTruncatedBits() up to
+       date. */
+    Step(truncated_value);
+  }
 
+  /* Flush() and Code() are inherited from class UintStream (and ultimately,
+   * from IntStream). */
 
 };
 
+class ReverseTruncatedIntStream: public ReverseIntStream, private Truncation {
+ public:
+  /* Please see constructor of class Truncation for the meaning of the configuration
+     values accepted by the constructor.
+  */
+  ReverseTruncatedIntStream(const TruncationConfig &config,
+                            const int8_t *code,
+                            const int8_t *code_memory_end):
+      ReverseIntStream(code, code_memory_end),
+      Truncation(config) { }
+
+  inline bool Read(int32_t *value) {
+    int32_t truncated_value;
+    if (! ReverseIntStream::Read(&truncated_value))
+      return false;
+    int num_truncated_bits = NumTruncatedBits();
+    Step(truncated_value);
+    *value = Restore(truncated_value, num_truncated_bits);
+    return true;
+  }
+};
 
 
 #endif /* LILCOM_INT_STREAM_H_ */

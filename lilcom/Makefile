@@ -20,10 +20,6 @@ lilcom: lilcom.c lilcom.h bit_packer.c bit_packer.h encoder.c encoder.h lilcom_c
 fixed_math: fixed_math.c
 	g++ -O0 -Wall -g -o fixed_math -DFIXED_MATH_TEST=1 fixed_math.c -o fixed_math -lm # -ftrapv
 
-
-prediction_math: prediction_math.c fixed_math.c prediction_math.h fixed_math.h
-	g++ -O0 -Wall -g  -DPREDICTION_MATH_TEST=1 fixed_math.c prediction_math.c -o prediction_math -lm # -ftrapv
-
 int_math_utils_test: int_math_utils_test.cc int_math_utils.h
 	g++ -O0 -Wall -g  int_math_utils_test.cc -o int_math_utils_test -lm # -ftrapv
 
