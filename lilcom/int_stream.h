@@ -589,27 +589,38 @@ struct TruncationConfig {
            magnitude of the integers to be coded.  On each block, the sum-squared
            statistics are divided by 2, so the block size also dictates how fast
            these stats decay.
+     @param [in] first_block_correction  Number of extra bits used to encode the first
+           block.  This number will be halved on each block after that, until
+           it is zero.  E.g. 5 is suitable.  The idea is that we need to compensate
+           for the fact that on the first block we have lpc coeffs = 0 which means
+           zero predictions, and on the second block the prediction won't be as
+           good as usual because we won't have enough stats available.
   */
   TruncationConfig(
       int num_significant_bits,
       int alpha,
-      int block_size):
+      int block_size,
+      int first_block_correction = 5):
       num_significant_bits(num_significant_bits),
       alpha(alpha),
-      block_size(block_size) { }
+      block_size(block_size),
+      first_block_correction(first_block_correction) { }
 
   bool IsValid() const {
     return (num_significant_bits > 2 && alpha >= 3 && alpha <= 64 &&
-            block_size > 1 && block_size < 10000);
+            block_size > 1 && block_size < 10000 &&
+            first_block_correction >= 0);
   }
   TruncationConfig(const TruncationConfig &other):
       num_significant_bits(other.num_significant_bits),
       alpha(other.alpha),
-      block_size(other.block_size) { }
+      block_size(other.block_size),
+      first_block_correction(other.first_block_correction) { }
 
   int num_significant_bits;
   int alpha;
   int block_size;
+  int first_block_correction;
 };
 
 
@@ -628,6 +639,7 @@ class Truncation {
       config_(config),
       count_(0),
       sumsq_(0),
+      first_block_correction_(2 * config.first_block_correction),
       num_truncated_bits_(0) { }
 
   /* This function will return the current number of bits to truncate (while
@@ -705,10 +717,21 @@ class Truncation {
        We have to add 2*num_truncated_bits_ because we actually store the
        variance of the numbers *after truncation*.  And the numbers are
        squared, hence the factor of 2.
+
+       extra_bits is, if positive, equal to double the amount by which the
+       [num-bits required to encode the signal exactly] exceeds the target
+       number of bits.  This will be halved (if alpha is large, or
+       decreased by more than that if alpha is small) and will become
+       the number of bits to truncate.
     */
     int nbits_sq = int_math::num_bits(sumsq_ / (2*config_.block_size)) +
                  (2*num_truncated_bits_),
-        extra_bits = nbits_sq - (2*config_.num_significant_bits);
+        extra_bits = nbits_sq - (2*config_.num_significant_bits) -
+        first_block_correction_;
+    /* first_block_correction will quickly become zero. */
+    first_block_correction_ /= 2;
+
+
     int num_truncated_bits;  /* will be new value of num_truncated_bits_ */
     if (extra_bits <= 0) {
       num_truncated_bits = 0;
@@ -744,7 +767,23 @@ class Truncation {
      count to 0.
   */
   int count_;
+
+  /*
+    sumsq_ is the sum of squares of the (already-truncated) values we're encoding,
+    for this block plus the previous block's sumsq_ multiplied by 1/2.
+    (This is after correcting for differences in num_truncated_bits_; see the
+    code in Update() for more explanation).
+   */
   uint64_t sumsq_;
+
+
+  /* first_block_correction_ starts out as 2 * config_.first_block_correction
+     and gets halved on each block until it reaches zero.  It is to ensure we
+     can encode the first block with enough accuracy, since the LPC coefficients
+     will be zero for that block.  The factor of 2 is because we add it in at
+     the stage when we are dealing with squares of values (sumsq_).
+  */
+  int first_block_correction_;
 
   /* number of truncated bits (output) */
   int num_truncated_bits_;
