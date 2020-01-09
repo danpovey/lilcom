@@ -57,12 +57,15 @@ class InvalidParamsError: public std::runtime_error {
   InvalidParamsError(const std::string &str): runtime_error(str) { }
 };
 
-class ToeplitzLpcEstimator {
- public:
-  /* Constructor raises InvalidParamsError if eta_inv is too small
-     compared to the block size.
+
+/* Configuration class for linear prediction. */
+struct LpcConfig {
+  /*
          @param [in]  lpc_order   The LPC order, i.e. the number of LPC
-                          coefficients we are estimating
+                          coefficients we are estimating.  E.g. somewhere
+                          in the range [4, 32].  Larger values will give better
+                          compression but will be slower, both when compressing
+                          and decompressing.
          @param [in]  block_size  The block size, determines how frequently
                           the LPC coefficients are updated.   Should probably
                           not be less than the LPC order, as that could make
@@ -90,33 +93,60 @@ class ToeplitzLpcEstimator {
                           of autocorr[0], relevant only for zero signals.
                           E.g. suggest -33, corresponding to 10^-10.
   */
-  ToeplitzLpcEstimator(int lpc_order,
-                       int block_size,
-                       int eta_inv,
-                       int diag_smoothing_power,  /* e.g. -23 ~ 10^-7 */
-                       int abs_smoothing_power):  /* e.g. -33 ~ 10^-10 */
-      lpc_order_(lpc_order),
-      block_size_(block_size),
-      temp64_(lpc_order),
-      temp32_a_(lpc_order),
-      temp32_b_(lpc_order),
-      deriv_(lpc_order),
-      autocorr_final_(lpc_order) {
-    assert(block_size % 2  == 0);
-    assert(eta_inv >= 3 * lpc_order);
+  LpcConfig(int lpc_order,
+            int block_size,
+            int eta_inv,
+            int diag_smoothing_power,
+            int abs_smoothing_power):
+      lpc_order(lpc_order),
+      block_size(block_size),
+      eta_inv(eta_inv),
+      diag_smoothing_power(diag_smoothing_power),
+      abs_smoothing_power(abs_smoothing_power) {
+  }
+  LpcConfig(): lpc_order(16), block_size(32), eta_inv(128),
+               diag_smoothing_power(-23), abs_smoothing_power(-33) { }
+
+  LpcConfig(const LpcConfig &other):
+      lpc_order(other.lpc_order), block_size(other.block_size),
+      eta_inv(other.eta_inv), diag_smoothing_power(other.diag_smoothing_power),
+      abs_smoothing_power(other.abs_smoothing_power) { }
+  bool IsValid() {
+    return (block_size % 2 == 0 &&
+            eta_inv >= 3 * lpc_order &&
+            diag_smoothing_power < 0 &&
+            abs_smoothing_power < 0);
+  }
+  int lpc_order;
+  int block_size;
+  int eta_inv;
+  int diag_smoothing_power;
+  int abs_smoothing_power;
+};
+
+
+class ToeplitzLpcEstimator {
+ public:
+  ToeplitzLpcEstimator(const LpcConfig &config):
+      config_(config),
+      temp64_(config.lpc_order),
+      temp32_a_(config.lpc_order),
+      temp32_b_(config.lpc_order),
+      deriv_(config.lpc_order),
+      autocorr_final_(config.lpc_order) {
 
     /* The following will zero these values, which is all the initialization
        we need. */
-    autocorr_[0].resize(lpc_order);
-    autocorr_[1].resize(lpc_order);
-    lpc_coeffs_[0].resize(lpc_order);
-    lpc_coeffs_[1].resize(lpc_order);
+    autocorr_[0].resize(config.lpc_order);
+    autocorr_[1].resize(config.lpc_order);
+    lpc_coeffs_[0].resize(config.lpc_order);
+    lpc_coeffs_[1].resize(config.lpc_order);
 
-    assert(diag_smoothing_power < 0 && abs_smoothing_power < 0);
-    init_as_power_of_two(diag_smoothing_power, &diag_smoothing_);
-    init_as_power_of_two(abs_smoothing_power, &abs_smoothing_);
 
-    InitEta(eta_inv);
+    init_as_power_of_two(config.diag_smoothing_power, &diag_smoothing_);
+    init_as_power_of_two(config.abs_smoothing_power, &abs_smoothing_);
+
+    InitEta(config.eta_inv);
   }
 
 
@@ -216,8 +246,7 @@ class ToeplitzLpcEstimator {
    */
   void ApplyAutocorrSmoothing();
 
-  int lpc_order_;
-  int block_size_;
+  LpcConfig config_;
   IntScalar<int32_t> diag_smoothing_;
   IntScalar<int32_t> abs_smoothing_;
   /* needed or not? */

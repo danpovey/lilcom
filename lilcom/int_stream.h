@@ -598,7 +598,7 @@ struct TruncationConfig {
       alpha(alpha),
       block_size(block_size) { }
 
-  bool IsValid() {
+  bool IsValid() const {
     return (num_significant_bits > 2 && alpha >= 3 && alpha <= 64 &&
             block_size > 1 && block_size < 10000);
   }

@@ -55,8 +55,9 @@ void test_lpc_est_compare() {
      need the LPC coeffs to compute the remaining 5 elements. */
   int32_t residual[] = { 1, 2, 3, 4, 5, 6, 0, 0, 0, 0, 0, 0 };
 
-  ToeplitzLpcEstimator lpc(order, block_size, eta_inv,
-                           diag_smoothing_power, abs_smoothing_power);
+  LpcConfig config(order, block_size, eta_inv,
+                   diag_smoothing_power, abs_smoothing_power);
+  ToeplitzLpcEstimator lpc(config);
 
   int parity = 0;
   lpc.AcceptBlock(parity, signal + order, residual);
@@ -79,6 +80,7 @@ void test_lpc_est_compare() {
     residual[t] = residual_t;
     std::cout << residual_t << ' ';
   }
+  std::cout << std::endl;
   lpc.AcceptBlock(parity, signal + order + block_size, residual + block_size);
 
   std::cout << "After second block, autocorr = "

@@ -94,7 +94,7 @@ void toeplitz_solve(const IntVec<int32_t> *autocorr,
 
 
 void ToeplitzLpcEstimator::InitEta(int eta_inv_int) {
-  int N = lpc_order_, B = block_size_;
+  int N = config_.lpc_order, B = config_.block_size;
 
   {  /* set eta = 1 - 1/eta_inv  =  (eta_inv - 1) / eta_inv. */
     assert(eta_inv_int > 1);
@@ -154,8 +154,9 @@ void ToeplitzLpcEstimator::InitEta(int eta_inv_int) {
 
 void ToeplitzLpcEstimator::AcceptBlock(
     int parity, const int16_t *x, const int32_t *residual) {
-  int other_parity = !parity,
-      x_nrsb = array_lrsb(x - lpc_order_, lpc_order_ + block_size_);
+  int lpc_order = config_.lpc_order, block_size = config_.block_size,
+      other_parity = !parity,
+      x_nrsb = array_lrsb(x - lpc_order, lpc_order + block_size);
   /* The following sets autocorr_[parity] */
   UpdateAutocorrStats(parity, x, x_nrsb);
   /* The following sets deriv_ */
@@ -186,7 +187,7 @@ void ToeplitzLpcEstimator::AcceptBlock(
   if (lpc_coeffs_[parity].exponent > 0) {
     assert(!(lpc_coeffs_[parity].exponent > lpc_coeffs_[parity].nrsb) &&
            "LPC coefficients should not be able to get this large!");
-    for (int i = 0; i < lpc_order_; i++)
+    for (int i = 0; i < config_.lpc_order; i++)
       lpc_coeffs_[parity].data[i] <<= lpc_coeffs_[parity].exponent;
     lpc_coeffs_[parity].exponent = 0;
   }
@@ -204,7 +205,7 @@ void ToeplitzLpcEstimator::ApplyAutocorrSmoothing() {
 
 
 inline const int32_t *ToeplitzLpcEstimator::GetEtaPowersStartingAt(int n) const {
-  assert(n - block_size_ > 1 && eta_odd_powers_.dim == eta_even_powers_.dim);
+  assert(n - config_.block_size > 1 && eta_odd_powers_.dim == eta_even_powers_.dim);
   int start_index = eta_odd_powers_.dim - (n / 2);
   assert(start_index >= 0);
   if (n % 2 == 1) {
@@ -218,7 +219,7 @@ void ToeplitzLpcEstimator::UpdateAutocorrStats(
     int parity, const int16_t *x, int x_nrsb) {
   int other_parity = (~parity & 1);
 
-  int N = lpc_order_, B = block_size_;
+  int N = config_.lpc_order, B = config_.block_size;
   /* Python code for updating autocorrelation could be written
      as follows (Note, block-size B == S-N in the python code)
 
@@ -278,7 +279,7 @@ void ToeplitzLpcEstimator::UpdateAutocorrStats(
 void ToeplitzLpcEstimator::ComputeDeriv(
     int parity, const int16_t *x, int x_nrsb,
     const int32_t *residual) {
-  int N = lpc_order_, B = block_size_,
+  int N = config_.lpc_order, B = config_.block_size,
       B_extra_bits = extra_bits_from_factor_of(B);
 
   /* Python code would be:
@@ -300,7 +301,7 @@ void ToeplitzLpcEstimator::ComputeDeriv(
   if (deriv_right_shift_needed > 0) {
     /* compute a more exact version of deriv_right_shift_needed, as it might
        affect the result.. */
-    int residual_nrsb = array_lrsb(residual, block_size_);
+    int residual_nrsb = array_lrsb(residual, B);
     /* The easiest way to see that the following is correct is to compare with
        the expression for autocorr_right_shift_needed in UpdateAutocorrStats(),
        with (residual_nrsb - 16) standing in for the other x_nrsb.  (You can see
@@ -347,7 +348,7 @@ void ToeplitzLpcEstimator::GetAutocorrReflected(const int16_t *x) {
       for k in range(1, lpc_order):
          ans[k] = 0.5 * np.dot(self.x[-k:], np.flip(self.x[-k:])) * self._get_eta_power(k+1)
   */
-  int N = lpc_order_, B = block_size_;
+  int N = config_.lpc_order, B = config_.block_size;
   temp64_.data[0] = 0;
   int nrsb = 64;
   for (int k = 1; k < N; k++) {
