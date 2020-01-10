@@ -132,33 +132,22 @@ class ToeplitzLpcEstimator {
       temp64_(config.lpc_order),
       temp32_a_(config.lpc_order),
       temp32_b_(config.lpc_order),
+      autocorr_(config.lpc_order),
       deriv_(config.lpc_order),
-      autocorr_final_(config.lpc_order) {
-
-    /* The following will zero these values, which is all the initialization
-       we need. */
-    autocorr_[0].resize(config.lpc_order);
-    autocorr_[1].resize(config.lpc_order);
-    lpc_coeffs_[0].resize(config.lpc_order);
-    lpc_coeffs_[1].resize(config.lpc_order);
-
-
+      autocorr_final_(config.lpc_order),
+      lpc_coeffs_(config.lpc_order) {
     init_as_power_of_two(config.diag_smoothing_power, &diag_smoothing_);
     init_as_power_of_two(config.abs_smoothing_power, &abs_smoothing_);
-
     InitEta(config.eta_inv);
   }
 
 
   /**
      The user should call this function to update the stats in this object and
-     do one iteration of update.  The LPC coefficients in lpc_coeffs_[parity]
-     will be updated.
-
-         @param [in] parity   Must be zero or one.  The parity of the block index.
-                       This is used to enable backtracking (so we can remember
-                       the previous state if it becomes necessary to re-do the
-                       estimation of a block)
+     do one iteration of update.  The LPC coefficients in lpc_coeffs_ will be
+     updated, as well as the autocorrelation stats in autocorr_.  (Other members
+     of this class which are updated inside here won't be read in future, so can
+     be considered as temporaries).
 
          @param [in] x Pointer to start of the signal for this block (x in the math),
                        together with some preceding context.  Elements
@@ -172,37 +161,29 @@ class ToeplitzLpcEstimator {
                        as int32_t to cover the general case.  This is, of
                        course, expected to be the residual after applying
                        the previously estimated LPC coefficients, as
-                       obtained from GetLpcCoeffsForBlock(parity).
+                       obtained from GetLpcCoeffs();
 
       This code is similar to ToeplitzLpcEstimator.accept_block in
       ../test/linear_prediction.py
    */
-  void AcceptBlock(int parity, const int16_t *x, const int32_t *residual);
-
-
+  void AcceptBlock(const int16_t *x, const int32_t *residual);
 
   /*
-    Gets the LPC coefficients that we need to apply to samples within a block
-    with parity 'parity'.  This will have been estimated from the block with the
-    *other* parity (since we always estimate LPC coeffs from past samples,
-    to avoid having to transmit them).  Of course each block has different
-    LPC coeffs, but we never backtrack further than one block, so storing
-    two blocks' worth of LPC coefficients is sufficient.
+    Gets the current LPC coefficients.
 
-    We guarantee that the exponent will not be positive.  (This is required
-    by the code that computes the residual).
+    We guarantee that the exponent `lpc_coeffs_.exponent` will not be positive.
+    (This is required by the code that computes the residual, so it can avoid
+    testing the sign of the exponent).
    */
-  inline const IntVec<int32_t> &GetLpcCoeffsForBlock(int parity) {
-    return lpc_coeffs_[ (~parity) & 1];
-  }
+  inline const IntVec<int32_t> &GetLpcCoeffs() { return lpc_coeffs_; }
 
   ~ToeplitzLpcEstimator() { }
+
+  const LpcConfig &Config() const { return config_; }
 
 #ifndef LPC_MATH_TEST
   private:
 #endif
-
-
 
   /**
      Sets eta_ to 1.0 - 1/eta_inv, and sets up eta_even_powers_,
@@ -211,14 +192,13 @@ class ToeplitzLpcEstimator {
   void InitEta(int eta_inv);
 
 
-  /*  Updates autocorr_[parity] and deriv_.  Similar to
+  /*  Updates autocorr_ and deriv_.  Similar to
       ToeplitzLpcEstimator._update_autocorr_and_deriv in
       ../test/linear_prediction.py
       x_nrsb is the smallest number of redudant sign bits
       for any x[-lpc_order_].. through x[block_size_ - 1].
    */
-  void UpdateAutocorrStats(
-      int parity, const int16_t *x, int x_nrsb);
+  void UpdateAutocorrStats(const int16_t *x, int x_nrsb);
 
   /*
     Computes the objective function derivative (the new part, from
@@ -226,9 +206,8 @@ class ToeplitzLpcEstimator {
     deriv is now zero because we `trust` the previous iteration's
     solver.
    */
-  void ComputeDeriv(
-      int parity, const int16_t *x, int x_nrsb,
-      const int32_t *residual);
+  void ComputeDeriv(const int16_t *x, int x_nrsb,
+                    const int32_t *residual);
 
   /* Sets autocorr_final_ to the reflection term in the autocorrelation
      coefficients.  See ../test/linear_prediction.py for more details
@@ -241,8 +220,8 @@ class ToeplitzLpcEstimator {
 
   /*
     Adds smoothing terms to autocorr_final_: essentially,
-      autocorr_final_[0] +=
-         abs_smoothing_ + diag_smoothing_ * autocorr_final_[0]
+      autocorr_final_ +=
+         abs_smoothing_ + diag_smoothing_ * autocorr_final_
    */
   void ApplyAutocorrSmoothing();
 
@@ -294,35 +273,23 @@ class ToeplitzLpcEstimator {
      normally they would be of dimension lpc_order + 1, but
      our method is a little different, incorporating residuals,
      and we don't need that last one.
-
-     This vector is indexed by `parity`, which is 0 or 1;
-     we alternate on different blocks.  This allows us to
-     easily revert to the previous block when the algorithm
-     requires it.
-
-     For block indexed b, autocorr_[b%2] contains block b's
-     stats as the most recent stats (and previous ones
-     included in its weighted sum).
   */
-  IntVec<int32_t> autocorr_[2];
+  IntVec<int32_t> autocorr_;
 
 
   /* deriv_ is a function of the residual and the signal.  dim is lpc_order_. */
   IntVec<int32_t> deriv_;
 
-  /* autocorr_final_ is autocorr_[parity] plus reflection terms and
-     smoothing. dim is lpc_order_.  This is used temporarily when
-     AcceptBlock() is called,
+  /* autocorr_final_ is autocorr_ plus reflection terms and smoothing.  Its
+     dimension is lpc_order_.  This is used temporarily when AcceptBlock() is
+     called,
   */
   IntVec<int32_t> autocorr_final_;
 
-  /* lpc_coeffs_[parity] is the LPC coeffs estimated from stats including those
-     of the the most recent block with parity `parity`. dim is lpc_order_.
-     When doing the prediction for any given block, we always use the lpc
-     stats for the block of the *other* parity, as to avoid transmitting
-     the LPC coeffs we always estimate them from previous samples.
+  /* lpc_coeffs_ contains the most recently estimated LPC coefficients.  The
+     dimension is config_.lpc_order.
   */
-  IntVec<int32_t> lpc_coeffs_[2];
+  IntVec<int32_t> lpc_coeffs_;
 
   /* eta_2B_ is eta_ to the power 2 * B_. */
   IntScalar<int32_t> eta_2B_;

@@ -153,27 +153,26 @@ void ToeplitzLpcEstimator::InitEta(int eta_inv_int) {
 
 
 void ToeplitzLpcEstimator::AcceptBlock(
-    int parity, const int16_t *x, const int32_t *residual) {
+    const int16_t *x, const int32_t *residual) {
   int lpc_order = config_.lpc_order, block_size = config_.block_size,
-      other_parity = !parity,
       x_nrsb = array_lrsb(x - lpc_order, lpc_order + block_size);
-  /* The following sets autocorr_[parity] */
-  UpdateAutocorrStats(parity, x, x_nrsb);
+  /* The following sets autocorr_ */
+  UpdateAutocorrStats(x, x_nrsb);
   /* The following sets deriv_ */
-  ComputeDeriv(parity, x, x_nrsb, residual);
+  ComputeDeriv(x, x_nrsb, residual);
   /* The following sets autocorr_final_ to the reflection term. */
   GetAutocorrReflected(x);
-  add(&autocorr_[parity], &autocorr_final_);
+  add(&autocorr_, &autocorr_final_);
   ApplyAutocorrSmoothing();
   /* The following does:
         temp32_b_ := toeplitz_solve(autocorr_final_, deriv_)
      In the NumPy code in ../test/linear_prediction.py the
-     next few lines were:
+     relevant line is:
      self.lpc_coeffs += toeplitz_solve(au, self.deriv)
   */
-  toeplitz_solve(&autocorr_final_, &deriv_, &temp32_a_, &lpc_coeffs_[parity]);
-  /* next line is: lpc_coeffs_[parity] += lpc_coeffs_[other_parity] */
-  add(&lpc_coeffs_[other_parity], &lpc_coeffs_[parity]);
+  toeplitz_solve(&autocorr_final_, &deriv_, &temp32_a_, &temp32_b_);
+  /* next line is: lpc_coeffs_ += temp32_b_ */
+  add(&temp32_b_, &lpc_coeffs_);
 
 
   /*
@@ -184,12 +183,12 @@ void ToeplitzLpcEstimator::AcceptBlock(
     of course would have to be >= -32 and probably some number strictly greater
     than -32).
   */
-  if (lpc_coeffs_[parity].exponent > 0) {
-    assert(!(lpc_coeffs_[parity].exponent > lpc_coeffs_[parity].nrsb) &&
+  if (lpc_coeffs_.exponent > 0) {
+    assert(!(lpc_coeffs_.exponent > lpc_coeffs_.nrsb) &&
            "LPC coefficients should not be able to get this large!");
     for (int i = 0; i < config_.lpc_order; i++)
-      lpc_coeffs_[parity].data[i] <<= lpc_coeffs_[parity].exponent;
-    lpc_coeffs_[parity].exponent = 0;
+      lpc_coeffs_.data[i] <<= lpc_coeffs_.exponent;
+    lpc_coeffs_.exponent = 0;
   }
 
 }
@@ -216,8 +215,7 @@ inline const int32_t *ToeplitzLpcEstimator::GetEtaPowersStartingAt(int n) const 
 }
 
 void ToeplitzLpcEstimator::UpdateAutocorrStats(
-    int parity, const int16_t *x, int x_nrsb) {
-  int other_parity = (~parity & 1);
+    const int16_t *x, int x_nrsb) {
 
   int N = config_.lpc_order, B = config_.block_size;
   /* Python code for updating autocorrelation could be written
@@ -271,13 +269,14 @@ void ToeplitzLpcEstimator::UpdateAutocorrStats(
   assert(eta_odd_powers_.exponent == -31 && eta_even_powers_.exponent == -31);
   temp64_.set_nrsb(nrsb);
 
-  copy(&temp64_, &autocorr_[parity]);
-  add_scaled(&eta_2B_, &autocorr_[other_parity], &autocorr_[parity]);
+  copy(&autocorr_, &temp32_a_);
+  copy(&temp64_, &autocorr_);
+  add_scaled(&eta_2B_, &temp32_a_, &autocorr_);
 }
 
 
 void ToeplitzLpcEstimator::ComputeDeriv(
-    int parity, const int16_t *x, int x_nrsb,
+    const int16_t *x, int x_nrsb,
     const int32_t *residual) {
   int N = config_.lpc_order, B = config_.block_size,
       B_extra_bits = extra_bits_from_factor_of(B);
