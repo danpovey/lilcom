@@ -59,36 +59,34 @@ void test_lpc_est_compare() {
                    diag_smoothing_power, abs_smoothing_power);
   ToeplitzLpcEstimator lpc(config);
 
-  int parity = 0;
-  lpc.AcceptBlock(parity, signal + order, residual);
+  lpc.AcceptBlock(signal + order, residual);
 
   std::cout << "After first block, autocorr = "
-            << lpc.autocorr_[0]
+            << lpc.autocorr_
             << ", autocorr_final = "
             << lpc.autocorr_final_
             << ", lpc-coeffs = "
-            << lpc.lpc_coeffs_[0]
+            << lpc.lpc_coeffs_
             << ", deriv = "
             << lpc.deriv_;
 
-  parity = 1;
   std::cout << "Residual2 = ";
   for (int t = block_size; t < 2 * block_size; t++) {
     int16_t predicted = compute_lpc_prediction(signal + order + t,
-                                               &lpc.GetLpcCoeffsForBlock(parity));
+                                               &lpc.GetLpcCoeffs());
     int32_t residual_t = signal[order + t] - static_cast<int32_t>(predicted);
     residual[t] = residual_t;
     std::cout << residual_t << ' ';
   }
   std::cout << std::endl;
-  lpc.AcceptBlock(parity, signal + order + block_size, residual + block_size);
+  lpc.AcceptBlock(signal + order + block_size, residual + block_size);
 
   std::cout << "After second block, autocorr = "
-            << lpc.autocorr_[parity]
+            << lpc.autocorr_
             << ", autocorr_final = "
             << lpc.autocorr_final_
             << ", lpc-coeffs = "
-            << lpc.lpc_coeffs_[parity]
+            << lpc.lpc_coeffs_
             << ", deriv = "
             << lpc.deriv_;
 
