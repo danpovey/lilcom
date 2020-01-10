@@ -105,11 +105,12 @@ struct LpcConfig {
       abs_smoothing_power(abs_smoothing_power) {
   }
   LpcConfig(): lpc_order(16), block_size(32), eta_inv(128),
-               diag_smoothing_power(-23), abs_smoothing_power(-33) { }
+               diag_smoothing_power(-10), abs_smoothing_power(-33) { }
 
   LpcConfig(const LpcConfig &other):
       lpc_order(other.lpc_order), block_size(other.block_size),
-      eta_inv(other.eta_inv), diag_smoothing_power(other.diag_smoothing_power),
+      eta_inv(other.eta_inv),
+      diag_smoothing_power(other.diag_smoothing_power),
       abs_smoothing_power(other.abs_smoothing_power) { }
   bool IsValid() {
     return (block_size % 2 == 0 &&
@@ -136,6 +137,7 @@ class ToeplitzLpcEstimator {
       deriv_(config.lpc_order),
       autocorr_final_(config.lpc_order),
       lpc_coeffs_(config.lpc_order) {
+    std::cout << "diag_smoothing is " << config.diag_smoothing_power <<"\n";
     init_as_power_of_two(config.diag_smoothing_power, &diag_smoothing_);
     init_as_power_of_two(config.abs_smoothing_power, &abs_smoothing_);
     InitEta(config.eta_inv);
@@ -175,7 +177,7 @@ class ToeplitzLpcEstimator {
     (This is required by the code that computes the residual, so it can avoid
     testing the sign of the exponent).
    */
-  inline const IntVec<int32_t> &GetLpcCoeffs() { return lpc_coeffs_; }
+  inline const IntVec<int32_t> &GetLpcCoeffs() const { return lpc_coeffs_; }
 
   ~ToeplitzLpcEstimator() { }
 

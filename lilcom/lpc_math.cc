@@ -50,14 +50,21 @@ void toeplitz_solve(const IntVec<int32_t> *autocorr,
     compute_dot_product(n, autocorr, 1, &b, N1 - n, &prod);
 
     /*
-      we are computing
-         nu_n = (-1.0 / epsilon) * np.dot(r[1:n+1], b[-n:])
-      note: abs(nu_n) < 1.0.  mathematically it's <= 1.0, but we
-      added a little smoothing to the zeroth autocorr element. */
+      we are computing nu_n = (-1.0 / epsilon) * np.dot(r[1:n+1], b[-n:]) note:
+      abs(nu_n) < 1.0.  mathematically it's <= 1.0, but we added a little
+      smoothing to the zeroth autocorr element which should guarantee the
+      Toeplitz matrix is strictly positive definite.
+    */
     IntScalar<int32_t> nu_n;
     divide(&prod, &epsilon, &nu_n);
     negate(&nu_n);
-    assert(int_math_abs(static_cast<float>(nu_n)) < 1.0);
+    /* TODO: make assert? */
+    if (!(int_math_abs(static_cast<float>(nu_n)) < 1.0)) {
+      std::cout << "nu_n has bad value: " << nu_n
+                << ", autocorr is: " << *autocorr
+                << ", y is: " << *y;
+      exit(1);
+    }
     /* next line does b[-(n+1):-1] += nu_n * np.flip(b[-n:]) */
     special_reflection_function(n, &nu_n, &b);
 
@@ -157,12 +164,20 @@ void ToeplitzLpcEstimator::AcceptBlock(
   int lpc_order = config_.lpc_order, block_size = config_.block_size,
       x_nrsb = array_lrsb(x - lpc_order, lpc_order + block_size);
   /* The following sets autocorr_ */
+
+  std::cout << "autocorr before update is " << autocorr_ << std::endl;
   UpdateAutocorrStats(x, x_nrsb);
   /* The following sets deriv_ */
   ComputeDeriv(x, x_nrsb, residual);
+
+  std::cout << "autocorr is " << autocorr_ << std::endl;
+
   /* The following sets autocorr_final_ to the reflection term. */
   GetAutocorrReflected(x);
   add(&autocorr_, &autocorr_final_);
+
+  std::cout << "autocorr with reflection is " << autocorr_final_ << std::endl;
+
   ApplyAutocorrSmoothing();
   /* The following does:
         temp32_b_ := toeplitz_solve(autocorr_final_, deriv_)

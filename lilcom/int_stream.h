@@ -16,6 +16,13 @@
    there are correlations between the magnitudes of successive values
    written (i.e. if small values tend to follow small values, and large values
    tend to follow large values).
+
+   It also has ReverseUintStream and ReverseIntStream which are for decoding
+   the output of UintStream and IntStream respectively.
+
+   Also we defined TruncatedIntStream and ReverseTruncatedIntStream, which
+   are for lossy compression where the user specifies the number of bits
+   of precision desired.
 */
 
 
@@ -539,6 +546,7 @@ class ReverseIntStream: public ReverseUintStream {
       return true;
     }
   }
+  /* Inherits NextCode() from ReverseUintStream. */
 };
 
 
@@ -814,6 +822,47 @@ class TruncatedIntStream: public IntStream, private Truncation {
     Step(truncated_value);
   }
 
+  /*
+    WriteLimited() provides a slightly more complicated interface than Write().
+    It's like Write() but it guarantees that predicted + decompressed_residual
+    still fits into int16_t.  This makes decompression simpler, as we
+    can avoid range checks (or turn them into assertions).
+
+    Note: `decompressed_value_out` is not an approximation to `residual`, it is
+    an approximation to `predicted + residual`.
+  */
+  inline void WriteLimited(int32_t residual, int16_t predicted,
+                           int16_t *decompressed_value_out,
+                           int32_t *decompressed_residual_out) {
+    int num_truncated_bits = NumTruncatedBits();
+    int32_t truncated_residual = Truncate(residual, num_truncated_bits),
+        decompressed_residual = Restore(truncated_residual, num_truncated_bits),
+        decompressed_value = predicted + decompressed_residual;
+    if (decompressed_value != static_cast<int16_t>(decompressed_value)) {
+      /* The prediction+residual exceeded the range of int16_t.  This should
+         be rare. */
+      if (truncated_residual >= 0)
+        truncated_residual--;  /* Note: if truncated_residual == 0, decompressed_residual
+                                  would in general be positive, due to the 2nd term
+                                  in the expression in Restore(). */
+      else
+        truncated_residual++;
+      decompressed_residual = Restore(truncated_residual, num_truncated_bits);
+      decompressed_value = predicted + decompressed_residual;
+      assert(decompressed_value == static_cast<int16_t>(decompressed_value));
+    }
+    *decompressed_value_out = static_cast<int16_t>(decompressed_value);
+    *decompressed_residual_out = decompressed_residual;
+
+    std::cout << "r=" << residual << ",d=" << decompressed_residual << " ";
+
+    IntStream::Write(truncated_residual);
+    /* Update the truncation base-class, which keeps NumTruncatedBits() up to
+       date. */
+    Step(truncated_residual);
+  }
+
+
   /* Flush() and Code() are inherited from class UintStream (and ultimately,
    * from IntStream). */
 
@@ -821,9 +870,6 @@ class TruncatedIntStream: public IntStream, private Truncation {
 
 class ReverseTruncatedIntStream: public ReverseIntStream, private Truncation {
  public:
-  /* Please see constructor of class Truncation for the meaning of the configuration
-     values accepted by the constructor.
-  */
   ReverseTruncatedIntStream(const TruncationConfig &config,
                             const int8_t *code,
                             const int8_t *code_memory_end):
@@ -839,6 +885,8 @@ class ReverseTruncatedIntStream: public ReverseIntStream, private Truncation {
     *value = Restore(truncated_value, num_truncated_bits);
     return true;
   }
+  /* Inherits NextCode() from ReverseIntStream. */
+
 };
 
 
