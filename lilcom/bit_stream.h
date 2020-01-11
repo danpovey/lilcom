@@ -1,5 +1,5 @@
-#ifndef LILCOM_BIT_STREAM_H_
-#define LILCOM_BIT_STREAM_H_ 1
+#ifndef __LILCOM__BIT_STREAM_H_
+#define __LILCOM__BIT_STREAM_H_ 1
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -171,5 +171,5 @@ class ReverseBitStream {
 };
 
 
-#endif /* LILCOM_BIT_STREAM_H_ */
+#endif /* __LILCOM__BIT_STREAM_H_ */
 

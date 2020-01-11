@@ -38,5 +38,5 @@ bit_stream_test: bit_stream_test.cc bit_stream.h
 int_stream_test: int_stream_test.cc int_stream.h bit_stream.h
 	g++ -O0 -Wall -g  int_stream_test.cc -o int_stream_test -lm # -ftrapv
 
-lpc_stream_test: lpc_stream_test.cc lpc_stream.h bit_stream.h lpc_math.cc lpc_math.h
+lpc_stream_test: lpc_stream_test.cc lpc_stream.h bit_stream.h lpc_math.cc lpc_math.h int_stream.h
 	g++ -O0 -Wall -g  lpc_stream_test.cc lpc_math.cc -o lpc_stream_test -lm # -ftrapv

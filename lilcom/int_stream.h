@@ -1,5 +1,5 @@
-#ifndef LILCOM_INT_STREAM_H_
-#define LILCOM_INT_STREAM_H_ 1
+#ifndef __LILCOM__INT_STREAM_H_
+#define __LILCOM__INT_STREAM_H_ 1
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -553,8 +553,7 @@ class ReverseIntStream: public ReverseUintStream {
 
 struct TruncationConfig {
   /*
-    Construtor.
-
+    Constructor.
 
      @param [in] num_significant_bits
            This is the number of significant bits we'll use FOR QUIET SOUNDS.
@@ -614,6 +613,9 @@ struct TruncationConfig {
       block_size(block_size),
       first_block_correction(first_block_correction) { }
 
+  /* Caution: this constructor leaves the members undefined. */
+  TruncationConfig() { }
+
   bool IsValid() const {
     return (num_significant_bits > 2 && alpha >= 3 && alpha <= 64 &&
             block_size > 1 && block_size < 10000 &&
@@ -625,10 +627,48 @@ struct TruncationConfig {
       block_size(other.block_size),
       first_block_correction(other.first_block_correction) { }
 
-  int num_significant_bits;
-  int alpha;
-  int block_size;
-  int first_block_correction;
+  /*
+     Writes configuration variables to an IntStream.
+        @param [in,out] s  The stream to write the configuration variables to
+        @param [in] format_version   Version of the format to use;
+                       defaults to the current format version (currently 1).
+   */
+  void Write(IntStream *s, int format_version=1) const {
+    assert(format_version == 1);  /* currently only one version supported. */
+    s->Write(num_significant_bits);
+    s->Write(alpha);
+    s->Write(block_size);
+    s->Write(first_block_correction);
+  }
+
+  /*
+    Attempts to read configuration variables from stream.  Returns true
+    on success, false on any kind of failure.
+      @param [in] format_version  Version of format to read.  Currently
+                          only 1 is accepted
+      @param [in] s     The stream from which to read the data
+      @return  Returns true on success, false on any type of failure.
+   */
+  bool Read(int format_version, ReverseIntStream *s) {
+    if (format_version != 1) return false;
+    switch (format_version) {
+      case 1:
+        return s->Read(&num_significant_bits) &&
+            s->Read(&alpha) &&
+            s->Read(&block_size) &&
+            s->Read(&first_block_correction) &&
+            IsValid();
+      default:
+        return false;
+    }
+  }
+
+  /* These types could have been int, but it's more convenient
+     for the I/O code if they are fixed-size types. */
+  int32_t num_significant_bits;
+  int32_t alpha;
+  int32_t block_size;
+  int32_t first_block_correction;
 };
 
 
@@ -854,8 +894,6 @@ class TruncatedIntStream: public IntStream, private Truncation {
     *decompressed_value_out = static_cast<int16_t>(decompressed_value);
     *decompressed_residual_out = decompressed_residual;
 
-    std::cout << "r=" << residual << ",d=" << decompressed_residual << " ";
-
     IntStream::Write(truncated_residual);
     /* Update the truncation base-class, which keeps NumTruncatedBits() up to
        date. */
@@ -890,5 +928,5 @@ class ReverseTruncatedIntStream: public ReverseIntStream, private Truncation {
 };
 
 
-#endif /* LILCOM_INT_STREAM_H_ */
+#endif /* __LILCOM___INT_STREAM_H_ */
 

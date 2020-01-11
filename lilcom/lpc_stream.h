@@ -47,12 +47,13 @@ class LpcPrediction: public int_math::ToeplitzLpcEstimator {
     /* TODO: remove this assertion*/
     assert(t_mod > 2 || residual == value - (int32_t)GetPrediction());
     if (t_mod == 0 && t_ != 0) {
+      ToeplitzLpcEstimator::AcceptBlock(buffer_start_,
+                                        &(residual_[0]));
+      /* Copy context to the `lpc_order` samples preceding buffer_start_. */
       for (int i = -Config().lpc_order; i < 0; i++) {
         /* Copy prediction context to the start of the buffer. */
         buffer_start_[i] = buffer_start_[Config().block_size + i];
       }
-      ToeplitzLpcEstimator::AcceptBlock(buffer_start_,
-                                        &(residual_[0]));
     }
     buffer_start_[t_mod] = value;
     residual_[t_mod] = residual;
@@ -114,15 +115,10 @@ class LpcStream: public TruncatedIntStream, LpcPrediction {
     TruncatedIntStream::WriteLimited(residual, prediction,
                                      &decompressed_value,
                                      &decompressed_residual);
-    if (decompressed_residual != residual)
-      std:: cout << "residual=" << residual << ", decompressed=" << decompressed_residual << std::endl;
-
 
     AdvanceLpcState(decompressed_value, decompressed_residual);
     if (decompressed_value_out)
       *decompressed_value_out = decompressed_value;
-    if (decompressed_value != value)
-      std:: cout << "value=" << value << ", decompressed=" << decompressed_value << std::endl;
   }
 
   /* We inherit Flush() and Code() from base-class TruncatedIntStream. */

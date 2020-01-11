@@ -5,6 +5,7 @@
 #include "int_math_utils.h"
 #include "int_scalar.h"
 #include "int_vec.h"
+#include "int_stream.h"  /* needed for config Read()/Write() methods */
 #include <stdexcept>
 
 namespace int_math {
@@ -112,12 +113,53 @@ struct LpcConfig {
       eta_inv(other.eta_inv),
       diag_smoothing_power(other.diag_smoothing_power),
       abs_smoothing_power(other.abs_smoothing_power) { }
+
   bool IsValid() {
     return (block_size % 2 == 0 &&
+            lpc_order > 0 &&
             eta_inv >= 3 * lpc_order &&
             diag_smoothing_power < 0 &&
             abs_smoothing_power < 0);
   }
+  /*
+     Writes configuration variables to an IntStream.
+        @param [in,out] s  The stream to write the configuration variables to
+        @param [in] format_version   Version of the format to use;
+                       defaults to the current format version (currently 1).
+   */
+  void Write(IntStream *s, int format_version=1) const {
+    assert(format_version == 1);  /* currently only one version supported. */
+    s->Write(lpc_order);
+    s->Write(block_size);
+    s->Write(eta_inv);
+    s->Write(diag_smoothing_power);
+    s->Write(abs_smoothing_power);
+  }
+
+  /*
+    Attempts to read configuration variables from stream.  Returns true
+    on success, false on any kind of failure.
+      @param [in] format_version  Version of format to read.  Currently
+                          only 1 is accepted
+      @param [in] s     The stream from which to read the data
+      @return  Returns true on success, false on any type of failure.
+   */
+  bool Read(int format_version, ReverseIntStream *s) {
+    if (format_version != 1) return false;
+    switch (format_version) {
+      case 1:
+        return s->Read(&lpc_order) &&
+            s->Read(&block_size) &&
+            s->Read(&eta_inv) &&
+            s->Read(&diag_smoothing_power) &&
+            s->Read(&abs_smoothing_power) &&
+            IsValid();
+      default:
+        return false;
+    }
+  }
+
+
   int lpc_order;
   int block_size;
   int eta_inv;
@@ -137,7 +179,6 @@ class ToeplitzLpcEstimator {
       deriv_(config.lpc_order),
       autocorr_final_(config.lpc_order),
       lpc_coeffs_(config.lpc_order) {
-    std::cout << "diag_smoothing is " << config.diag_smoothing_power <<"\n";
     init_as_power_of_two(config.diag_smoothing_power, &diag_smoothing_);
     init_as_power_of_two(config.abs_smoothing_power, &abs_smoothing_);
     InitEta(config.eta_inv);

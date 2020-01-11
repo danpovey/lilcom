@@ -58,7 +58,8 @@ void toeplitz_solve(const IntVec<int32_t> *autocorr,
     IntScalar<int32_t> nu_n;
     divide(&prod, &epsilon, &nu_n);
     negate(&nu_n);
-    /* TODO: make assert? */
+    /* TODO: eventually, when we release the code, this will continue rather
+       than die.  (for robustness to weird input). */
     if (!(int_math_abs(static_cast<float>(nu_n)) < 1.0)) {
       std::cout << "nu_n has bad value: " << nu_n
                 << ", autocorr is: " << *autocorr
@@ -165,18 +166,13 @@ void ToeplitzLpcEstimator::AcceptBlock(
       x_nrsb = array_lrsb(x - lpc_order, lpc_order + block_size);
   /* The following sets autocorr_ */
 
-  std::cout << "autocorr before update is " << autocorr_ << std::endl;
   UpdateAutocorrStats(x, x_nrsb);
   /* The following sets deriv_ */
   ComputeDeriv(x, x_nrsb, residual);
 
-  std::cout << "autocorr is " << autocorr_ << std::endl;
-
   /* The following sets autocorr_final_ to the reflection term. */
   GetAutocorrReflected(x);
   add(&autocorr_, &autocorr_final_);
-
-  std::cout << "autocorr with reflection is " << autocorr_final_ << std::endl;
 
   ApplyAutocorrSmoothing();
   /* The following does:

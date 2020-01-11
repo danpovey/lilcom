@@ -115,9 +115,8 @@ void divide(IntScalar<IA> *a, IntScalar<IB> *b,
   int64_t a_elem = a->elem,
       b_elem = b->elem;
 
-  int a_lrsb = lrsb(abs(a_elem)),
-      b_lrsb = lrsb(abs(b_elem));
-
+  int a_lrsb = lrsb(int_math_abs(a_elem)),
+      b_lrsb = lrsb(int_math_abs(b_elem));
 
   /* we want b to be shifted to have lrsb=29.  see above, nsb(a) - nsb(b) = 29;
      we'll have (lrsb(b) = 29) - (lrsb(a) = 0) = 29, which is equivalent.  */

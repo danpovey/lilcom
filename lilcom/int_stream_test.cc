@@ -144,6 +144,27 @@ inline float rand_gauss() {
       cosf(2 * M_PI * rand_uniform());
 }
 
+void test_truncation_config_io() {
+  TruncationConfig s;
+  s.num_significant_bits = 4;
+  s.alpha = 3;
+  s.block_size = 32;
+  s.first_block_correction = 5;
+  IntStream is;
+  int format_version = 1;
+  s.Write(&is, format_version);
+  is.Flush();
+  ReverseIntStream ris(&is.Code()[0],
+                       &is.Code()[0] + is.Code().size());
+  TruncationConfig s2;
+  bool ans = s2.Read(format_version, &ris);
+  assert(ans &&
+         s2.num_significant_bits == s.num_significant_bits &&
+         s2.alpha == s.alpha &&
+         s2.block_size == s.block_size &&
+         s2.first_block_correction == s.first_block_correction);
+}
+
 void truncated_int_stream_test() {
   int input[500],
       compressed_input[500];
@@ -257,5 +278,6 @@ int main() {
   int_stream_test_two();
   int_stream_test_gauss();
   truncated_int_stream_test();
+  test_truncation_config_io();
   std::cout << "Done\n";
 }

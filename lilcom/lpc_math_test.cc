@@ -93,6 +93,28 @@ void test_lpc_est_compare() {
 
 }
 
+void test_lpc_config_io() {
+  LpcConfig s;
+  s.lpc_order = 16;
+  s.block_size = 32;
+  s.eta_inv = 64;
+  s.diag_smoothing_power = -10;
+  s.abs_smoothing_power = -20;
+  IntStream is;
+  int format_version = 1;
+  s.Write(&is, format_version);
+  is.Flush();
+  ReverseIntStream ris(&is.Code()[0],
+                       &is.Code()[0] + is.Code().size());
+  LpcConfig s2;
+  bool ans = s2.Read(format_version, &ris);
+  assert(ans &&
+         s2.lpc_order == s.lpc_order &&
+         s2.block_size == s.block_size &&
+         s2.eta_inv == s.eta_inv &&
+         s2.diag_smoothing_power == s.diag_smoothing_power &&
+         s2.abs_smoothing_power == s.abs_smoothing_power);
+}
 
 
 }
@@ -101,4 +123,5 @@ int main() {
   using namespace int_math;
   test_toeplitz_solve_compare();
   test_lpc_est_compare();
+  test_lpc_config_io();
 }
