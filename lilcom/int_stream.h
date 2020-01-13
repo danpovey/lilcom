@@ -7,6 +7,7 @@
 #include "int_math_utils.h"  /* for num_bits() */
 #include "bit_stream.h"
 #include <iostream>
+#include <sstream>
 
 
 /**
@@ -663,6 +664,18 @@ struct TruncationConfig {
         return false;
     }
   }
+
+  operator std::string () const {
+    std::ostringstream os;
+    os << "TruncationConfig{ num-significant-bits=" << num_significant_bits
+       << ", alpha" << alpha
+       << ", block-size=" << block_size
+       << ", first-block-correction=" << first_block_correction
+       << " }";
+    return os.str();
+  }
+
+
 
   /* These types could have been int, but it's more convenient
      for the I/O code if they are fixed-size types. */

@@ -4,7 +4,6 @@
 
 
 
-
 CompressorConfig::CompressorConfig(int32_t sampling_rate, int32_t num_channels,
                                    int loss_level, int compression_level):
     sampling_rate(sampling_rate),
@@ -113,7 +112,46 @@ CompressedFile::~CompressedFile() {
   delete compressed_chunk_sizes_;
 }
 
-void CompressedFile::WriteHeader() {
+
+
+int CompressedChunk::Decompress(
+    const CompressorConfig &config,
+    int num_samples,
+    int output_stride,
+    int16_t *output_data) {
+
+  ReverseLpcStream rls(config.truncation,
+                       config.lpc,
+                       data, end);
+  for (int i = 0; i < num_samples; i++) {
+    if (!rls.Read(output_data + i * output_stride))
+      return i;
+  }
+  if (rls.NextCode() == end)
+    return num_samples;  /* success */
+  else
+    return 0;  /* Something went wrong.  Assume the decoded data is not valid. */
+}
+
+CompressedChunk::CompressedChunk(
+    const CompressorConfig &config,
+    const int16_t *wave_data,
+    int num_samples,
+    int data_stride) {
+  assert(num_samples > 0 && data_stride != 0);
+
+  LpcStream ls(config.truncation, config.lpc);
+  for (int s = 0; s < num_samples; s++) {
+    ls.Write(wave_data[s * data_stride],
+             NULL);  /* Don't need the approximated value */
+  }
+  owned_data_.swap(ls.Code());
+  data = &(owned_data_[0]);
+  end = data + owned_data_.size();
+}
+
+
+void CompressedFile::CompressHeader() {
   IntStream header_stream;
   config_.Write(&header_stream);
   header_stream.Write(num_complete_chunks_);
@@ -150,34 +188,43 @@ CompressedFile::CompressedFile(const CompressorConfig &config,
     num_samples_(num_samples),
     header_(NULL),
     compressed_chunk_sizes_(NULL) {
-  assert(num_samples > 0);
+  try {
+    assert(num_samples > 0);
 
-  int csize = config_.chunk_size;
-  num_complete_chunks_ = num_samples / csize;
-  partial_chunk_size_  = num_samples % csize;
+    int csize = config_.chunk_size;
+    num_complete_chunks_ = num_samples / csize;
+    partial_chunk_size_  = num_samples % csize;
 
-  WriteHeader();
+    CompressHeader();
 
-
-  // Compress each chunk
-  for (int32_t chunk = 0; chunk < num_complete_chunks_; chunk++) {
-    for (int32_t channel = 0; channel < config_.num_channels; channel++) {
-      chunks_.push_back(new CompressedChunk(
-          config_,
-          data + (chunk * csize * sample_stride) + (channel * channel_stride),
-          config_.chunk_size,
-          sample_stride));
+    // Compress each chunk
+    for (int32_t chunk = 0; chunk < num_complete_chunks_; chunk++) {
+      for (int32_t channel = 0; channel < config_.num_channels; channel++) {
+        chunks_.push_back(new CompressedChunk(
+            config_,
+            data + (chunk * csize * sample_stride) + (channel * channel_stride),
+            config_.chunk_size,
+            sample_stride));
+      }
     }
-  }
-  if (partial_chunk_size_ != 0) {
-    /* compress the final, partial chunk */
-    for (int32_t channel = 0; channel < config_.num_channels; channel++) {
-      chunks_.push_back(new CompressedChunk(
-          config_,
-          data + (num_complete_chunks_ * csize * sample_stride) + (channel * channel_stride),
-          partial_chunk_size_,
-          sample_stride));
+    if (partial_chunk_size_ != 0) {
+      /* compress the final, partial chunk */
+      for (int32_t channel = 0; channel < config_.num_channels; channel++) {
+        chunks_.push_back(new CompressedChunk(
+            config_,
+            data + (num_complete_chunks_ * csize * sample_stride) + (channel * channel_stride),
+            partial_chunk_size_,
+            sample_stride));
+      }
     }
+    CompressChunkSizes();
+  } catch (std::bad_alloc) {
+    /* this code is the same as the destructor's code. */
+    delete header_;
+    delete compressed_chunk_sizes_;
+    for (size_t i = 0; i < chunks_.size(); i++)
+      delete chunks_[i];
+    throw;  /* Re-throw the original exception. */
   }
 }
 
@@ -258,31 +305,47 @@ bool CompressedFile::ReadData(
   return true;
 }
 
-
-int CompressedFile::InitForReading(const char *input, const char *input_end) {
-  try {
-    const char *cur_input = ReadHeader(input, input_end);
-
-    if (cur_input == NULL)
-      return 1;  /* error */
-
-    /* ReadChunkSizes() returns 0 on success, 1 on total failure,
-       2 on partial failure (meaning: some chunks read). */
-    return ReadChunkSizes(cur_input, input_end);
-  } catch (std::bad_alloc) {
-    return 3;
+char* CompressedFile::Write(size_t *length) {
+  size_t total_size = header_->size() + compressed_chunk_sizes_->size();
+  for (size_t i = 0; i < chunks_.size(); i++)
+    total_size += chunks_[i]->size();
+  *length = total_size;
+  assert(total_size > 0);
+  char *ans = new char[total_size],
+      *cur = ans;
+  memcpy(cur, header_->data, header_->size());
+  cur += header_->size();
+  memcpy(cur, compressed_chunk_sizes_->data, compressed_chunk_sizes_->size());
+  cur += compressed_chunk_sizes_->size();
+  for (size_t i = 0; i < chunks_.size(); i++) {
+    memcpy(cur, chunks_[i]->data, chunks_[i]->size());
+    cur += chunks_[i]->size();
   }
+  assert(cur - ans == total_size);
+  return ans;
 }
 
 
-void CompressedFile::WriteChunkSizes() {
+int CompressedFile::InitForReading(const char *input, const char *input_end) {
+  const char *cur_input = ReadHeader(input, input_end);
+
+  if (cur_input == NULL)
+    return 1;  /* error */
+
+  /* ReadChunkSizes() returns 0 on success, 1 on total failure,
+     2 on partial failure (meaning: some chunks read). */
+  return ReadChunkSizes(cur_input, input_end);
+}
+
+
+void CompressedFile::CompressChunkSizes() {
   assert(chunks_.size() == config_.num_channels *
          (num_complete_chunks_ + (partial_chunk_size_ > 0 ? 1 : 1)));
   IntStream is;
   int32_t prev_size = 0;
   for (size_t i = 0; i < chunks_.size(); i++) {
     int32_t this_size = chunks_[i]->size(),
-        diff = prev_size - this_size;
+        diff = this_size - prev_size;
     is.Write(diff);
     prev_size = this_size;
   }
@@ -294,64 +357,39 @@ void CompressedFile::WriteChunkSizes() {
 
 int CompressedFile::ReadChunkSizes(const char *input, const char *input_end) {
   int32_t num_chunks =
-      config_.num_channels * num_complete_chunks_ + (partial_chunk_size_ > 0 ? 1 : 1);
+      config_.num_channels * (num_complete_chunks_ + (partial_chunk_size_ > 0 ? 1 : 1));
   ReverseIntStream ris(input, input_end);
   int32_t prev_chunk_size = 0;
   std::vector<int32_t> chunk_sizes;
   chunk_sizes.reserve(num_chunks);
   for (int c = 0; c < num_chunks; c++) {
     int32_t delta_chunk_size;
-    if (!ris.Read(&delta_chunk_size))
+    if (!ris.Read(&delta_chunk_size)) {
+      std::cout << "ReadChunkSizes(): failure\n";
       return 1;  /* complete failure. */
+    }
     /* Note: these are the sizes of the compressed chunks in bytes, which is
        why they are irregular. */
     int32_t this_chunk_size = prev_chunk_size + delta_chunk_size;
-    if (!(this_chunk_size > 0))
+    if (!(this_chunk_size > 0)) {
+      std::cout << "ReadChunkSizes(): failure [2]\n";
       return 1;  /* possibly corruption. */
+    }
     chunk_sizes.push_back(this_chunk_size);
+    prev_chunk_size = this_chunk_size;
+  }
+  const char *cur_data = ris.NextCode();
+  for (int c = 0; c < num_chunks; c++) {
+    int32_t this_size = chunk_sizes[c];
+    const char *next_data = cur_data + this_size;
+    if (next_data > input_end) {
+      return (c == 0 ? 1 : 2); /* 1 is total failure, 2 is partial failure */
+    }
+    chunks_.push_back(new CompressedChunk(cur_data, next_data));
+    cur_data = next_data;
   }
   return 0;  /* success */
 }
 
-
-
-int CompressedChunk::Decompress(
-    const CompressorConfig &config,
-    int num_samples,
-    int output_stride,
-    int16_t *output_data) {
-
-  ReverseLpcStream rls(config.truncation,
-                       config.lpc,
-                       data, end);
-  for (int i = 0; i < num_samples; i++) {
-    if (!rls.Read(output_data + i * output_stride))
-      return i;
-  }
-  if (rls.NextCode() == end)
-    return num_samples;  /* success */
-  else
-    return 0;  /* Something went wrong.  Assume the decoded data is not valid. */
-}
-
-CompressedChunk::CompressedChunk(
-    const CompressorConfig &config,
-    const int16_t *wave_data,
-    int num_samples,
-    int data_stride) {
-  assert(num_samples > 0 && data_stride != 0);
-
-  LpcStream ls(config.truncation, config.lpc);
-  for (int s = 0; s < num_samples; s++) {
-    ls.Write(wave_data[s * data_stride],
-             NULL);  /* Don't need the approximated value */
-  }
-  owned_data_.swap(ls.Code());
-  data = &(owned_data_[0]);
-  end = data + owned_data_.size();
-
-  std::cout << "Creating compressed chunk with " << num_samples
-            << " samples, had " << owned_data_.size() << " bytes. ";
-}
 
 

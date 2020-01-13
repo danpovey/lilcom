@@ -7,6 +7,7 @@
 #include "int_vec.h"
 #include "int_stream.h"  /* needed for config Read()/Write() methods */
 #include <stdexcept>
+#include <sstream>
 
 namespace int_math {
 
@@ -157,6 +158,17 @@ struct LpcConfig {
       default:
         return false;
     }
+  }
+
+  operator std::string () const {
+    std::ostringstream os;
+    os << "LpcConfig{ lpc-order=" << lpc_order
+       << ", block-size=" << block_size
+       << ", eta-inv=" << eta_inv
+       << ", diag-smoothing-power=" << diag_smoothing_power
+       << ", abs-smoothing-power=" << abs_smoothing_power
+       << " }";
+    return os.str();
   }
 
 

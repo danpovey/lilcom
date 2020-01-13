@@ -80,6 +80,7 @@ void compressed_file_test() {
         for (int compression_level = 0; compression_level <= 5; compression_level++) {
           CompressorConfig config(sampling_rate, num_channels, loss_level,
                                   compression_level);
+          std::cout << "Config is: " << (std::string)config << "\n";
           if (loss_level + compression_level % 2 == 0)
             config.chunk_size = 32;  /* sometimes try small chunk sizes, to
                                       * exercise more of the code */
@@ -103,9 +104,23 @@ void compressed_file_test() {
                             input,
                             sample_stride, channel_stride);
 
-          bool ans = cf.ReadAllData(sample_stride, channel_stride,
-                                    decompressed);
-          assert(ans);
+          if (loss_level + compression_level % 2 == 0) {
+            /* test without serialization in between */
+            bool ans = cf.ReadAllData(sample_stride, channel_stride,
+                                      decompressed);
+            assert(ans);
+          } else {
+            /* test with serialization. */
+            size_t num_bytes;
+            char *c = cf.Write(&num_bytes);
+            CompressedFile cf2;
+            int ret = cf2.InitForReading(c, c + num_bytes);
+            assert(ret == 0);
+            bool ans = cf2.ReadAllData(sample_stride, channel_stride,
+                                       decompressed);
+            assert(ans);
+            delete c;
+          }
           /* TODO: compare */
           int64_t error_sumsq = 0, data_sumsq = 0;
           for (int i = 0; i < num_channels * num_samples; i++) {

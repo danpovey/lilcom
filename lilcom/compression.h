@@ -52,7 +52,9 @@ struct CompressorConfig {
   /* Default constructor, to be called only prior to Read(). */
   CompressorConfig() { }
 
-  /* Writes the configuration information to an IntStream. */
+  /* Writes the configuration information to an IntStream.  Throws
+     std::bad_alloc if allocation failed.
+   */
   void Write(IntStream *is) const;
 
   /* Reads this object from a stream; returns true on success, false
@@ -61,6 +63,18 @@ struct CompressorConfig {
 
   /* Returns true if this object has valid configuration values. */
   bool IsValid() const;
+
+  operator std::string () const {
+    std::ostringstream os;
+    os << "CompressorConfig{ format-version=" << format_version
+       << ", truncation=" << (std::string)truncation
+       << ", lpc=" << (std::string)lpc
+       << ", chunk-size=" << chunk_size
+       << ", sampling-rate=" << sampling_rate
+       << ", num-channels=" << num_channels
+       << " }";
+    return os.str();
+  }
 
 };
 
@@ -100,9 +114,10 @@ struct CompressedChunk {
                              `data`, would normally be either
                              1 or equal to the number of channels,
                              depending on the output format.
+
      This function cannot fail except by assertion (indicating code error)
      or memory allocation failure (in which case it will throw
-     std::bad_alloc).
+     std::bad_alloc after cleaning up any allocated memory).
    */
   CompressedChunk(const CompressorConfig &config,
                   const int16_t *wave_data,
@@ -177,7 +192,11 @@ class CompressedFile {
         @param [out] length  The number of bytes in the returned array
                           (note: the returned array is not null-terminated,
                           and may contain nulls internally).
-        @return       Returns
+        @return       Returns the newly allocated array.  It will have
+                      been allocated with new char [], so should be
+                      deleted with delete [].
+
+     Will throw std::bad_alloc if allocation failed.
    */
   char *Write(size_t *length);
 
@@ -200,7 +219,9 @@ class CompressedFile {
                          2 if the file was partially read; in this case
                            you can work out which chunks are available
                            using NumChunksAvailable().
-                         3 if memory allocation failed (unlikely)
+
+    This function will throw std::bad_alloc() if memory allocation
+    failed.
 
     You should call ReadData() after this to get the actual data.
   */
@@ -254,10 +275,10 @@ class CompressedFile {
   ~CompressedFile();
 
  private:
-  /* Writes the metadata of this class (but not the chunk sizes) to a stream
+  /* Compresses the metadata of this class (but not the chunk sizes) to a stream
      which will be stored as `header_`.
   */
-  void WriteHeader();
+  void CompressHeader();
 
   /* Reads the header of the class; sets header_, config_, num_complete_chunks_,
        partial_chunk_size_, and num_samples_.
@@ -273,7 +294,7 @@ class CompressedFile {
 
   /* Creates the CompressedChunk that encodes the sizes of the actual chunks in
      chunks_ containing the data, and puts this in compressed_chunk_sizes_. */
-  void WriteChunkSizes();
+  void CompressChunkSizes();
 
   /* Reads the chunk sizes from the stream and writes to compressed_chunk_sizes_
      and chunks_.
