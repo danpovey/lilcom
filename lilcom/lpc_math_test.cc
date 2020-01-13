@@ -103,7 +103,6 @@ void test_lpc_config_io() {
   IntStream is;
   int format_version = 1;
   s.Write(&is, format_version);
-  is.Flush();
   ReverseIntStream ris(&is.Code()[0],
                        &is.Code()[0] + is.Code().size());
   LpcConfig s2;

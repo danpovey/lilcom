@@ -114,7 +114,7 @@ struct LpcConfig {
       diag_smoothing_power(other.diag_smoothing_power),
       abs_smoothing_power(other.abs_smoothing_power) { }
 
-  bool IsValid() {
+  bool IsValid() const {
     return (block_size % 2 == 0 &&
             lpc_order > 0 &&
             eta_inv >= 3 * lpc_order &&

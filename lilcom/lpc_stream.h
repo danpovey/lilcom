@@ -1,5 +1,5 @@
-#ifndef LILCOM_LPC_STREAM_H_
-#define LILCOM_LPC_STREAM_H_ 1
+#ifndef __LILCOM__LPC_STREAM_H__
+#define __LILCOM__LPC_STREAM_H__ 1
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -121,7 +121,7 @@ class LpcStream: public TruncatedIntStream, LpcPrediction {
       *decompressed_value_out = decompressed_value;
   }
 
-  /* We inherit Flush() and Code() from base-class TruncatedIntStream. */
+  /* We inherit Code() from base-class TruncatedIntStream. */
 
 };
 
@@ -135,8 +135,8 @@ class ReverseLpcStream: public ReverseTruncatedIntStream, LpcPrediction {
  public:
   ReverseLpcStream(const TruncationConfig &truncation_config,
                    const int_math::LpcConfig &lpc_config,
-                   const int8_t *code,
-                   const int8_t *code_memory_end):
+                   const char *code,
+                   const char *code_memory_end):
       ReverseTruncatedIntStream(truncation_config,
                                 code, code_memory_end),
       LpcPrediction(lpc_config) { }
@@ -161,5 +161,5 @@ class ReverseLpcStream: public ReverseTruncatedIntStream, LpcPrediction {
 
 
 
-#endif /* LILCOM_LPC_STREAM_H_ */
+#endif /* __LILCOM__LPC_STREAM_H__ */
 

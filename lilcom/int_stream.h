@@ -50,28 +50,37 @@ class UintStream {
 
    Note: you must call Write() AT LEAST ONCE; this class does not
    support writing an empty stream.
+   You cannot call Write() after calling Code().
    */
   inline void Write(uint32_t value) {
+    assert(!flushed_);
     buffer_.push_back(value);
     if (buffer_.size() >= 64) {
       FlushSome(32);
     }
   }
 
+
+  /* Gets the code that was written.  After calling this you must
+     not call Write(), since this function flushes the stream. */
+  std::vector<char> &Code() {
+    if (!flushed_) Flush();
+    return bit_stream_.Code();
+  }
+
+ private:
+
   /*
-    Flush the stream.  Should be called once, after you are done
-    calling Write().  [Note: Write() must be called at least once
-    before calling Flush().]
+    Flush the stream.  Called from Code(); after this is called, you can't
+    write any more to the stream.
    */
-  inline void Flush() {
+  void Flush() {
     assert(!flushed_);
     assert(!buffer_.empty());  /* check that data has been written. */
     flushed_ = true;
     FlushSome(buffer_.size());
-    if (num_pending_zeros_) {
+    if (num_pending_zeros_)
       FlushPendingZeros();
-    }
-    bit_stream_.Flush();
   }
 
   inline void FlushPendingZeros() {
@@ -108,14 +117,6 @@ class UintStream {
     num_pending_zeros_ = 0;
   }
 
-  /* Gets the code that was written.  You should not call thes
-     before having called Flush(). */
-  const std::vector<int8_t> &Code() const {
-    assert(flushed_);
-    return bit_stream_.Code();
-  }
-
- private:
 
   /* buffer_ contains pending values that we have not yet encoded. */
   std::vector<uint32_t> buffer_;
@@ -349,8 +350,8 @@ class ReverseUintStream {
                           we'll never reach there.
                           MUST be greater than `code`.
    */
-  ReverseUintStream(const int8_t *code,
-                    const int8_t *code_memory_end):
+  ReverseUintStream(const char *code,
+                    const char *code_memory_end):
       bit_reader_(code, code_memory_end),
       zero_runlength_(-1) {
     assert(code_memory_end > code);
@@ -491,7 +492,7 @@ class ReverseUintStream {
      may be needed, for instance, if we know another bit stream is
      directly after this one.
    */
-  const int8_t *NextCode() const { return bit_reader_.NextCode(); }
+  const char *NextCode() const { return bit_reader_.NextCode(); }
 
  private:
   ReverseBitStream bit_reader_;
@@ -533,8 +534,8 @@ class IntStream: public UintStream {
  */
 class ReverseIntStream: public ReverseUintStream {
  public:
-  ReverseIntStream(const int8_t *code,
-                   const int8_t *code_memory_end):
+  ReverseIntStream(const char *code,
+                   const char *code_memory_end):
       ReverseUintStream(code, code_memory_end) { }
 
   inline bool Read(int32_t *value) {
@@ -604,10 +605,10 @@ struct TruncationConfig {
            good as usual because we won't have enough stats available.
   */
   TruncationConfig(
-      int num_significant_bits,
-      int alpha,
-      int block_size,
-      int first_block_correction = 5):
+      int32_t num_significant_bits,
+      int32_t alpha,
+      int32_t block_size,
+      int32_t first_block_correction = 5):
       num_significant_bits(num_significant_bits),
       alpha(alpha),
       block_size(block_size),
@@ -909,8 +910,8 @@ class TruncatedIntStream: public IntStream, private Truncation {
 class ReverseTruncatedIntStream: public ReverseIntStream, private Truncation {
  public:
   ReverseTruncatedIntStream(const TruncationConfig &config,
-                            const int8_t *code,
-                            const int8_t *code_memory_end):
+                            const char *code,
+                            const char *code_memory_end):
       ReverseIntStream(code, code_memory_end),
       Truncation(config) { }
 

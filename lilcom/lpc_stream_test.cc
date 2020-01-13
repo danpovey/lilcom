@@ -52,8 +52,6 @@ void lpc_stream_test() {
         error_sumsq_nolpc += (r - r_compressed_nolpc) * (r - r_compressed_nolpc);
         data_sumsq += r * r;
       }
-      ls.Flush();
-      tis.Flush();
 
       /*
         Note: the compression error and bits-per-sample will be less for the

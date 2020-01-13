@@ -41,7 +41,8 @@ class BitStream {
                        The remaining bits MUST BE ZERO.
    */
   inline void Write(int num_bits_in, uint32_t bits_in) {
-    //std::cout << "[Writing " << bits_in << " as " << num_bits_in << " bits].";
+    assert(!flushed_);
+    // std::cout << "[Writing " << bits_in << " as " << num_bits_in << " bits].";
     assert(static_cast<unsigned int>(num_bits_in) <= 32);
     /* assert out-of-range bits are zero. */
     assert((bits_in & ~((1 << num_bits_in) - 1)) == 0);
@@ -58,12 +59,20 @@ class BitStream {
     remaining_num_bits_ = num_bits;
   }
 
+  /* Gets the code that was written.  After calling this, you cannot
+     call Write() any more. */
+  std::vector<char> &Code() {
+    if (!flushed_) Flush();
+    return code_;
+  }
+
+ private:
   /**
-     Flushes out the last partial byte.  This should be called exactly once,
-     after you are done calling Write(), and after that you should not
-     call Write() again.  This is not checked.
+     Flushes out the last partial byte.  This is called exactly once,
+     from Code(), after the user is done calling Write(); after
+     this, Write() must not be called again.
   */
-  inline void Flush() {
+  void Flush() {
     assert(!flushed_);
     flushed_ = true;
     if (remaining_num_bits_ > 0) {
@@ -72,11 +81,8 @@ class BitStream {
     }
   }
 
-  /* Gets the code that was written.  You should not call thes
-     before having called Flush(). */
-  const std::vector<int8_t> &Code() const { assert(flushed_); return code_; }
- private:
-  std::vector<int8_t> code_;
+
+  std::vector<char> code_;
 
   /* remaining_bits contains any bits
      remaining that didn't fit exactly into a byte.
@@ -103,8 +109,8 @@ class ReverseBitStream {
                           attempted to be decoded; in most cases,
                           we'll never reach there.
    */
-  ReverseBitStream(const int8_t *code,
-                   const int8_t *code_memory_end):
+  ReverseBitStream(const char *code,
+                   const char *code_memory_end):
       next_code_(code),
       code_memory_end_(code_memory_end),
       remaining_bits_(0),
@@ -157,13 +163,13 @@ class ReverseBitStream {
      may be needed, for instance, if we know another bit stream is
      directly after this one.
    */
-  const int8_t *NextCode() const { return next_code_; }
+  const char *NextCode() const { return next_code_; }
 
  private:
       /* next_code_ is advanced each time we read a byte; it always points to
          the next byte to be read. */
-  const int8_t *next_code_;
-  const int8_t *code_memory_end_;
+  const char *next_code_;
+  const char *code_memory_end_;
 
   uint64_t remaining_bits_;
   int remaining_num_bits_;

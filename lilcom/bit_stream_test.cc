@@ -4,7 +4,6 @@
 void bit_stream_test_one() {
   BitStream bs;
   bs.Write(8, 255);
-  bs.Flush();
   assert(bs.Code().size() == 1 &&
          bs.Code()[0] == (char)255);
 
@@ -23,7 +22,6 @@ void bit_stream_test_two() {
   BitStream bs;
   for (int i = 0; i < n; i++)
     bs.Write(num_bits[i], bits[i]);
-  bs.Flush();
   ReverseBitStream rbs(&(bs.Code()[0]), &(bs.Code()[0]) + bs.Code().size());
   for (int i = 0; i < n; i++) {
     uint32_t this_bits;
@@ -38,7 +36,6 @@ void bit_stream_test_order() {
   BitStream bs;
   bs.Write(1, 1);
   bs.Write(1, 0);
-  bs.Flush();
   ReverseBitStream rbs(&(bs.Code()[0]), &(bs.Code()[0]) + bs.Code().size());
   uint32_t i;
   rbs.Read(2, &i);

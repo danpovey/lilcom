@@ -16,6 +16,10 @@ fixed_math.o: fixed_math.c
 lilcom: lilcom.c lilcom.h bit_packer.c bit_packer.h encoder.c encoder.h lilcom_common.h
 	g++ -O0 -Wall -g -DLILCOM_TEST=1 lilcom.c -o lilcom -lm # -ftrapv
 
+test: int_math_utils_test int_scalar_test int_vec_test lpc_math_test bit_stream_test int_stream_test lpc_stream_test compression_test
+	for t in $^; do echo "Testing $$t"; ./$$t || exit 1; echo "*** Tested $$t; success ***"; sleep 1; done
+
+
 
 fixed_math: fixed_math.c
 	g++ -O0 -Wall -g -o fixed_math -DFIXED_MATH_TEST=1 fixed_math.c -o fixed_math -lm # -ftrapv
@@ -40,3 +44,6 @@ int_stream_test: int_stream_test.cc int_stream.h bit_stream.h
 
 lpc_stream_test: lpc_stream_test.cc lpc_stream.h bit_stream.h lpc_math.cc lpc_math.h int_stream.h
 	g++ -O0 -Wall -g  lpc_stream_test.cc lpc_math.cc -o lpc_stream_test -lm # -ftrapv
+
+compression_test: compression_test.cc lpc_stream.h bit_stream.h lpc_math.cc compression.h compression.cc lpc_math.h int_stream.h
+	g++ -O0 -Wall -g  compression_test.cc lpc_math.cc compression.cc -o compression_test -lm # -ftrapv

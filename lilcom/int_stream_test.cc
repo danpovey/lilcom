@@ -8,7 +8,6 @@ void uint_stream_test_one() {
   {
     UintStream us;
     us.Write(1);
-    us.Flush();
     /*
       OK, when we write [ 1 ], i.e. a stream with just 1 in it, we write as follows:
      -  00001 as the first_num_bits (a 1 written as 5 bits).  [search for started_ in the code]
@@ -37,7 +36,6 @@ void uint_stream_test_one() {
   {
     UintStream us;
     us.Write(0);
-    us.Flush();
     /*
       OK, when we write 0 we write as follows:
      -  00000  as the first_num_bits (0 written as 5 bits).  [search for started_ in the code]
@@ -62,7 +60,6 @@ void uint_stream_test_one() {
   {
     UintStream us;
     us.Write(17);
-    us.Flush();
 
     /* The logic is similar to above, except we write 17.  We write as follows:
         - 00101 == 5 as the first_num_bits (since 17 needs 5 bits to write).
@@ -107,7 +104,6 @@ void int_stream_test_two() {
         input[i] = r;
         us.Write(r);
       }
-      us.Flush();
 
       ReverseUintStream rus(&(us.Code()[0]),
                             &(us.Code()[0]) + us.Code().size());
@@ -153,7 +149,6 @@ void test_truncation_config_io() {
   IntStream is;
   int format_version = 1;
   s.Write(&is, format_version);
-  is.Flush();
   ReverseIntStream ris(&is.Code()[0],
                        &is.Code()[0] + is.Code().size());
   TruncationConfig s2;
@@ -201,7 +196,6 @@ void truncated_int_stream_test() {
                 << ": avg-compression-error=" << (sqrt(error_sumsq * 1.0 / num_ints))
                 << std::endl;
 
-      tis.Flush();
       ReverseTruncatedIntStream rtis(config,
                                      &(tis.Code()[0]),
                                      &(tis.Code()[0]) + tis.Code().size());
@@ -256,7 +250,6 @@ void int_stream_test_gauss() {
     for (int i = 0; i < 10000; i++) {
       is.Write(buffer[i]);
     }
-    is.Flush();
 
 
     ReverseIntStream ris(&(is.Code()[0]),
