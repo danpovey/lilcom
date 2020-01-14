@@ -160,6 +160,23 @@ struct LpcConfig {
     }
   }
 
+  bool SetConfig(const char *name, int32_t value) {
+    if (!strcmp(name, "lpc-order"))
+        lpc_order = value;
+    else if (!strcmp(name, "block-size"))
+      block_size = value;
+    else if (!strcmp(name, "eta-inv"))
+      eta_inv = value;
+    else if (!strcmp(name, "diag-smoothing-power"))
+      diag_smoothing_power = value;
+    else if (!strcmp(name, "abs-smoothing-power"))
+      abs_smoothing_power = value;
+    else
+      return false;
+    return true;
+  }
+
+
   operator std::string () const {
     std::ostringstream os;
     os << "LpcConfig{ lpc-order=" << lpc_order

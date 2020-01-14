@@ -676,7 +676,26 @@ struct TruncationConfig {
     return os.str();
   }
 
+  /*
+    Sets configuration values by name and value.  Returns true on success, false
+    if the name did not match any value.
 
+    The user should call IsValid() after setting all configuration values, to
+    make sure they are consistent.
+   */
+  bool SetConfig(const char *name, int32_t value) {
+    if (!strcmp(name, "num-significant-bits"))
+      num_significant_bits = value;
+    else if (!strcmp(name, "alpha"))
+      alpha = value;
+    else if (!strcmp(name, "block-size"))
+      block_size = value;
+    else if (!strcmp(name, "first-block-correction"))
+      first_block_correction = value;
+    else
+      return false;
+    return true;
+  }
 
   /* These types could have been int, but it's more convenient
      for the I/O code if they are fixed-size types. */

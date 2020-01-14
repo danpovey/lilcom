@@ -14,8 +14,6 @@ extern "C" {
      which is necessary for Python to find them.
    */
 
-
-
   static CompressorConfig * capsule_to_CompressorConfig(PyObject * obj) {
     return (CompressorConfig*) PyCapsule_GetPointer(obj, "CompressorConfig");
   }
@@ -317,7 +315,8 @@ static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject *keywds
      "compressed-file object to be passed to decompress_int16()."},
     {"decompress_int16", (PyCFunction) decompress_int16, METH_FASTCALL,
      "Takes a compressed-file object (from init_decompression_int16) and an "
-     "appropriately sized NumPy array, and returns bytes object, returns a tuple (o, num_channels, num_samples) where o is an "
+     "appropriately sized NumPy array, and returns bytes object, returns a tuple "
+     "(o, num_channels, num_samples) where o is an "
      "opaque object to be passed to decompress_int16()."},
     {NULL, NULL, 0, NULL}
   };

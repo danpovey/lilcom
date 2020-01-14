@@ -67,6 +67,32 @@ struct CompressorConfig {
   /* Returns true if this object has valid configuration values. */
   bool IsValid() const;
 
+  /*
+    Sets configuration values by name and value.  Returns true on success, false
+    if the name did not match any value.   Examples of valid names:
+    "format-version", "truncation.num-significant-bits", ...
+
+    The user should call IsValid() after setting all configuration values, to
+    make sure they are consistent.
+   */
+  bool SetConfig(const char *name, int32_t value) {
+    if (!strcmp(name, "format-version"))
+      format_version = value;
+    else if (!strcmp(name, "chunk-size"))
+      chunk_size = value;
+    else if (!strcmp(name, "sampling-rate"))
+      sampling_rate = value;
+    else if (!strcmp(name, "num-channels"))
+      num_channels = value;
+    else if (!strncmp(name, "lpc.", 4))
+      return lpc.SetConfig(name + 4, value);
+    else if (!strncmp(name, "truncation.", 11))
+      return truncation.SetConfig(name + 11, value);
+    else
+      return false;
+    return true;
+  }
+
   operator std::string () const {
     std::ostringstream os;
     os << "CompressorConfig{ format-version=" << format_version
