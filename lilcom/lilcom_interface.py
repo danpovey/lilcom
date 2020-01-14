@@ -4,7 +4,8 @@ from . import lilcom_extension
 
 
 def test_compression_header():
-  h = lilcom_extension.create_compressor_config(42100, 2, 3, 4)
+  dict = {'lpc.lpc_order':8}
+  h = lilcom_extension.create_compressor_config(42100, 2, 3, 4, **dict)
   print("header is: {} = {}".format(h, lilcom_extension.compressor_config_to_str(h)))
 
 

@@ -48,12 +48,12 @@ void compressor_config_test() {
           bool ans = config2.Read(&ris);
           assert(ans && config2 == config);
 
-          assert(config.SetConfig("num-channels", 14) && config.num_channels == 14);
-          assert(config.SetConfig("lpc.block-size", 1) && config.lpc.block_size == 1);
+          assert(config.SetConfig("num_channels", 14) && config.num_channels == 14);
+          assert(config.SetConfig("lpc.block_size", 1) && config.lpc.block_size == 1);
           assert(config.SetConfig("truncation.alpha", 50) && config.truncation.alpha == 50);
           assert(!config.SetConfig("truncation.alphafoofoo", 50));
-          assert(!config.SetConfig("abcd"));
-          assert(!config.SetConfig("lpc.abcd"));
+          assert(!config.SetConfig("abcd", 0));
+          assert(!config.SetConfig("lpc.abcd", 0));
         }
       }
     }

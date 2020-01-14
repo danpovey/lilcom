@@ -72,14 +72,44 @@ static PyObject *create_compressor_config(PyObject *self, PyObject *args, PyObje
   static char *kwlist[] = {"sampling_rate", "num_channels", "loss_level",
                            "compression_level", NULL};
 
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "iiii", kwlist,
-                                   &sampling_rate, &num_channels,
-                                   &loss_level, &compression_level))
+  if (!PyArg_ParseTuple(args, "iiii",
+                        &sampling_rate, &num_channels,
+                        &loss_level, &compression_level))
     Py_RETURN_NONE;
 
   CompressorConfig *c = new CompressorConfig(sampling_rate, num_channels,
                                              loss_level, compression_level);
+
+
+  {  /* Parse any keywords.  For instance, you can have chunk_size=16, or
+      * lpc.lpc_order = 4. */
+    PyObject *key, *value;
+    Py_ssize_t pos = 0;
+
+    while (PyDict_Next(keywds, &pos, &key, &value)) {
+      const char *name = PyUnicode_AsUTF8(key);
+      int32_t value_int = PyLong_AsLong(value);
+      if (name == NULL) {
+        PyErr_SetString(PyExc_TypeError, "Expected string as keyword-dict key");
+        return NULL;
+      } else if (value_int == -1 && PyErr_Occurred()) {
+        char buf[100];
+        snprintf(buf, 100, "Expected integer as arg to keyword=%s", name);
+        PyErr_SetString(PyExc_TypeError, buf);
+        return NULL;
+      } else if (!(c->SetConfig(name, value_int))) {
+        char buf[100];
+        snprintf(buf, 100, "Unexpected configuration value %s=%d", name,
+                 value_int);
+        PyErr_SetString(PyExc_ValueError, buf);
+        return NULL;
+      }  /* Else: successfully set configuration value. */
+    }
+  }
+
   if (!c->IsValid()) {
+    PyErr_SetString(PyExc_ValueError, "Invalid configuration values passed, "
+                      "validity check failed");
     delete c;
     Py_RETURN_NONE;
   }

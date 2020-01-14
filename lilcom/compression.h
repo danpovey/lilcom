@@ -70,23 +70,23 @@ struct CompressorConfig {
   /*
     Sets configuration values by name and value.  Returns true on success, false
     if the name did not match any value.   Examples of valid names:
-    "format-version", "truncation.num-significant-bits", ...
+    "format_version", "truncation.num_significant_bits", ...
 
     The user should call IsValid() after setting all configuration values, to
     make sure they are consistent.
    */
   bool SetConfig(const char *name, int32_t value) {
-    if (!strcmp(name, "format-version"))
+    if (!strcmp(name, "format_version"))
       format_version = value;
-    else if (!strcmp(name, "chunk-size"))
+    else if (!strcmp(name, "chunk_size"))
       chunk_size = value;
-    else if (!strcmp(name, "sampling-rate"))
+    else if (!strcmp(name, "sampling_rate"))
       sampling_rate = value;
-    else if (!strcmp(name, "num-channels"))
+    else if (!strcmp(name, "num_channels"))
       num_channels = value;
-    else if (!strncmp(name, "lpc.", 4))
+    else if (!strncmp(name, "lpc", 3) && (name[3] == '.' || name[3] == '_'))
       return lpc.SetConfig(name + 4, value);
-    else if (!strncmp(name, "truncation.", 11))
+    else if (!strncmp(name, "truncation", 10) && (name[10] == '.' || name[10] == '_'))
       return truncation.SetConfig(name + 11, value);
     else
       return false;

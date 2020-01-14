@@ -684,13 +684,13 @@ struct TruncationConfig {
     make sure they are consistent.
    */
   bool SetConfig(const char *name, int32_t value) {
-    if (!strcmp(name, "num-significant-bits"))
+    if (!strcmp(name, "num_significant_bits"))
       num_significant_bits = value;
     else if (!strcmp(name, "alpha"))
       alpha = value;
-    else if (!strcmp(name, "block-size"))
+    else if (!strcmp(name, "block_size"))
       block_size = value;
-    else if (!strcmp(name, "first-block-correction"))
+    else if (!strcmp(name, "first_block_correction"))
       first_block_correction = value;
     else
       return false;

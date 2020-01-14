@@ -161,15 +161,15 @@ struct LpcConfig {
   }
 
   bool SetConfig(const char *name, int32_t value) {
-    if (!strcmp(name, "lpc-order"))
+    if (!strcmp(name, "lpc_order"))
         lpc_order = value;
-    else if (!strcmp(name, "block-size"))
+    else if (!strcmp(name, "block_size"))
       block_size = value;
-    else if (!strcmp(name, "eta-inv"))
+    else if (!strcmp(name, "eta_inv"))
       eta_inv = value;
-    else if (!strcmp(name, "diag-smoothing-power"))
+    else if (!strcmp(name, "diag_smoothing_power"))
       diag_smoothing_power = value;
-    else if (!strcmp(name, "abs-smoothing-power"))
+    else if (!strcmp(name, "abs_smoothing_power"))
       abs_smoothing_power = value;
     else
       return false;
