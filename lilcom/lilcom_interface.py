@@ -1,6 +1,39 @@
 import numpy as np
 
-from . import lilcom_c_extension
+from . import lilcom_extension
+
+
+def test_compression_header():
+  h = lilcom_extension.create_compressor_config(42100, 2, 3, 4)
+  print("header is: {} = {}".format(h, lilcom_extension.compressor_config_to_str(h)))
+
+
+def test_compression():
+  num_channels = 2
+
+  h = lilcom_extension.create_compressor_config(42100, num_channels, 3, 4)
+
+  print("header is: {} = {}".format(h, lilcom_extension.compressor_config_to_str(h)))
+
+  a = ((np.random.rand(num_channels, 15) - 0.5) * 65535).astype(np.int16)
+
+  print("array is: {}, dtype={}", a, a.dtype)
+
+  bytes = lilcom_extension.compress_int16(a, h)
+
+  print("ans is ", bytes)
+
+  x = lilcom_extension.init_decompression_int16(bytes)
+  print("Ans from init-decompression is ", x)
+  (cf, num_channels, num_samples) = x
+
+  out_array = np.empty((num_channels, num_samples), dtype=np.int16)
+
+  ret = lilcom_extension.decompress_int16(cf, out_array)
+
+  print("Ret from decompress_int16 is ", ret)
+
+  print("Array after decompress_int16 is ", out_array)
 
 
 def compress(input, axis, lpc_order=4, bits_per_sample=8,

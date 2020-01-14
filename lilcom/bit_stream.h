@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <vector>
+#include <iostream>
 
 
 /**
@@ -42,7 +43,7 @@ class BitStream {
    */
   inline void Write(int num_bits_in, uint32_t bits_in) {
     assert(!flushed_);
-    // std::cout << "[Writing " << bits_in << " as " << num_bits_in << " bits].";
+    std::cout << "[Writing " << bits_in << " as " << num_bits_in << " bits].";
     assert(static_cast<unsigned int>(num_bits_in) <= 32);
     /* assert out-of-range bits are zero. */
     assert((bits_in & ~((1 << num_bits_in) - 1)) == 0);

@@ -14,16 +14,18 @@ CompressorConfig::CompressorConfig(int32_t sampling_rate, int32_t num_channels,
      overhead of storing the bytes-per-chunk. */
   chunk_size = 8192;
 
-  assert(loss_level >= 0 && loss_level <= 5);
   if (loss_level == 0) {
     /* no truncation.  Later we can bypass the truncation code in this case,
        for speed. */
     truncation.num_significant_bits = 18;
-  } else {
+  } else if (loss_level > 0 && loss_level <= 5) {
     /* 7, 6, 5, 4 or 3 bits minimum.  Note: because we set alpha smallish,
        more bits than this will actually be used.
      */
     truncation.num_significant_bits = 8 - compression_level;
+  } else {
+    /* Make the object invalid, IsValid() will fail. */
+    sampling_rate = -1;
   }
   truncation.alpha = 4;
   truncation.block_size = 16;
@@ -58,6 +60,9 @@ CompressorConfig::CompressorConfig(int32_t sampling_rate, int32_t num_channels,
       lpc.eta_inv = 64;
       lpc.lpc_order = 2;
       break;
+    default:
+      /* Make the object invalid, IsValid() will fail. */
+      sampling_rate = -1;
   }
 }
 
@@ -254,7 +259,7 @@ bool CompressedFile::ReadData(
     for (; cur_chunk < num_complete_chunks_ + (partial_chunk_size_ != 0 ? 1 : 0);
          cur_chunk++) {
       int32_t index_into_chunks = cur_chunk * config_.num_channels + channel;
-      if (index_into_chunks >= chunks_.size()) {
+      if (index_into_chunks >= (int32_t)chunks_.size()) {
         std::cout << "A\n";
         return false;  /* e.g. could happen if the whole file was not present. */
       }
@@ -321,7 +326,7 @@ char* CompressedFile::Write(size_t *length) {
     memcpy(cur, chunks_[i]->data, chunks_[i]->size());
     cur += chunks_[i]->size();
   }
-  assert(cur - ans == total_size);
+  assert((size_t)(cur - ans) == total_size);
   return ans;
 }
 
@@ -339,8 +344,9 @@ int CompressedFile::InitForReading(const char *input, const char *input_end) {
 
 
 void CompressedFile::CompressChunkSizes() {
-  assert(chunks_.size() == config_.num_channels *
-         (num_complete_chunks_ + (partial_chunk_size_ > 0 ? 1 : 1)));
+  assert(chunks_.size() ==
+         (size_t)(config_.num_channels *
+                  (num_complete_chunks_ + (partial_chunk_size_ > 0 ? 1 : 1))));
   IntStream is;
   int32_t prev_size = 0;
   for (size_t i = 0; i < chunks_.size(); i++) {

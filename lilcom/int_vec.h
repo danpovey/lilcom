@@ -700,14 +700,14 @@ inline void zero_int_vector(IntVec<I> *v) {
   v->check();
 }
 
+#ifndef NDEBUG
 template <typename I> void IntVec<I>::check() const {
   if (dim == 0) {
     assert(data == 0);
     return;
   } else {
     assert(dim > 0);
-    int recomputed_nrsb = array_lrsb(data, dim);
-    assert(nrsb == recomputed_nrsb);
+    assert(nrsb == array_lrsb(data, dim));
     if (nrsb == sizeof(I)*8 - 1 && data_is_zero(data, dim)) {
       assert(exponent == kExponentOfZero);
     } else {
@@ -715,6 +715,7 @@ template <typename I> void IntVec<I>::check() const {
     }
   }
 }
+#endif /* #ifndef NDEBUG */
 
 template <typename I>
 IntVec<I>::IntVec(const IntVec<I> &other) {

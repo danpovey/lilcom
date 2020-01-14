@@ -24,16 +24,17 @@ import numpy
 def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
-extension_mod = Extension("lilcom.lilcom_c_extension",
-                          sources=["lilcom/lilcom_c_extension.c",
-                                   "lilcom/lilcom.c" ],
+extension_mod = Extension("lilcom.lilcom_extension",
+                          sources=["lilcom/lilcom_extension.cc",
+                                   "lilcom/lpc_math.cc",
+                                   "lilcom/compression.cc"],
                           # Actually it turns out that the optimization level
                           # and debugging code makes very little difference to
                           # the speed, so we're using options designed to
                           # catch errors.  -ftrapv detects overflow in
                           # signed integer arithmetic (which technically
                           # leads to undefined behavior).
-                          extra_compile_args=["-g", "-Wall"], #, "-ftrapv"],
+                          extra_compile_args=["-g", "-Wall", "-UNDEBUG", "-Wno-c++11-compat-deprecated-writable-strings"], #, "-ftrapv"],
                           include_dirs=[numpy.get_include()])
 
 setup(

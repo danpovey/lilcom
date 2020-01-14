@@ -76,6 +76,7 @@ class UintStream {
     write any more to the stream.
    */
   void Flush() {
+    std::cout << ".. Flushed stream\n";
     assert(!flushed_);
     assert(!buffer_.empty());  /* check that data has been written. */
     flushed_ = true;
@@ -668,7 +669,7 @@ struct TruncationConfig {
   operator std::string () const {
     std::ostringstream os;
     os << "TruncationConfig{ num-significant-bits=" << num_significant_bits
-       << ", alpha" << alpha
+       << ", alpha=" << alpha
        << ", block-size=" << block_size
        << ", first-block-correction=" << first_block_correction
        << " }";
@@ -907,6 +908,9 @@ class TruncatedIntStream: public IntStream, private Truncation {
     }
     *decompressed_value_out = static_cast<int16_t>(decompressed_value);
     *decompressed_residual_out = decompressed_residual;
+
+    std::cout << "[T: writing " << residual << "(value=" << (predicted+residual)
+              << ") truncated to " << truncated_residual << "]";
 
     IntStream::Write(truncated_residual);
     /* Update the truncation base-class, which keeps NumTruncatedBits() up to

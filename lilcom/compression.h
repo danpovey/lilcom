@@ -42,6 +42,9 @@ struct CompressorConfig {
       @param [in] compression_level    Dictates the speed / file-size tradeoff.
                                  0 == fastest, but biggest file; 5 == slowest,
                                  smallest file.
+
+    If any of the args are invalid, this will create an object
+    on which IsValid() will return false.
    */
   CompressorConfig(int32_t sampling_rate, int32_t num_channels,
                    int loss_level, int compression_level);
@@ -75,6 +78,9 @@ struct CompressorConfig {
        << " }";
     return os.str();
   }
+
+  /* FOR TEST ONLY */
+  // ~CompressorConfig() { std::cout << "In destructor: " << (std::string)*this; }
 
 };
 

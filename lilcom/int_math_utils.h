@@ -400,11 +400,11 @@ template <typename I>   // Note: you have to explicitly use the template argumen
 template <typename I>
 inline I safe_shift_by(I i, int shift) {
   if (shift >= 0) {
-    if (shift >= 8 * sizeof(I)) return 0;
+    if (shift >= (int)(8 * sizeof(I))) return 0;
     else return i >> shift;
   } else {
     /* It wouldn't make sense to shift by more than this... */
-    assert(shift > -8 * sizeof(I));
+    assert(shift > -8 * (int)sizeof(I));
     return i << -shift;
   }
 }
@@ -417,7 +417,7 @@ inline I safe_shift_by(I i, int shift) {
 template <typename I>
 inline void safe_shift_array_by(I *data, int dim, int shift) {
   if (shift >= 0) {
-    if (shift >= 8 * sizeof(I)) {
+    if (shift >= 8 * (int)sizeof(I)) {
       for (int i = 0; i < dim; i++)
         data[i] = 0;
     } else {
@@ -426,7 +426,7 @@ inline void safe_shift_array_by(I *data, int dim, int shift) {
           data[i] >>= shift;
     }
   } else {
-    assert(shift > -8 * sizeof(I));
+    assert(shift > -8 * (int)sizeof(I));
     for (int i = 0; i < dim; i++)
       data[i] <<= -shift;
   }
