@@ -741,11 +741,14 @@ IntVec<I>::IntVec(const IntVec<I> &other) {
                     signal[-(lpc_coeffs->dim-1)] that are inspected.
      @return      Returns the predicted signal value, truncated to
                   fit in int16_t.
+
+   WARNING: requires that lpc_coeffs->exponent be negative.
  */
 inline int16_t compute_lpc_prediction(const int16_t *signal,
                                       const IntVec<int32_t> *lpc_coeffs) {
   int num_lpc_coeffs = lpc_coeffs->dim;
   int right_shift = -lpc_coeffs->exponent;
+  assert(right_shift > 0);
   /* round_to_nearest_offset is something we add to the signal so that
      it will do rounding-to-nearest instead of rounding-down.
      (Note: right-shift >> will have the effect of rounding even

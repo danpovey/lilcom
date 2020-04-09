@@ -34,14 +34,14 @@ extern "C" {
   The following will document this function as if it were a native
   Python function.
 
-  def create_compressor_config(sampling_rate, num_channels,
+  def create_compressor_config(sample_rate, num_channels,
                               loss_level, compression_level):
       """ Creates and returns an opaque configuration object that
           can be used for lilcom compression, or None if there
           was an error.
 
           Args:
-           sampling_rate  Sampling rate of the signal, in Hz.  This does not
+           sample_rate  Sampling rate of the signal, in Hz.  This does not
                      affect anything, it is passed through the compression
                      and back to the user.
            num_channels  Number of channels in the signal, e.g. 1 for
@@ -60,28 +60,18 @@ extern "C" {
  */
 static PyObject *create_compressor_config(PyObject *self, PyObject *args, PyObject *keywds) {
 
-  int sampling_rate, num_channels,
+  int sample_rate, num_channels,
       loss_level, compression_level;
 
-
-  /* Reading and information - extracting for input data
-     From the python function there are two numpy arrays and an intger (optional) LPC_order
-     passed to this madule. Following part will parse the set of variables and store them in corresponding
-     objects.
-  */
-  static char *kwlist[] = {"sampling_rate", "num_channels", "loss_level",
-                           "compression_level", NULL};
-
   if (!PyArg_ParseTuple(args, "iiii",
-                        &sampling_rate, &num_channels,
+                        &sample_rate, &num_channels,
                         &loss_level, &compression_level))
     Py_RETURN_NONE;
 
-  CompressorConfig *c = new CompressorConfig(sampling_rate, num_channels,
+  CompressorConfig *c = new CompressorConfig(sample_rate, num_channels,
                                              loss_level, compression_level);
 
-
-  {  /* Parse any keywords.  For instance, you can have chunk_size=16, or
+  if (keywds) {  /* Parse any keywords.  For instance, you can have chunk_size=16, or
       * lpc.lpc_order = 4. */
     PyObject *key, *value;
     Py_ssize_t pos = 0;
@@ -239,10 +229,10 @@ static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject *keywds
             `bytes` must be a bytes object
          Return:
             If `bytes` had the expected format and was not truncated,
-            this function will return a tuple:
-               (decompressor, num_channels, num_samples)
+            this function will return a tuple of ints:
+               (decompressor, num_channels, num_samples, sample_rate)
             where `decompressor` is an opaque object that should later be passed
-            to `decompress_part_int16`.
+            to `decompress_int16`.
 
             Otherwise, this function will return None.
          """
@@ -267,7 +257,8 @@ static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject *keywds
         Py_RETURN_NONE;
       } else {
         PyObject *f_capsule = CompressedFile_to_capsule(f, bytes);
-        return Py_BuildValue("Oll", f_capsule, (long)f->NumChannels(), (long)f->NumSamples());
+        return Py_BuildValue("Olll", f_capsule, (long)f->NumChannels(),
+                             (long)f->NumSamples(), (long)f->Config().sample_rate);
       }
     } catch (std::bad_alloc) {
       PyErr_SetString(PyExc_MemoryError,

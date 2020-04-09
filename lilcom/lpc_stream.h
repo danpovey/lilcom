@@ -29,7 +29,10 @@ class LpcPrediction: public int_math::ToeplitzLpcEstimator {
   { }
 
   inline int16_t GetPrediction() const {
-    const int16_t *buffer_pos = buffer_start_ + (t_ % Config().block_size);
+    int offset = (t_ % Config().block_size);
+    if (offset == 0)
+      offset = Config().block_size;
+    const int16_t *buffer_pos = buffer_start_ + offset;
     return int_math::compute_lpc_prediction(
         buffer_pos, &(GetLpcCoeffs()));
   }
@@ -41,12 +44,15 @@ class LpcPrediction: public int_math::ToeplitzLpcEstimator {
       @param [in] residual     The resdidual, must equal
                     . GetPrediction() - value.
    */
-
   inline void AdvanceLpcState(int16_t value, int32_t residual) {
+    raw_sumsq_ += value * value;
+    residual_sumsq_ += residual * residual;
     int t_mod = t_ % Config().block_size;
-    /* TODO: remove this assertion*/
-    assert(t_mod > 2 || residual == value - (int32_t)GetPrediction());
-    if (t_mod == 0 && t_ != 0) {
+    /* TODO: remove this assertion */
+    assert(residual == value - (int32_t)GetPrediction());
+    buffer_start_[t_mod] = value;
+    residual_[t_mod] = residual;
+    if (t_mod + 1 == Config().block_size) {
       ToeplitzLpcEstimator::AcceptBlock(buffer_start_,
                                         &(residual_[0]));
       /* Copy context to the `lpc_order` samples preceding buffer_start_. */
@@ -55,13 +61,17 @@ class LpcPrediction: public int_math::ToeplitzLpcEstimator {
         buffer_start_[i] = buffer_start_[Config().block_size + i];
       }
     }
-    buffer_start_[t_mod] = value;
-    residual_[t_mod] = residual;
     t_++;
   }
 
+  ~LpcPrediction() {
+    //std::cout << "residual/raw=" << (residual_sumsq_/raw_sumsq_) << "\n";
+  }
 
  private:
+
+  double raw_sumsq_;
+  double residual_sumsq_;
 
   /* t_ starts at 0 and is incremented every time SetValue() is called. */
   int t_;
@@ -115,7 +125,6 @@ class LpcStream: public TruncatedIntStream, LpcPrediction {
     TruncatedIntStream::WriteLimited(residual, prediction,
                                      &decompressed_value,
                                      &decompressed_residual);
-
     AdvanceLpcState(decompressed_value, decompressed_residual);
     if (decompressed_value_out)
       *decompressed_value_out = decompressed_value;

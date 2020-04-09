@@ -4,9 +4,9 @@
 
 
 
-CompressorConfig::CompressorConfig(int32_t sampling_rate, int32_t num_channels,
+CompressorConfig::CompressorConfig(int32_t sample_rate, int32_t num_channels,
                                    int loss_level, int compression_level):
-    sampling_rate(sampling_rate),
+    sample_rate(sample_rate),
     num_channels(num_channels) {
   format_version = 1;
   /* chunk_size_ is not very critical, it only affects the tradeoff between the
@@ -25,7 +25,7 @@ CompressorConfig::CompressorConfig(int32_t sampling_rate, int32_t num_channels,
     truncation.num_significant_bits = 8 - compression_level;
   } else {
     /* Make the object invalid, IsValid() will fail. */
-    sampling_rate = -1;
+    sample_rate = -1;
   }
   truncation.alpha = 4;
   truncation.block_size = 16;
@@ -62,7 +62,7 @@ CompressorConfig::CompressorConfig(int32_t sampling_rate, int32_t num_channels,
       break;
     default:
       /* Make the object invalid, IsValid() will fail. */
-      sampling_rate = -1;
+      sample_rate = -1;
   }
 }
 
@@ -71,7 +71,7 @@ CompressorConfig::CompressorConfig(const CompressorConfig &other):
     truncation(other.truncation),
     lpc(other.lpc),
     chunk_size(other.chunk_size),
-    sampling_rate(other.sampling_rate),
+    sample_rate(other.sample_rate),
     num_channels(other.num_channels) {
   assert(IsValid());
 }
@@ -82,7 +82,7 @@ bool CompressorConfig::IsValid() const {
           lpc.IsValid() &&
           chunk_size >= 16 &&  /* actually chunk_size should be way larger, but
                                 * we allow this for test purposes.. */
-          sampling_rate > 0 &&
+          sample_rate > 0 &&
           num_channels > 0);
 }
 
@@ -92,7 +92,7 @@ void CompressorConfig::Write(IntStream *is) const {
   truncation.Write(is);
   lpc.Write(is);
   is->Write(chunk_size);
-  is->Write(sampling_rate);
+  is->Write(sample_rate);
   is->Write(num_channels);
 }
 
@@ -101,7 +101,7 @@ bool CompressorConfig::Read(ReverseIntStream *ris) {
       truncation.Read(format_version, ris) &&
       lpc.Read(format_version, ris) &&
       ris->Read(&chunk_size) &&
-      ris->Read(&sampling_rate) &&
+      ris->Read(&sample_rate) &&
       ris->Read(&num_channels) &&
       IsValid();
 }

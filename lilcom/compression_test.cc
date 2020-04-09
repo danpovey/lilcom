@@ -27,18 +27,18 @@ inline bool operator == (const CompressorConfig &a, const CompressorConfig &b) {
       a.truncation == b.truncation &&
       a.lpc == b.lpc &&
       a.chunk_size == b.chunk_size &&
-      a.sampling_rate == b.sampling_rate &&
+      a.sample_rate == b.sample_rate &&
       a.num_channels == b.num_channels;
 }
 
 
 void compressor_config_test() {
-  int sampling_rate = 42100;
+  int sample_rate = 42100;
   for (int num_channels = 1; num_channels < 5; num_channels++) {
     for (int num_samples = 10; num_samples * num_channels < 500; num_samples++) {
       for (int loss_level = 0; loss_level <= 5; loss_level++) {
         for (int compression_level = 0; compression_level <= 5; compression_level++) {
-          CompressorConfig config(sampling_rate, num_channels, loss_level,
+          CompressorConfig config(sample_rate, num_channels, loss_level,
                                   compression_level);
           IntStream is;
           config.Write(&is);
@@ -80,12 +80,12 @@ void compressed_file_test() {
   int16_t input[500],
       decompressed[500];
 
-  int sampling_rate = 42100;
+  int sample_rate = 42100;
   for (int num_channels = 1; num_channels < 5; num_channels++) {
     for (int num_samples = 10; num_samples * num_channels < 500; num_samples += (1 + num_samples)) {
       for (int loss_level = 0; loss_level <= 5; loss_level++) {
         for (int compression_level = 0; compression_level <= 5; compression_level++) {
-          CompressorConfig config(sampling_rate, num_channels, loss_level,
+          CompressorConfig config(sample_rate, num_channels, loss_level,
                                   compression_level);
           std::cout << "Config is: " << (std::string)config << "\n";
           if (loss_level + compression_level % 2 == 0)

@@ -24,8 +24,8 @@ struct CompressorConfig {
    */
   int32_t chunk_size;
 
-  /* `sampling_rate` is the sampling rate in Hz.  Must be > 0. */
-  int32_t sampling_rate;
+  /* `sample_rate` is the sampling rate in Hz.  Must be > 0. */
+  int32_t sample_rate;
 
   /* `num_channels` is the number of channels, e.g. 1 for mono, 2 for stereo.
       Must be > 0.*/
@@ -35,7 +35,7 @@ struct CompressorConfig {
   /*
     Constructor that creates reasonable default parameters
 
-      @param [in] sampling_rate  Sampling rate in Hz
+      @param [in] sample_rate  Sampling rate in Hz
       @param [in] num_channels   Number of channels in the file, e.g. 1 or 2.
       @param [in] loss_level     Dictates how lossy the compression will be.
                                  0 == lossless, 5 == most lossy.
@@ -46,7 +46,7 @@ struct CompressorConfig {
     If any of the args are invalid, this will create an object
     on which IsValid() will return false.
    */
-  CompressorConfig(int32_t sampling_rate, int32_t num_channels,
+  CompressorConfig(int32_t sample_rate, int32_t num_channels,
                    int loss_level, int compression_level);
 
   /* Copy constructor */
@@ -80,8 +80,8 @@ struct CompressorConfig {
       format_version = value;
     else if (!strcmp(name, "chunk_size"))
       chunk_size = value;
-    else if (!strcmp(name, "sampling_rate"))
-      sampling_rate = value;
+    else if (!strcmp(name, "sample_rate"))
+      sample_rate = value;
     else if (!strcmp(name, "num_channels"))
       num_channels = value;
     else if (!strncmp(name, "lpc", 3) && (name[3] == '.' || name[3] == '_'))
@@ -99,7 +99,7 @@ struct CompressorConfig {
        << ", truncation=" << (std::string)truncation
        << ", lpc=" << (std::string)lpc
        << ", chunk-size=" << chunk_size
-       << ", sampling-rate=" << sampling_rate
+       << ", sample-rate=" << sample_rate
        << ", num-channels=" << num_channels
        << " }";
     return os.str();
@@ -264,6 +264,9 @@ class CompressedFile {
 
   /* Returns the number of channels */
   int32_t NumChannels() const { return config_.num_channels; }
+
+
+  const CompressorConfig &Config() const { return config_; }
 
   /*
      Outputs some portion of the data to `data`.

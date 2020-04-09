@@ -187,21 +187,20 @@ void ToeplitzLpcEstimator::AcceptBlock(
 
 
   /*
-    We need to guarantee that the exponent won't be negative, to avoid having to
+    We need to guarantee that the exponent is negative, to avoid having to
     introduce additional complexity into the residual computation.  The analysis
     to do that is a little complex, so we just test it and left-shift if needed.
     This should never fail (proof would involve the diag_smoothing constant, which
     of course would have to be >= -32 and probably some number strictly greater
     than -32).
   */
-  if (lpc_coeffs_.exponent > 0) {
-    assert(!(lpc_coeffs_.exponent > lpc_coeffs_.nrsb) &&
+  if (lpc_coeffs_.exponent >= 0) {
+    assert(!(lpc_coeffs_.exponent+1 > lpc_coeffs_.nrsb) &&
            "LPC coefficients should not be able to get this large!");
     for (int i = 0; i < config_.lpc_order; i++)
-      lpc_coeffs_.data[i] <<= lpc_coeffs_.exponent;
-    lpc_coeffs_.exponent = 0;
+      lpc_coeffs_.data[i] <<= (lpc_coeffs_.exponent + 1);
+    lpc_coeffs_.exponent = -1;
   }
-
 }
 
 void ToeplitzLpcEstimator::ApplyAutocorrSmoothing() {

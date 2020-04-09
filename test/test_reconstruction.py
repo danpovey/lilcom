@@ -1,6 +1,5 @@
 #!/usr/bin/python3
 """
-Details about the Doument:
 This script runs a test to compare lilcom's reconstruction accuracy
     and compare it with known MP3 bitrates. The script accepts additional
     arguments which by running `./test_reconstruction.py --help` all
@@ -149,36 +148,9 @@ def logger(logmod="initialization", reportList=None):
     return
 
 
-def lilcomReconstruct(audioArray, lpcOrder):
-    """ This function will reconstruct the given audio array in form of a
-            conescutive compression and decompression procedure.
-
-       Args:
-        audioArray: A numpy array as the audio signal
-        lcpOrder: Same as lcpOrder in the main lilcom functions
-
-       Returns:
-           an Audio array with same size to the array passed as input which
-            is a result of compresion and decompresion
-    """
-    bitPerSample = 6  # Issue make it passed by the operator
-    # bitsPerSample Should be recieved from settings
-    audioArray = audioArray.astype(np.float32)
-    outputShape = list(audioArray.shape)
-
-    outputShape[0] += 4
-    outputShape = tuple(outputShape)
-
-    outputArray = np.ndarray(outputShape, np.int8)
-    reconstructedArray = np.ndarray(audioArray.shape, np.int16)
-
-    c = lilcom.compress(audioArray, lpc_order=lpcOrder,
-                        bits_per_sample=bitPerSample, axis=0)
-    reconstructedArray = lilcom.decompress(c, dtype=audioArray.dtype)
-    return reconstructedArray
-
-
 def MP3Reconstruct(filename, bitrate):
+    # returns (reconstructed_data, actual-num-bytes)
+
     # Creating a temporary path for MP3 and reconstruction File
     tmpPath = "./ReconstTemp"
     if tmpPath[2:] in os.listdir("./"):
@@ -188,12 +160,13 @@ def MP3Reconstruct(filename, bitrate):
     wavFile.export(tmpPath + "/output.mp3", format="mp3", bitrate=bitrate)
     # print("At bitrate {}, file {} compresses to {} bytes".format(
     #    bitrate, filename, os.path.getsize(tmpPath + "/output.mp3")))
+    file_size = os.path.getsize(tmpPath + "/output.mp3")
     mp3File = pydub.AudioSegment.from_mp3(tmpPath + "/output.mp3")
     mp3File.export(tmpPath + "/reconst.wav", format="wav")
     sampleRateReconst, audioReconst = \
         scipy.io.wavfile.read(tmpPath + "/reconst.wav")
     os.system("rm -dR " + tmpPath)
-    return audioReconst
+    return (audioReconst, file_size)
 
 
 def evaluate(filename=None, audioArray=None, algorithm="lilcom",
@@ -231,22 +204,32 @@ def evaluate(filename=None, audioArray=None, algorithm="lilcom",
     if audioArray is None:
         if settings["sample-rate"] != 0:
             audioArray = waveRead(filename, settings["sample-rate"])
-        if settings["sample-rate"] == 0:  # DOOOOO STH
+        if settings["sample-rate"] == 0:
             audioArray = waveRead(filename, settings["sample-rate"])
     reconstructedArray = None
     # Evaluation Procedure for lilcom
+
+
     if algorithm == "lilcom":
-        reconstructedArray = lilcomReconstruct(audioArray,
-                                               lpcOrder=additionalParam)
+        compressed = lilcom.compress(
+            audioArray.transpose(),
+            sample_rate=settings["sample-rate"],
+            loss_level=additionalParam, debug=True,
+            lpc_block_size=32,
+            lpc_lpc_order=25)
+
+        reconstructedArray = lilcom.decompress(compressed, channel_major=False)
+
         returnValue["psnr"] = PSNR(audioArray, reconstructedArray)
-        returnValue["bitrate"] = 8 * settings["sample-rate"]
+        returnValue["bitrate"] = int(len(compressed) * 8.0 * settings["sample-rate"] / audioArray.size)
+        print("bitrate={}, num-bytes={}\n".format(returnValue["bitrate"], len(compressed)))
         returnValue["hash"] = hash(reconstructedArray)
     # Evaluation Procedure for MP3
     elif algorithm == "MP3":
-        reconstructedArray = MP3Reconstruct(filename,
-                                            bitrate=additionalParam)
+        (reconstructedArray, num_bytes) = MP3Reconstruct(filename,
+                                                         bitrate=additionalParam)
         returnValue["psnr"] = PSNR(audioArray, reconstructedArray)
-        returnValue["bitrate"] = int(additionalParam[:3])*1000
+        returnValue["bitrate"] = int(num_bytes * 8.0 * settings["sample-rate"] / audioArray.size)
         returnValue["hash"] = hash(reconstructedArray)
     # Evaluation for additional compression library
     else:
@@ -347,7 +330,7 @@ else:
 evaulators = [
     {
         "algorithm": "lilcom",
-        "additionalParam": 4
+        "additionalParam": 0
     },
     {
         "algorithm": "MP3",
