@@ -6,6 +6,8 @@
 #include "lpc_stream.h"
 
 
+
+
 /**
    This header provides a C++ interface to lilom's audio-compression algorithm.
    We'll further wrap this in plain "C" for ease of Python-wrapping.
