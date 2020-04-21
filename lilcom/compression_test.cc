@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <iostream>
+#include <limits>
 #include "compression.h"
 
 
