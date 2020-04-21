@@ -15,6 +15,10 @@ test: int_math_utils_test int_scalar_test int_vec_test lpc_math_test bit_stream_
 	for t in $^; do echo "Testing $$t"; ./$$t || exit 1; echo "*** Tested $$t; success ***"; sleep 1; done
 
 
+clean: 
+	-rm int_math_utils_test int_scalar_test int_vec_test lpc_math_test bit_stream_test int_stream_test lpc_stream_test compression_test
+
+
 
 fixed_math: fixed_math.c
 	g++ -O0 -Wall -g -o fixed_math -DFIXED_MATH_TEST=1 fixed_math.c -o fixed_math -lm # -ftrapv
