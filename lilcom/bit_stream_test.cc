@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <cassert>
 #include "bit_stream.h"
 
 

@@ -1,3 +1,5 @@
+# CAUTION: this does not work!  Use `make`.
+
 cmake_minimum_required(VERSION 3.13)
 
 project(prediction_math C)

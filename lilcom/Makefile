@@ -2,19 +2,14 @@
 CC ?= gcc
 
 
-default: lilcom fixed_math
+default: test fixed_math
 
-lilcom.o: lilcom.cc
-
-fixed_math.o: fixed_math.c
 
 
 # Note: it's OK to use -O1, -O2, -O3, but it wouldn't really be correct to use
 # -Ofast, because that will disable the checks for NaN's and inf's.
 # I was getting mysterious "illegal instruction" errors with -ftrapv that
 # i had trouble
-lilcom: lilcom.c lilcom.h bit_packer.c bit_packer.h encoder.c encoder.h lilcom_common.h
-	g++ -O0 -Wall -g -DLILCOM_TEST=1 lilcom.c -o lilcom -lm # -ftrapv
 
 test: int_math_utils_test int_scalar_test int_vec_test lpc_math_test bit_stream_test int_stream_test lpc_stream_test compression_test
 	for t in $^; do echo "Testing $$t"; ./$$t || exit 1; echo "*** Tested $$t; success ***"; sleep 1; done

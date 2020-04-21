@@ -346,7 +346,7 @@ void test_compute_prediction() {
 
   int16_t predicted = compute_lpc_prediction(data + 3,
                                              &lpc_coeffs);
-  assert(predicted == (int)std::round(0.25 * (
+  assert(predicted == (int)round(0.25 * (
       lpc_coeffs.data[0] * data[2] +  // 2*3 = 6
       lpc_coeffs.data[1] * data[1] +  // -1*2 = -2
       lpc_coeffs.data[2] * data[0])));  // 1*3 = 3

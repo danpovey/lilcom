@@ -4,7 +4,6 @@
 #include "compression.h"
 
 
-
 inline bool operator == (const TruncationConfig &a, const TruncationConfig &b) {
   return a.num_significant_bits == b.num_significant_bits &&
       a.alpha == b.alpha &&
