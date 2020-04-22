@@ -1,120 +1,17 @@
+// Note: this will be compiled by invoking ../setup.py, e.g. cd ..; python3 ./setup.py build
+
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
-#include "unistd.h"  /* For malloc and free */
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 
 #include "numpy/arrayobject.h"
 
 /* The core library */
 #include "compression.h"
+#include <cstring>  // for memcpy
 
 
 extern "C" {
-  /* Functions declared inside here have plain "C" linkage,
-     which is necessary for Python to find them.
-   */
-
-  static CompressorConfig * capsule_to_CompressorConfig(PyObject * obj) {
-    return (CompressorConfig*) PyCapsule_GetPointer(obj, "CompressorConfig");
-  }
-
-/* Destructor function for class CompressorConfig */
-  static void del_CompressorConfig(PyObject * obj) {
-    delete (CompressorConfig*) PyCapsule_GetPointer(obj, "CompressorConfig");
-  }
-
-  /* creates a capsule from a CompressorConfig object; takes ownership of it. */
-  static PyObject * CompressorConfig_to_capsule(CompressorConfig *c) {
-    return PyCapsule_New(c, "CompressorConfig", del_CompressorConfig);
-  }
-
-
-/*
-  Create a configuration object for lilcom compression.
-  The following will document this function as if it were a native
-  Python function.
-
-  def create_compressor_config(sample_rate, num_channels,
-                              loss_level, compression_level):
-      """ Creates and returns an opaque configuration object that
-          can be used for lilcom compression, or None if there
-          was an error.
-
-          Args:
-           sample_rate  Sampling rate of the signal, in Hz.  This does not
-                     affect anything, it is passed through the compression
-                     and back to the user.
-           num_channels  Number of channels in the signal, e.g. 1 for
-                     mono, 2 for stereo (may be any number greater than zero).
-           loss_level     Dictates how lossy the compression will be.
-                       0 == lossless, 5 == most lossy.
-           compression_level    Dictates the speed / file-size tradeoff.
-                           0 == fastest, but biggest file; 5 == slowest,
-                           smallest file.
-         Returns:
-           An opaque configuration object on success, None if one of the
-           args was incorrect.
-      """
-
-
- */
-static PyObject *create_compressor_config(PyObject *self, PyObject *args, PyObject *keywds) {
-
-  int sample_rate, num_channels,
-      loss_level, compression_level;
-
-  if (!PyArg_ParseTuple(args, "iiii",
-                        &sample_rate, &num_channels,
-                        &loss_level, &compression_level))
-    Py_RETURN_NONE;
-
-  CompressorConfig *c = new CompressorConfig(sample_rate, num_channels,
-                                             loss_level, compression_level);
-
-  if (keywds) {  /* Parse any keywords.  For instance, you can have chunk_size=16, or
-      * lpc.lpc_order = 4. */
-    PyObject *key, *value;
-    Py_ssize_t pos = 0;
-
-    while (PyDict_Next(keywds, &pos, &key, &value)) {
-      const char *name = PyUnicode_AsUTF8(key);
-      int32_t value_int = PyLong_AsLong(value);
-      if (name == NULL) {
-        PyErr_SetString(PyExc_TypeError, "Expected string as keyword-dict key");
-        return NULL;
-      } else if (value_int == -1 && PyErr_Occurred()) {
-        char buf[100];
-        snprintf(buf, 100, "Expected integer as arg to keyword=%s", name);
-        PyErr_SetString(PyExc_TypeError, buf);
-        return NULL;
-      } else if (!(c->SetConfig(name, value_int))) {
-        char buf[100];
-        snprintf(buf, 100, "Unexpected configuration value %s=%d", name,
-                 value_int);
-        PyErr_SetString(PyExc_ValueError, buf);
-        return NULL;
-      }  /* Else: successfully set configuration value. */
-    }
-  }
-
-  if (!c->IsValid()) {
-    PyErr_SetString(PyExc_ValueError, "Invalid configuration values passed, "
-                      "validity check failed");
-    delete c;
-    Py_RETURN_NONE;
-  }
-  return CompressorConfig_to_capsule(c);
-
-}
-
-static PyObject *compressor_config_to_str(PyObject *self, PyObject *const *args, Py_ssize_t nargs) {
-  CompressorConfig *c;
-  if (nargs != 1 ||
-      (c = capsule_to_CompressorConfig(args[0])) == NULL)
-    Py_RETURN_NONE;
-  std::string str(*c);
-  return PyUnicode_FromString(str.c_str());
-}
 
 
 
@@ -122,68 +19,82 @@ static PyObject *compressor_config_to_str(PyObject *self, PyObject *const *args,
    The following will document this function as if it were a native
    Python function.
 
-    def compress_int16(input, config):
+    def compress_float(input, config):
       """
 
       Args:
-       input:  A numpy.ndarray with dtype=int16 and 2 axes, which must
-            represent respectively the num-channels and the sample index.
-            There is no limitation on the strides.
-       config:  A configuration object generated with
-             create_compressor_config()
+       input:  A numpy.ndarray with dtype=np.float32 and number of axes
+           in the range [1..15].  Caution: it will be replaced with
+           the approximate ersion of itself that you'll get after 
+           decompressing the return value.
+       meta:  A list of integers containing some meta-information:
+            [ tick_power, coeff1, coeff2, .. ] where tick_power (e.g. -8),
+            which must be in the range [-20,20] (this decision was
+            arbitrary), is the power to which we'll raise 2 to use 
+	    or the `tick` (distance between 2 encoded elements, dictating the
+            accuracy), and the coefficients correspond to estimated
+            regression coefficients, one per axis, each multiplied by
+            65536 and rounded to the nearest integer.  See
+            documentation of `regression_coeffs` arg of
+            CompressFloat(), in compression.h, for more details about
+            the regression coefficients.
+
 
        Return:
-            On success, returns the compressed data as a bytes object.  On
-            failure if one of the args was not right, returns None.
-            On memory allocation failure, raises MemoryError.
-            (Note: this
-            code could also die with an assertion, which would indicate a
-            code error).  """
+
+            On success, returns the compressed data as a bytes object
+            which can be decompressed.  On failure or if one of the
+            args was not right, returns None.  On memory allocation
+            failure, raises MemoryError.
+
+            (Note: this code could also die with an assertion, which 
+            would indicate a code error at the C++ level).  """
  */
-static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject *keywds) {
-  PyArrayObject *input; /* The input signal, passed as a numpy array of int16's. */
-  PyObject *config; /* The configuration object */
+static PyObject *compress_float(PyObject *self, PyObject *args, PyObject *keywds) {
+  PyArrayObject *input; /* The input signal, passed as a numpy array of np.float32's. */
+  PyObject *meta; // List of python ints containing metadata in the form
+                  // [tick_power, coeff1, coeff2.. ]
 
-  static char *kwlist[] = {"input", "config", NULL};
+  static char *kwlist[] = {"input", "meta", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist,
-                                   (PyObject**)&input, &config))
+                                   (PyObject**)&input, &meta))
     Py_RETURN_NONE;
-
-  CompressorConfig *cc = capsule_to_CompressorConfig(config);
-  const int16_t *input_data = (const int16_t*)PyArray_DATA(input);
 
   if (cc == NULL || !cc->IsValid())
     return PyLong_FromUnsignedLong(2);
 
-  int num_axes = PyArray_NDIM(input);
-  if (num_axes != 2)
-    return PyLong_FromUnsignedLong(1);
-  int num_channels = PyArray_DIM(input, 0),
-      channel_stride = PyArray_STRIDE(input, 0) / sizeof(int16_t),
-      sample_stride = PyArray_STRIDE(input, 1) / sizeof(int16_t),
-      num_samples = PyArray_DIM(input, 1);
-  if (num_channels != cc->num_channels ||
-      num_samples == 0)
+  int num_axes = PyArray_NDIM(input),
+    list_size = PyList_Size(meta);
+  if (num_axes <= 0 || num_axes >= 16 || list_size != num_axes + 1 ||
+      !PyLong_Check(PyList_GetItem(meta, 0)))
     Py_RETURN_NONE;
 
+  int tick_power = PyLong_AsLong(PyList_GetItem(meta, 0));
+  
+  int dims[16], strides[16];
+  float regression_coeffs[16];
+
+
+  for (int i = 0; i < num_axes; i++) {
+    int int_coeff = PyLong_AsLong(PyList_GetItem(meta, i + 1));
+    assert(int_coeff >= -65536 && int_coeff <= 65536);
+    regression_coeffs[i] = int_coeff / 65536.0;
+    dims[i] = PyArray_DIM(input, i);
+    strides[i] = PyArray_STRIDE(input, i) / sizeof(float);
+  }
+
+  const float *input_data = (const float*)PyArray_DATA(input);
+
   try {
-    CompressedFile cf(*cc, num_samples, input_data, sample_stride, channel_stride);
-
-    char *data;
-    size_t length;
-    data = cf.Write(&length);
-    assert(data != NULL);
-
-    /* note: this does an unnecessary copy but I don't see an easy way to do
-       this without that copy. */
-    PyObject *ans = PyBytes_FromStringAndSize(data, length);
-    if (ans == NULL) {
-      /* Memory failure when copying the output to bytes object */
-      return PyLong_FromUnsignedLong(4);
-    } else {
-      delete [] data;
+    std::vector<int32> vec = CompressFloat(tick_power, inptu_data,
+					   num_axes, dims, strides, 
+					   regression_coeffs);
+    if (ans.empty()) {
+      // Something went wrong.  An error message may have been printed.
+      Py_RETURN_NONE;
     }
-    return ans;
+    char *data = new char[ans.size()];
+    return PyBytes_FromStringAndSize(data, ans.size());
   } catch (std::bad_alloc) {
     PyErr_SetString(PyExc_MemoryError,
                     "Failure to allocate memory in lilcom compression");
@@ -191,79 +102,55 @@ static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject *keywds
   }
 }
 
-  /* Destructor function for class CompressedFile */
-  static void del_CompressedFile(PyObject * obj) {
-    delete (CompressedFile*) PyCapsule_GetPointer(obj, "CompressedFile");
-    /* Allow the `bytes` object to be freed if no other references to it
-     * survived.  */
-    Py_DECREF((PyObject*) PyCapsule_GetContext(obj));
-  }
-
-  /* creates a capsule from a CompressorConfig object; takes ownership of it.
-     Also maintains a reference to `bytes` to avoid its memory being freed while
-     the object `c` exists, since it contains a pointer to that data.
-   */
-  static PyObject * CompressedFile_to_capsule(CompressedFile *c, PyObject *bytes) {
-    PyObject *ans = PyCapsule_New(c, "CompressedFile", del_CompressedFile);
-    Py_INCREF(bytes);
-    PyCapsule_SetContext(ans, (void*)bytes);
-    return ans;
-  }
-
-  static CompressedFile * capsule_to_CompressedFile(PyObject * obj) {
-    return (CompressedFile*) PyCapsule_GetPointer(obj, "CompressedFile");
-  }
-
-
 
   /**
-    The following will document this function as if it were a native
+     The following will document this function as if it were a native
     Python function.
 
-       def init_decompression_int16(bytes):
+       def get_float_matrix_shape(bytes_in):
          """
-         Initializes the decompression of a bytes array containing lilcom-compressed
-         data
+         Return the shape required for a matrix into which the data in this
+	 bytes object can be decompressed.
 
          Args:
-            `bytes` must be a bytes object
+            `bytes_in` must be a bytes object
          Return:
-            If `bytes` had the expected format and was not truncated,
+            If `bytes_in` had the expected format (as compressed by compress_float),
             this function will return a tuple of ints:
-               (decompressor, num_channels, num_samples, sample_rate)
-            where `decompressor` is an opaque object that should later be passed
-            to `decompress_int16`.
+               (dim1, dim2, dim3 ...)
+	    containing the shape of the compressed matrix; if something went 
+            wrong, it will return None.
 
-            Otherwise, this function will return None.
+         Will throw ValueError if the argument is not of type `bytes`; will
+         return None if the wrong number of args was given or something went 
+	 wrong getting the size.
          """
    */
-  static PyObject *init_decompression_int16(PyObject *self, PyObject *const *args, Py_ssize_t nargs) {
+  static PyObject *get_float_matrix_shape(PyObject *self, PyObject *const *args, Py_ssize_t nargs) {
     char *bytes_array;
     Py_ssize_t length;
     if (nargs != 1)
       Py_RETURN_NONE;
-    PyObject *bytes = args[0];
+    PyObject *bytes_in = args[0],
+      *output = args[1];
 
-    if (PyBytes_AsStringAndSize(bytes, &bytes_array, &length) != 0)
-      return 0;  /* we are raising ValueError. */
+    if (PyBytes_AsStringAndSize(bytes_in, &bytes_array, &length) != 0)
+      Py_RETURN_NONE;
 
-    try {
-      CompressedFile *f = new CompressedFile();
-      int ret = f->InitForReading(bytes_array, bytes_array + length);
-      if (ret != 0) {
-        /* Right now we don't try to get too specific about passing error
-           information back to the python layer. */
-        delete f;
-        Py_RETURN_NONE;
-      } else {
-        PyObject *f_capsule = CompressedFile_to_capsule(f, bytes);
-        return Py_BuildValue("Olll", f_capsule, (long)f->NumChannels(),
-                             (long)f->NumSamples(), (long)f->Config().sample_rate);
+    int meta[17];
+    if (GetCompressedDataShape(bytes_array, length, meta)) {
+      int num_axes = meta[0];
+      assert(num_axes > 0 && num_axes <= 16);  // was checked in
+                                               // GetCompressedDataShape()
+      PyObject *ans = PyTuple_New(num_axes);
+      for (int i = 0; i < num_axes; i++) {
+	int dim = meta[i+1];
+	assert(dim > 0);  // was checked in GetCompressedDataSize()
+	PyTuple_SET_ITEM(ans, i, PyLong_FromLong(dim));
       }
-    } catch (std::bad_alloc) {
-      PyErr_SetString(PyExc_MemoryError,
-                      "Failure to allocate memory in lilcom compression");
-      return NULL;
+      return ans;
+    } else {
+      Py_RETURN_NONE;
     }
   }
 
@@ -272,73 +159,63 @@ static PyObject *compress_int16(PyObject *self, PyObject *args, PyObject *keywds
     The following will document this function as if it were a native Python
     function.
 
-       def decompress_int16(compressed_file_object, array_out)
+       def decompress_float(bytes_in, array_out)
          """
-         Decompress all of an int16 array that was previously compressed
-         with `compress_int16`.
+         Decompress an array of float that was compressed with compress_float()
+
 
          Args:
-            compressed_file_object: an opaque object that will have been returned
-               by `init_decompression_int16()`
-            array_out: must be a NumPy array with dtype numpy.int16, and
-               dimensions (num_channels, num_samples) these values
-               correspond to the values returned by init_decompression_int16().
-               There are no constraints on the strides of `array_out`.
+            byts_in: a `bytes` object that was returned from compress_float()
 
+            array_out: must be a NumPy array with dtype numpy.float32, and
+               shape equal to the result of calling get_float_matrix_shape() on
+               this same bytes object.
 
          Return:
-           Returns true on success, false on failure in the decompression,
+           Returns 0 on success, a nonzero code if there was a
+           failure in the decompression,
            or None if the args appeared to have the wrong type.
          """
 
    */
-  static PyObject *decompress_int16(PyObject *self, PyObject *const *args, Py_ssize_t nargs) {
+  static PyObject *decompress_float(PyObject *self, PyObject *const *args, Py_ssize_t nargs) {
+    char *bytes_array;
+    Py_ssize_t length;
     if (nargs != 2)
       Py_RETURN_NONE;
-    PyObject *compressed_file = args[0];
-    PyArrayObject *numpy_array = (PyArrayObject*)args[1];
+    PyObject *bytes_in = args[0];
+    PyArrayObject *output = (PyArrayObject*)args[1];
 
-    CompressedFile *cf = capsule_to_CompressedFile(compressed_file);
-    int num_axes = PyArray_NDIM(numpy_array);
-    if (num_axes != 2 || cf == NULL ||
-        (size_t)PyArray_DIM(numpy_array, 0) != (size_t)cf->NumChannels() ||
-        (size_t)PyArray_DIM(numpy_array, 1) != (size_t)cf->NumSamples())
+    if (PyBytes_AsStringAndSize(bytes_in, &bytes_array, &length) != 0)
       Py_RETURN_NONE;
 
-    int channel_stride = PyArray_STRIDE(numpy_array, 0) / sizeof(int16_t),
-        sample_stride = PyArray_STRIDE(numpy_array, 1) / sizeof(int16_t);
-
-    try {
-      if (cf->ReadAllData(sample_stride, channel_stride,
-                          (int16_t*)PyArray_DATA(numpy_array)))
-        Py_RETURN_TRUE;
-      else
-        Py_RETURN_FALSE;
-    } catch (std::bad_alloc) {
-      PyErr_SetString(PyExc_MemoryError,
-                      "Failure to allocate memory in lilcom decompression");
-      return NULL;
+    int dims[16], strides[16];
+    int num_axes = PyArray_NDIM(input);
+    for (int i = 0; i < num_axes; i++) {
+      dims[i] = PyArray_DIM(input, i);
+      strides[i] = PyArray_STRIDE(input, i) / sizeof(float);
     }
+
+    int ans = DecompressFloat(bytes_array, length,
+			      (const float*)PyArray_DATA(input),
+			      num_axes, dims, strides);
+    return PyLong_FromLong(ans);
   }
 
 
 
   static PyMethodDef LilcomExtensionMethods[] = {
-    {"create_compressor_config", (PyCFunction) create_compressor_config, METH_VARARGS | METH_KEYWORDS,
-     "Creates and returns an opaque configuration object that can be used for lilcom compression."},
-    {"compressor_config_to_str", (PyCFunction) compressor_config_to_str, METH_FASTCALL,
-     "Returns a string that describes the compressor-config object passed in, or None "
-     "if the object had the wrong type."},
-    {"compress_int16", (PyCFunction) compress_int16, METH_VARARGS | METH_KEYWORDS,
+    {"compress_float", (PyCFunction) compress_float, METH_VARARGS | METH_KEYWORDS,
      "Compresses the supplied data and returns compressed form as bytes object."},
-    {"init_decompression_int16", (PyCFunction) init_decompression_int16, METH_FASTCALL,
-     "Takes a bytes object, returns a tuple (c, num_channels, num_samples) where c is an "
-     "compressed-file object to be passed to decompress_int16()."},
-    {"decompress_int16", (PyCFunction) decompress_int16, METH_FASTCALL,
-     "Takes a compressed-file object (from init_decompression_int16) and an "
-     "appropriately sized NumPy array, and returns bytes object, returns a tuple "
-     "(o, num_channels, num_samples) where o is an "
-     "opaque object to be passed to decompress_int16()."},
+    {"get_float_matrix_shape", (PyCFunction) get_float_matrix_shape, METH_FASTCALL,
+     "Takes a bytes object as returned from compress_float(), and returns a "
+     "tuple representing the shape of the array that was compressed, or "
+     "None on error."},
+    {"decompress_float", (PyCFunction) decompress_int16, METH_FASTCALL,
+     "Takes a bytes object and an appropriately sized NumPy array of floats, "
+     "with shape as given by get_float_matrix_shape(), and decompresses the "
+     "data into the array.  Returns 0 on success, and a nonzero code or None "
+     "on failure."}
     {NULL, NULL, 0, NULL}
   };
 

@@ -37,6 +37,89 @@ def test_compression():
   print("Array after decompress_int16 is ", out_array)
 
 
+
+def compress(input, 
+             tick_power=-8
+             do_regression=True, 
+             check_aliasing=True):
+  """
+  Compresses a NumPy array lossily
+  
+  Args:
+    input:   A numpy.ndarray.  May be of type np.float or np.double.
+    tick_power:  Determines the accuracy; the input will be compressed to integer 
+             multiples of 2^tick_power.
+  """
+  n_dim = len(input.shape)
+
+  if not (n_dim > 0 and n_dim < 16):
+    raise ValueError("Expected number of axes to be in [1,15], got: ",
+                     n_dim)
+
+  input = input.astype(np.float32)
+
+  input, coeffs = regress_array(input, do_regression)
+
+  # int_coeffs will be in [-65536, 65536]
+  int_coeffs = [ round(x * 65536) for x in coeffs ]
+  
+  meta = [ tick_power ] + int_coeffs
+
+  ans = lilcom_extension.compress_float(input, meta)
+  if not isinstance(ans, bytes):
+    raise RuntimeError("Something went wrong in compression, return value was ",
+                       ans);
+  return ans;
+
+
+
+def regress_array(input, regression):
+  """
+  Works out coefficients for linear regression on the previous sample, for 
+  each axis of the array. 
+
+     @param [in] input   The array to be compressed; must contain floats or doubles.
+     @param [in] regression  True if we are doing regression; if false,
+                         coefficients will be all zero.
+
+  Returns a list of size len(input.shape), with either zero or regression
+  coefficients in the range [-1..1] for each corresponding axis.  Each axis's 
+  regression coefficient will be zero if regression == False, or the input's 
+  size on that axis was 1, or of the estimated regression coefficient had 
+  absolute value less than 0.2.
+  """
+
+  input = input.copy() # we'll change the array inside this function.
+  coeffs = [ 0.0 ] * len(input.shape)
+  if not regression:
+    return coeffs
+  # the + 1.0e-20 is for
+  tot_sumsq = np.dot(input.reshape(-1), input.reshape(-1)) + 1.0e-20
+  for axis in range(len(input.shape)):
+    print("axis is ", axis)
+    if input.shape[axis] == 1:
+      continue  # the size is 1 so we can't do regression
+
+    # swap axes, so we can work on axis 0 for finding the coefficient.
+    input = np.swapaxes(input, 0, axis)
+    coeff = (input[:-1] * input[1:]).sum() / ((input[:-1] ** 2).sum() + 1.0e-20)
+    print("Coeff is ", coeff)
+    if abs(coeff) < 0.02:
+      coeff = 0.0
+    elif coeff < -1.0:
+      coeff = -1.0
+    elif coeff > 1.0:
+      coeff = 1.0
+    coeffs[axis] = coeff
+    print("Sumsq is ", (input**2).sum())
+    input[1:] -= input[:-1] * coeff
+    print("Sumsq is now ", (input**2).sum())
+    # swap the axes back
+    input = np.swapaxes(input, 0, axis)
+  return coeffs
+  
+
+
 def compress(input, sample_rate, loss_level=0, compression_level=5,
              debug=False, **kwargs):
   """
@@ -134,7 +217,7 @@ def test_compression_wrappers():
 
   h = lilcom_extension.create_compressor_config(42100, num_channels, 3, 4)
 
-  orig = ((np.random.rand(num_channels, 13455) - 0.5) * 65535).astype(np.int16)
+  orig = ((np.random.rand(num_channels, 13455) - 0.5) * 65536).astype(np.int16)
 
   sample_rate = 42100
   compressed = compress(orig, 42100)

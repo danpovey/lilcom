@@ -6,379 +6,100 @@
 #include "lpc_stream.h"
 
 
-
-
 /**
    This header provides a C++ interface to lilom's audio-compression algorithm.
    We'll further wrap this in plain "C" for ease of Python-wrapping.
 */
 
 
-struct CompressorConfig {
-  int32_t format_version;
-  TruncationConfig truncation;
-  int_math::LpcConfig lpc;
-  /* `chunk_size` is the number of samples per chunk.  A chunk is
-     a largish piece of file, like half a second; its purpose
-     is mainly to allow a part of a file to be decompressed,
-     since each chunk must be entirely decompressed even if only
-     part of it is needed.  Must be >= 128.
-   */
-  int32_t chunk_size;
-
-  /* `sample_rate` is the sampling rate in Hz.  Must be > 0. */
-  int32_t sample_rate;
-
-  /* `num_channels` is the number of channels, e.g. 1 for mono, 2 for stereo.
-      Must be > 0.*/
-  int32_t num_channels;
-
-
-  /*
-    Constructor that creates reasonable default parameters
-
-      @param [in] sample_rate  Sampling rate in Hz
-      @param [in] num_channels   Number of channels in the file, e.g. 1 or 2.
-      @param [in] loss_level     Dictates how lossy the compression will be.
-                                 0 == lossless, 5 == most lossy.
-      @param [in] compression_level    Dictates the speed / file-size tradeoff.
-                                 0 == fastest, but biggest file; 5 == slowest,
-                                 smallest file.
-
-    If any of the args are invalid, this will create an object
-    on which IsValid() will return false.
-   */
-  CompressorConfig(int32_t sample_rate, int32_t num_channels,
-                   int loss_level, int compression_level);
-
-  /* Copy constructor */
-  CompressorConfig(const CompressorConfig &other);
-
-  /* Default constructor, to be called only prior to Read(). */
-  CompressorConfig() { }
-
-  /* Writes the configuration information to an IntStream.  Throws
-     std::bad_alloc if allocation failed.
-   */
-  void Write(IntStream *is) const;
-
-  /* Reads this object from a stream; returns true on success, false
-     on any kind of failure */
-  bool Read(ReverseIntStream *ris);
-
-  /* Returns true if this object has valid configuration values. */
-  bool IsValid() const;
-
-  /*
-    Sets configuration values by name and value.  Returns true on success, false
-    if the name did not match any value.   Examples of valid names:
-    "format_version", "truncation.num_significant_bits", ...
-
-    The user should call IsValid() after setting all configuration values, to
-    make sure they are consistent.
-   */
-  bool SetConfig(const char *name, int32_t value) {
-    if (!strcmp(name, "format_version"))
-      format_version = value;
-    else if (!strcmp(name, "chunk_size"))
-      chunk_size = value;
-    else if (!strcmp(name, "sample_rate"))
-      sample_rate = value;
-    else if (!strcmp(name, "num_channels"))
-      num_channels = value;
-    else if (!strncmp(name, "lpc", 3) && (name[3] == '.' || name[3] == '_'))
-      return lpc.SetConfig(name + 4, value);
-    else if (!strncmp(name, "truncation", 10) && (name[10] == '.' || name[10] == '_'))
-      return truncation.SetConfig(name + 11, value);
-    else
-      return false;
-    return true;
-  }
-
-  operator std::string () const {
-    std::ostringstream os;
-    os << "CompressorConfig{ format-version=" << format_version
-       << ", truncation=" << (std::string)truncation
-       << ", lpc=" << (std::string)lpc
-       << ", chunk-size=" << chunk_size
-       << ", sample-rate=" << sample_rate
-       << ", num-channels=" << num_channels
-       << " }";
-    return os.str();
-  }
-
-  /* FOR TEST ONLY */
-  // ~CompressorConfig() { std::cout << "In destructor: " << (std::string)*this; }
-
-};
-
-struct CompressedChunk {
-  const char *data;
-  const char *end;
-  CompressedChunk(const char *data, const char *end):
-      data(data), end(end) { }
-  CompressedChunk(std::vector<char> *code) {
-    owned_data_.swap(*code);
-    assert(!owned_data_.empty());
-    data = &(owned_data_[0]);
-    end = data + owned_data_.size();
-  }
-  int32_t size() { return static_cast<int32_t>(end - data); }
-
-  /* Construct from an IntStream; steals the memory from it via Swap().
-     This is used when writing meta-information. */
-  CompressedChunk(IntStream *is) {
-    owned_data_.swap(is->Code());
-    data = reinterpret_cast<const char*>(&(owned_data_[0]));
-    end = data + owned_data_.size();
-  }
-
-  /*
-    Constructs this object by compressing the supplied audio data.
-
-        @param [in] config   Configuration class (probably set by
-                         the user).  MUST BE VALID (config.IsValid()
-                         must return true).
-        @param [in] wave_data   The data to compress will be read from here
-        @param [in] num_samples   The number of samples to compress;
-                             will be config.chunk_size, except if
-                             this is the last chunk of its channel,
-                             in which case it may be sameller.
-        @param [in] data_stride  The stride (in elements) of
-                             `data`, would normally be either
-                             1 or equal to the number of channels,
-                             depending on the output format.
-
-     This function cannot fail except by assertion (indicating code error)
-     or memory allocation failure (in which case it will throw
-     std::bad_alloc after cleaning up any allocated memory).
-   */
-  CompressedChunk(const CompressorConfig &config,
-                  const int16_t *wave_data,
-                  int num_samples,
-                  int data_stride);
-
-
-
-  /*
-    Attempts to decompress the data held here.
-
-        @param [in] config   Configuration class (probably read from
-                             the compressed stream)
-        @param [in] num_samples  The number of samples to decompress;
-                             must be <= the number of samples that
-                             was in this chunk, which would be either
-                             config.block_size, or a smaller number if
-                             this is the last chunk of a channel.
-        @param [in] output_stride  The stride (in elements) of
-                             `output_data`, would normally be either
-                             1 or equal to the number of channels,
-                             depending on the output format.
-        @param [out] output_data  The data will be decompressed to
-                             here.
-        @return   Returns the number of samples successfully
-                  decoded.  This will be equal to `num_samples` if
-                  everything worked as expected.
-   */
-  int Decompress(const CompressorConfig &config,
-                 int num_samples,
-                 int output_stride,
-                 int16_t *output_data);
- private:
-  std::vector<char> owned_data_;
-};
-
-
-
-class CompressedFile {
- public:
-  /*
-    Constructs this object, including compressing the data.
-    (Later we will allow incremental determinization but for now it
-    all gets compressed at once.)
-          @param [in] config   Configuration class, must be valid
-                            (config.IsValid())
-          @param [in] num_samples  Number of samples per channel
-                            (num-channels is dictated by the config),
-                            must be > 0.
-          @param [in] data  The input data to be compressed
-          @param [in] sample_stride  The stride between successive
-                           samples/time-indexes in `input_data`, would
-                           be equal to config.num_channels for wav-format
-                           data.
-          @param [in] channel_stride  The stride between successive
-                            channels in `input_data`, e.g. 1 for
-                            wav-format data.
-   */
-  CompressedFile(const CompressorConfig &config,
-                 ssize_t num_samples,
-                 const int16_t *data,
-                 int sample_stride,
-                 int channel_stride);
-
-
-  /* Default constructor */
-  CompressedFile();
-
-
-  /* Converts this object to linear form, as a char* pointer (i.e. array of
-     char's).
-        @param [out] length  The number of bytes in the returned array
-                          (note: the returned array is not null-terminated,
-                          and may contain nulls internally).
-        @return       Returns the newly allocated array.  It will have
-                      been allocated with new char [], so should be
-                      deleted with delete [].
-
-     Will throw std::bad_alloc if allocation failed.
-   */
-  char *Write(size_t *length);
-
-  /*
-    Initialize the object for reading.
-    Assumes this object is currently uninitialized.
-    This interface assumes all the data is available at once, so doesn't
-    support streaming from a file; we could work on that type of interface
-    later on.  This function just reads the header and the chunk sizes;
-    it does not do the bulk of the work of decompression.
-
-       @param [in] input  Beginning of where the input data is located
-       @param [in] end    End of where the input data is located,
-                          i.e. one past the last byte.
-
-       @return           0 on success
-                         1 if there was a problem reading the data,
-                           e.g. it was corrupted or the wrong type of
-                           input data.
-                         2 if the file was partially read; in this case
-                           you can work out which chunks are available
-                           using NumChunksAvailable().
-
-    This function will throw std::bad_alloc() if memory allocation
-    failed.
-
-    You should call ReadData() after this to get the actual data.
-  */
-  int InitForReading(const char *input, const char *input_end);
-
-  /* Returns the number of samples */
-  size_t NumSamples() const { return num_samples_; }
-
-  /* Returns the number of channels */
-  int32_t NumChannels() const { return config_.num_channels; }
-
-
-  const CompressorConfig &Config() const { return config_; }
-
-  /*
-     Outputs some portion of the data to `data`.
-        @param [in] sample_start   First sample to get (note: the first channel of
-                     this will placed at data[0]).  Would be 0 if you want all the
-                     data.
-        @param [in] num_samples  Number of samples to get.
-        @param [in] channel_start First channel to get
-        @param [in] num_channels  Number of channels to get.
-
-        @param [in] sample_stride  Stride between samples in `data`; would likely
-                      equal either NumChannels() or 1.
-        @param [in] channel_stride  Stride between channels in `data`; would
-                     likely equal either 1 or num_samples.
-        @param [out] data  The data will be output to here; elements
-                    data[0] through
-                    data[(num_samples-1)*sample_stride + (num_channels-1)*channel_stride]
-                    will be written to.
-        @returns   Returns true on success, false if some part of the data could
-                   not be read, e.g. due to failure of decompression.
-
-      Will die with assertion if the args do not make sense in some way.
-  */
-  bool ReadData(ssize_t sample_start, ssize_t num_samples,
-                int channel_start, int num_channels,
-                int sample_stride, int channel_stride,
-                int16_t *data);
-
-  bool ReadAllData(int sample_stride, int channel_stride,
-                   int16_t *data) {
-    return ReadData(0, NumSamples(), 0, NumChannels(),
-                    sample_stride, channel_stride, data);
-  }
-
-  /* (for use when reading, esp. if Initialize() returned
-     ), returns the number of chunks that
-     were successfully read.
-  */
-  int32_t NumChunksAvailable() { return chunks_.size(); }
-
-  ~CompressedFile();
-
- private:
-  /* Compresses the metadata of this class (but not the chunk sizes) to a stream
-     which will be stored as `header_`.
-  */
-  void CompressHeader();
-
-  /* Reads the header of the class; sets header_, config_, num_complete_chunks_,
-       partial_chunk_size_, and num_samples_.
-
-       @param [in] input  Pointer to where the compressed data starts
-       @param [in] input_end  End of the array where the compressed data
-                         is; it should be well past where the header
-                         actually ends.
-       @return          Returns the next unused byte in the input
-                        stream (or NULL on error)
-  */
-  const char* ReadHeader(const char *input, const char *input_end);
-
-  /* Creates the CompressedChunk that encodes the sizes of the actual chunks in
-     chunks_ containing the data, and puts this in compressed_chunk_sizes_. */
-  void CompressChunkSizes();
-
-  /* Reads the chunk sizes from the stream and writes to compressed_chunk_sizes_
-     and chunks_.
-
-       @param [in] input  Pointer to where the compressed data corresponding
-                         to `compressed_chunk_sizes_` starts
-       @param [in] input_end  End of the array where the compressed data
-                        is (includes all the data, not just the data in
-                        compressed_chunk_sizes_).
-       @return          Returns 0 on success, 1 on failure, 2 on partial
-                        failure (partial failure means a truncated stream but
-                        at least one chunk was readable).
-  */
-  int ReadChunkSizes(const char *input, const char *input_end);
-
-
-
-  CompressorConfig config_;
-
-  /* `num_samples` is the number of samples per channel.  It's not written
-     directly, as it's potentially too large to write to IntStream; instead we
-     write num_complete_chunks and partial_chunk_size. */
-  ssize_t num_samples_;
-
-  /* `num_complete_chunks` is derived from `num_samples`, as
-     num_samples / config.chunk_size. */
-  int32_t num_complete_chunks_;
-  /* `partial_chunk_size` equals  num_samples % config.chunk_size; if nonzero,
-     we'll write a final chunk containing the remaining samples. */
-  int32_t partial_chunk_size_;
-
-  /* The serialized form of the header which contains meta-information
-     (basically: the class member variables above). */
-  CompressedChunk* header_;
-
-  /* This stream encodes the sizes in bytes of the chunks of wave data (used to locate their
-     beginnings, for random access */
-  CompressedChunk *compressed_chunk_sizes_;
-
-  /* `chunks` contains the compressed data; it's indexed by
-       [chunk_index*config_.num_channels + channel_idx].
-     We would have used unique_ptr here, but C++11 doesn't
-   */
-  std::vector<CompressedChunk*> chunks_;
-
-
-};
+/*
+
+  Implementation of lossy compression of a possibly multi-dimensional
+  array of floats.
+
+    @param [in] tick_power  Power that we'll take 2 to to give the discretization 
+                   interval; no error due discretization will exceed half of this 
+		   value (unless the absolute value of an input element exceeds
+		   2^(32 - tick_power), in which case we'll get more error
+		   due to range limitation.  Must be in range [-20, 20]
+    @param [in] data   Pointer to start of the input data.  CAUTION: this
+                   data is changed by being replaced by the compressed version;
+		   view it as being destructively consumed.  (This is necessary
+		   because of how the regression works; we regress on the
+    		   compressed versions).
+    @param [in] num_axes  The number of axes in `data`; must be >0.
+    @param [in] dims   The dimension of each axis i is given by dim[i].
+    @param [in] strides  The stride on each axis i is given by strides[i];
+                   these are strides in float elements, not bytes.
+    @param [in] regression_coeffs  Integerized regression coefficients, 
+                   one per axis, such that (using the 3-axis case as
+                   an example, and assuming all indexes are nonzero,
+                   and using Python-style indexing as if `data` were a
+                   NumPy array), we are writing the elements of the
+                   array as:
+                      data[i,j,k] = data[i-1,j,k]*regression_coeffs[0]*a + 
+                                    data[i,j-1,k]*regression_coeffs[1]*a +
+                                    data[i,j,k-1]*regression_coeffs[2]*a +
+                                    offset
+                   where a == (1/65536) to convert integer into fractional
+                   values, and `offset` is what we encode.  The idea is that
+                   the regression coefficients are estimated to minimize
+                   the sum-of-squares of these offset values.  We always
+                   regressed on the previously compressed version of the data.
+		   Out of range values (for i, j or k == 0) are treated
+		   as zero.
+
+    @return  Returns a vector of bytes representing the compressed data.  Certain
+            error conditions (generally: code errors in calling code)
+            will cause it to return an empty vector.
+ */
+std::vector<char> CompressFloat(int tick_power,
+				float *data, 
+				int num_axes, 
+				const int *dims, 
+				const int *strides,
+				int *regression_coeffs);
+			  
+
+/*
+  This function gets the shape of an array that has been compressed by
+  CompressFloat().
+     @param [in] data   Start of the compressed data
+     @param [in] num_bytes  The number of bytes in the array `data`
+     @param [out] meta   Pointer to an array where some meta-information
+                         will be stored (the size of the array must be at
+                         least 17).  On successful exit it will contain:
+  			 { num_axes, dim1, dim2, dim3, ... }
+      @return   Returns true on success, false on error (e.g. data did not seem
+               to be valid).
+ */
+bool GetCompressedDataShape(const char *data,
+			   int num_bytes,
+			   int *meta);
+
+/*
+  Decompresses data that was compressed by CompressFloat().
+      @param [in] src     Start of the compressed data
+      @param [in] num_bytes   Number of bytes in the compressed data (note:
+                         must exactly match the length of the string
+                         originally returned by CompressFloat()
+      @param [out] array  Start of the array to which we are writing
+      @param [in] num_axes Number of axes of `array`; must
+                          be in range [1..16].
+      @param [in] dims    Dimensions of each axis of `array`; must
+                          match the dimensions returned by
+                          GetCompressedDataSize() on `src`.
+      @param [in] strides Strides of each axis of `array`, in
+                          floats (not bytes).
+      @return       Returns zero on success, otherwise various
+                    nonzero error codes (see code for meanings)
+ */
+int DecompressFloat(const char *src,
+		    int num_bytes,
+		    float *data, 
+		    int num_axes, 
+		    const int *dims, 
+		    const int *strides);
 
 
 
