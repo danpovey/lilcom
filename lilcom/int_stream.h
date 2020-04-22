@@ -449,8 +449,8 @@ class ReverseUintStream {
             break;
         }
         uint32_t x;
-        bit_reader_.Read(num_zeros_read, &x);
-        //std::cout << "Num-zeros-read=" << x << "\n";
+        if (!bit_reader_.Read(num_zeros_read, &x))
+          return false;
 
         int num_zeros_in_run = (1 << num_zeros_read) + x;
         /* minus 2 because we already have cur_num_bits == 0,

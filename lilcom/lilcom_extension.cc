@@ -55,13 +55,10 @@ static PyObject *compress_float(PyObject *self, PyObject *args, PyObject *keywds
   PyObject *meta; // List of python ints containing metadata in the form
                   // [tick_power, coeff1, coeff2.. ]
 
-  static char *kwlist[] = {"input", "meta", NULL};
-  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", kwlist,
+  static const char *kwlist[] = {"input", "meta", NULL};
+  if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO", (char**)kwlist,
                                    (PyObject**)&input, &meta))
     Py_RETURN_NONE;
-
-  if (cc == NULL || !cc->IsValid())
-    return PyLong_FromUnsignedLong(2);
 
   int num_axes = PyArray_NDIM(input),
     list_size = PyList_Size(meta);
@@ -72,23 +69,23 @@ static PyObject *compress_float(PyObject *self, PyObject *args, PyObject *keywds
   int tick_power = PyLong_AsLong(PyList_GetItem(meta, 0));
   
   int dims[16], strides[16];
-  float regression_coeffs[16];
+  int regression_coeffs[16];
 
 
   for (int i = 0; i < num_axes; i++) {
     int int_coeff = PyLong_AsLong(PyList_GetItem(meta, i + 1));
     assert(int_coeff >= -65536 && int_coeff <= 65536);
-    regression_coeffs[i] = int_coeff / 65536.0;
+    regression_coeffs[i] = int_coeff;
     dims[i] = PyArray_DIM(input, i);
     strides[i] = PyArray_STRIDE(input, i) / sizeof(float);
   }
 
-  const float *input_data = (const float*)PyArray_DATA(input);
+  float *input_data = (float*)PyArray_DATA(input);
 
   try {
-    std::vector<int32> vec = CompressFloat(tick_power, inptu_data,
-					   num_axes, dims, strides, 
-					   regression_coeffs);
+    std::vector<char> ans = CompressFloat(tick_power, input_data,
+					  num_axes, dims, strides, 
+					  regression_coeffs);
     if (ans.empty()) {
       // Something went wrong.  An error message may have been printed.
       Py_RETURN_NONE;
@@ -131,8 +128,7 @@ static PyObject *compress_float(PyObject *self, PyObject *args, PyObject *keywds
     Py_ssize_t length;
     if (nargs != 1)
       Py_RETURN_NONE;
-    PyObject *bytes_in = args[0],
-      *output = args[1];
+    PyObject *bytes_in = args[0];
 
     if (PyBytes_AsStringAndSize(bytes_in, &bytes_array, &length) != 0)
       Py_RETURN_NONE;
@@ -190,15 +186,15 @@ static PyObject *compress_float(PyObject *self, PyObject *args, PyObject *keywds
       Py_RETURN_NONE;
 
     int dims[16], strides[16];
-    int num_axes = PyArray_NDIM(input);
+    int num_axes = PyArray_NDIM(output);
     for (int i = 0; i < num_axes; i++) {
-      dims[i] = PyArray_DIM(input, i);
-      strides[i] = PyArray_STRIDE(input, i) / sizeof(float);
+      dims[i] = PyArray_DIM(output, i);
+      strides[i] = PyArray_STRIDE(output, i) / sizeof(float);
     }
 
     int ans = DecompressFloat(bytes_array, length,
-			      (const float*)PyArray_DATA(input),
-			      num_axes, dims, strides);
+                              (float*)PyArray_DATA(output),
+                              num_axes, dims, strides);
     return PyLong_FromLong(ans);
   }
 
@@ -211,11 +207,11 @@ static PyObject *compress_float(PyObject *self, PyObject *args, PyObject *keywds
      "Takes a bytes object as returned from compress_float(), and returns a "
      "tuple representing the shape of the array that was compressed, or "
      "None on error."},
-    {"decompress_float", (PyCFunction) decompress_int16, METH_FASTCALL,
+    {"decompress_float", (PyCFunction) decompress_float, METH_FASTCALL,
      "Takes a bytes object and an appropriately sized NumPy array of floats, "
      "with shape as given by get_float_matrix_shape(), and decompresses the "
      "data into the array.  Returns 0 on success, and a nonzero code or None "
-     "on failure."}
+     "on failure."},
     {NULL, NULL, 0, NULL}
   };
 

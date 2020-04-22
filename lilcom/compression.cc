@@ -138,12 +138,13 @@ std::vector<char> CompressFloat(int tick_power,  /* e.g. -8 meaning tick=1.0/256
     is.Write(dims[i]);
     is.Write(regression_coeffs[i]);
   }
-  float tick = pow(2.0, tick), inv_tick = pow(2.0, -tick);
+  float tick = pow(2.0, tick_power), 
+    inv_tick = pow(2.0, -tick_power);
   while (num_axes > 1 && dims[num_axes - 1] == 1)
     num_axes--;  /* will increase speed without affecting the output, in the
 		    case where the last axis is useless. */
   CompressFloatInternal(tick, inv_tick, data, num_axes, dims, strides,
-			regression_coeffs_float, &is, 0, indexes);
+                        regression_coeffs_float, &is, 0, indexes);
   return is.Code();
 }
 

@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <sys/types.h>
-#include "lpc_stream.h"
+#include "int_stream.h"
 
 
 /**

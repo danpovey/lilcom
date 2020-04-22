@@ -26,7 +26,6 @@ def read(fname):
 
 extension_mod = Extension("lilcom.lilcom_extension",
                           sources=["lilcom/lilcom_extension.cc",
-                                   "lilcom/lpc_math.cc",
                                    "lilcom/compression.cc"],
                           # Actually it turns out that the optimization level
                           # and debugging code makes very little difference to
