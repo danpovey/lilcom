@@ -90,8 +90,7 @@ static PyObject *compress_float(PyObject *self, PyObject *args, PyObject *keywds
       // Something went wrong.  An error message may have been printed.
       Py_RETURN_NONE;
     }
-    char *data = new char[ans.size()];
-    return PyBytes_FromStringAndSize(data, ans.size());
+    return PyBytes_FromStringAndSize(&(ans[0]), ans.size());
   } catch (std::bad_alloc) {
     PyErr_SetString(PyExc_MemoryError,
                     "Failure to allocate memory in lilcom compression");
@@ -129,7 +128,6 @@ static PyObject *compress_float(PyObject *self, PyObject *args, PyObject *keywds
     if (nargs != 1)
       Py_RETURN_NONE;
     PyObject *bytes_in = args[0];
-
     if (PyBytes_AsStringAndSize(bytes_in, &bytes_array, &length) != 0)
       Py_RETURN_NONE;
 
@@ -140,9 +138,9 @@ static PyObject *compress_float(PyObject *self, PyObject *args, PyObject *keywds
                                                // GetCompressedDataShape()
       PyObject *ans = PyTuple_New(num_axes);
       for (int i = 0; i < num_axes; i++) {
-	int dim = meta[i+1];
-	assert(dim > 0);  // was checked in GetCompressedDataSize()
-	PyTuple_SET_ITEM(ans, i, PyLong_FromLong(dim));
+        int dim = meta[i+1];
+        assert(dim > 0);  // was checked in GetCompressedDataSize()
+        PyTuple_SET_ITEM(ans, i, PyLong_FromLong(dim));
       }
       return ans;
     } else {

@@ -93,7 +93,7 @@ uint32_t rand_special() {
 }
 
 void int_stream_test_two() {
-  int input[500];
+  unsigned int input[500];
 
   for (int num_ints = 1; num_ints < 500; num_ints++) {
     for (int n = 0; n < 20; n++) {  /* multiple tries for each size.. */

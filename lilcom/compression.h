@@ -13,7 +13,6 @@
 
 
 /*
-
   Implementation of lossy compression of a possibly multi-dimensional
   array of floats.
 
@@ -54,11 +53,11 @@
             will cause it to return an empty vector.
  */
 std::vector<char> CompressFloat(int tick_power,
-				float *data, 
-				int num_axes, 
-				const int *dims, 
-				const int *strides,
-				int *regression_coeffs);
+                                float *data, 
+                                int num_axes, 
+                                const int *dims, 
+                                const int *strides,
+                                const int *regression_coeffs);
 			  
 
 /*
@@ -74,8 +73,8 @@ std::vector<char> CompressFloat(int tick_power,
                to be valid).
  */
 bool GetCompressedDataShape(const char *data,
-			   int num_bytes,
-			   int *meta);
+                            int num_bytes,
+                            int *meta);
 
 /*
   Decompresses data that was compressed by CompressFloat().

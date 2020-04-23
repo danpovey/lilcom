@@ -7,33 +7,37 @@ import time
 
 
 def test_rtf():
-    for dtype in [np.int16, np.float32, np.float64]:
-        # view the following as 100 channels where each channel
-        # is one second's worth of 16kHz-sampled data.
-        audio_time = 1000.0;  # seconds
-        a = np.random.randn(int(audio_time), 16000)
-        if dtype == np.int16:
-            a *= 32768;
-        a = a.astype(dtype)
-        for bits_per_sample in [4,8]:
-            for lpc_order in [0,1,2,4,8]:
-                for axis in [0, 1]:
-                    start = time.process_time()
-                    b = lilcom.compress(a, axis=axis,
-                                        bits_per_sample=bits_per_sample,
-                                        lpc_order=lpc_order)
-                    mid = time.process_time()
-                    c = lilcom.decompress(b, dtype=dtype)
-                    end = time.process_time()
+    for dtype in [np.float32, np.float64]:
 
-                    # f is a factor that we'll multiply the times by.  The
-                    # factor of 100.0 is to make the output percentages.
-                    f = 100.0 / audio_time
+        test_duration = 0.2
 
-                    print("RTF for dtype={}, bits-per-sample={}, lpc_order={}, axis={}, "
-                          "compress/decompress/total RTF is: {:.3f}%,{:.3f}%,{:.3f}%".format(
-                            dtype, bits_per_sample, lpc_order, axis,
-                            (mid - start) * f, (end - mid) * f, (end - start) * f))
+        for tick_power in [-8,-6,-4]:
+            flops = 0
+            a = np.random.randn(300,300).astype(dtype)
+
+            start = time.process_time()
+            while time.process_time() - start < test_duration:
+                flops += a.size
+                a = np.random.randn(*a.shape).astype(dtype)
+            print("Flops/sec for randn with dtype={} is {} ".format(
+                dtype, flops / (time.process_time() - start)))
+
+
+            start = time.process_time()
+            while time.process_time() - start < test_duration:
+                flops += a.size
+                b = lilcom.compress(a, tick_power=tick_power)
+            print("Flops/sec for compression with dtype={} and tick_power={} is {} ".format(
+                dtype, tick_power, flops / (time.process_time() - start)))
+
+            start = time.process_time()
+            while time.process_time() - start < test_duration:
+                flops += a.size
+                a2 = lilcom.decompress(b)
+            print("Flops/sec for decompression with tick_power={} is {}".format(
+                tick_power, flops / (time.process_time() - start)))
+
+
 
 
 

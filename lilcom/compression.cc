@@ -29,15 +29,15 @@
                         Will be set in the recursion.
  */
 void CompressFloatInternal(float tick,
-			   float inv_tick,
-			   float *data, 
-			   int num_axes,
-			   int *dims, 
-			   int *strides,
-			   const float *regression_coeffs,
-			   IntStream *is,
-			   int axis,
-			   int *indexes) {
+                           float inv_tick,
+                           float *data, 
+                           int num_axes,
+                           const int *dims, 
+                           const int *strides,
+                           const float *regression_coeffs,
+                           IntStream *is,
+                           int axis,
+                           int *indexes) {
   if (axis + 1 < num_axes) {
     for (int i = 0; i < dims[axis]; i++) {
       indexes[axis] = i;
@@ -48,10 +48,6 @@ void CompressFloatInternal(float tick,
     return;
   }
   assert(axis == num_axes - 1);
-
-  int dim = dims[axis],
-    stride = strides[axis];
-  float coeff = regression_coeffs[axis];
 
   /* local_strides and local_coeffs will be the strides and
      corresponding regression coefficients for axes prior to `axis`
@@ -74,6 +70,10 @@ void CompressFloatInternal(float tick,
 
   /* The base-case, where there is 1 dimension, is a bit more optimized. */
   
+  int dim = dims[axis],
+    stride = strides[axis];
+  float coeff = regression_coeffs[axis];
+
   float prev_prediction = 0.0;
   float *end = cur_data + (dim * stride);
   for (; cur_data < end; cur_data += stride) {
@@ -90,9 +90,9 @@ void CompressFloatInternal(float tick,
       // edges of range.  NOTE: this could be removed for speed,
       // at the expense of handling these kinds of situations less well.
       if (offset * inv_tick < std::numeric_limits<int32_t>::min()) {
-	code = std::numeric_limits<int32_t>::min();
+        code = std::numeric_limits<int32_t>::min();
       } else if (offset * inv_tick > std::numeric_limits<int32_t>::max()) {
-	code = std::numeric_limits<int32_t>::max();
+        code = std::numeric_limits<int32_t>::max();
       }
       // else do nothing; the difference could just be roundoff
       // error, which we can ignore.
@@ -100,17 +100,17 @@ void CompressFloatInternal(float tick,
     is->Write(code);
     float compressed_data = predicted + (code * tick);
     *cur_data = compressed_data;
-    predicted = compressed_data * coeff;
+    prev_prediction = compressed_data * coeff;
   }
 }
 
 
 std::vector<char> CompressFloat(int tick_power,  /* e.g. -8 meaning tick=1.0/256.0 */
-				float *data, 
-				int num_axes, 
-				int *dims, 
-				int *strides,
-				const int *regression_coeffs) {
+                                float *data, 
+                                int num_axes, 
+                                const int *dims, 
+                                const int *strides,
+                                const int *regression_coeffs) {
   IntStream is;
   float regression_coeffs_float[16];
   int indexes[16];
@@ -151,21 +151,32 @@ std::vector<char> CompressFloat(int tick_power,  /* e.g. -8 meaning tick=1.0/256
 
 
 
-bool GetCompressedDataSize(const char *data,
-			   int num_bytes,
-			   int *meta) {
+bool GetCompressedDataShape(const char *data,
+                            int num_bytes,
+                            int *meta) {
   ReverseIntStream ris(data, data + num_bytes);
-  int32_t num_axes, _tick_power;
-  if (!ris.Read(&num_axes) || !ris.Read(&_tick_power) ||
-      num_axes < 1 || num_axes > 16)
+  int32_t num_axes = -100, tick_power = -100;
+  if (!ris.Read(&num_axes) ||
+      num_axes < 1 || num_axes > 16) {
+    std::cerr << "lilcom: num_axes=" << num_axes
+              << " is out of range or could not be read" << std::endl;
     return false;
-
+  }
+  if (!ris.Read(&tick_power) ||
+      tick_power < -20 || tick_power > 20) {
+    std::cerr << "lilcom: tick_power=" << tick_power
+              << " is out of range or could not be read" << std::endl;
+    return false;
+  }
 
   meta[0] = num_axes;
   for (int i = 0; i < num_axes; i++) {
-    int32_t dim, _coeff;
-    if (!ris.Read(&dim) || !ris.Read(&_coeff) || dim < 1)
+    int32_t dim = -100, _coeff;
+    if (!ris.Read(&dim) || !ris.Read(&_coeff) || dim < 1) {
+      std::cerr << "lilcom: dim=" << dim << " for axis="
+                << i << " could not be read or is out of range.";
       return false;
+    }
     meta[i + 1] = dim;
   }
   return true;
@@ -214,15 +225,11 @@ bool DecompressFloatInternal(ReverseIntStream *ris,
       // Recurse
       if (!DecompressFloatInternal(ris, tick, data, num_axes, dims, strides, 
 				   regression_coeffs, axis + 1, indexes))
-	return false;
+        return false;
     }
     return true;
   }
   assert(axis == num_axes - 1);
-
-  int dim = dims[axis],
-    stride = strides[axis];
-  float coeff = regression_coeffs[axis];
 
   /* local_strides and local_coeffs will be the strides and
      corresponding regression coefficients for axes prior to `axis`
@@ -243,6 +250,10 @@ bool DecompressFloatInternal(ReverseIntStream *ris,
     }
   }
 
+  int dim = dims[axis],
+    stride = strides[axis];
+  float coeff = regression_coeffs[axis];
+
   /* The base-case, where there is 1 dimension, is a bit more optimized. */
   float prev_prediction = 0.0;
   float *end = cur_data + (dim * stride);
@@ -257,7 +268,7 @@ bool DecompressFloatInternal(ReverseIntStream *ris,
     }
     float value = predicted + code * tick;
     *cur_data = value;
-    predicted = value * coeff;
+    prev_prediction = value * coeff;
   }
   return true;
 }
