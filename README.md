@@ -8,15 +8,12 @@ storing things like training data and models.
 
 This package requires Python 3 and is not compatible with Python 2.
 
-## Installation
-
-### Using PyPi
+## Installation with PyPi
 
 From PyPi you can install this with just
 ```
 pip3 install lilcom
 ```
-
 
 ### How to use
 
@@ -39,24 +36,23 @@ per element is 2**(tick_power-1), e.g.  for tick_power=-8, it is 1/512.
 
 
 
-### Using Github Repository
-To install lilcom first clone the repository;
-```
+### Installation from Using Github Repository
 
+To install lilcom from github, first clone the repository;
+```
 git clone git@github.com:danpovey/lilcom.git
 ```
-
 then run setup with `install` argument.
 ```
 python3 setup.py install
 ```
 (you may need to add the `--user` flag if you don't have system privileges).
+You need to make sure a C++ compiler is installed (e.g. g++, clang).
 To test it, you can then cd to `test` and run:
 
 ```
-python3 test_interface.py
+python3 test_lilcom.py
 ```
-
 
 
 ## Technical details
@@ -68,7 +64,8 @@ are global and written as part of the header in the string.
 
 The elements are then integerized and the integers are compressed using
 an algorithm that gives good compression when successive elements tend to
-have about the same magnitude.
+have about the same magnitude (the number of bits we're transmitting
+varies dynamically acccording to the magnitudes of the elements).
 
 The core parts of the code are implemented in C++.
 
