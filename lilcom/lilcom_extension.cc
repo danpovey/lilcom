@@ -34,7 +34,7 @@ extern "C" {
 	    or the `tick` (distance between 2 encoded elements, dictating the
             accuracy), and the coefficients correspond to estimated
             regression coefficients, one per axis, each multiplied by
-            65536 and rounded to the nearest integer.  See
+            256 and rounded to the nearest integer.  See
             documentation of `regression_coeffs` arg of
             CompressFloat(), in compression.h, for more details about
             the regression coefficients.
@@ -74,7 +74,7 @@ static PyObject *compress_float(PyObject *self, PyObject *args, PyObject *keywds
 
   for (int i = 0; i < num_axes; i++) {
     int int_coeff = PyLong_AsLong(PyList_GetItem(meta, i + 1));
-    assert(int_coeff >= -65536 && int_coeff <= 65536);
+    assert(int_coeff >= -256 && int_coeff <= 256);
     regression_coeffs[i] = int_coeff;
     dims[i] = PyArray_DIM(input, i);
     strides[i] = PyArray_STRIDE(input, i) / sizeof(float);

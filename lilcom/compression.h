@@ -40,7 +40,7 @@
                                     data[i,j-1,k]*regression_coeffs[1]*a +
                                     data[i,j,k-1]*regression_coeffs[2]*a +
                                     offset
-                   where a == (1/65536) to convert integer into fractional
+                   where a == (1/256) to convert integer into fractional
                    values, and `offset` is what we encode.  The idea is that
                    the regression coefficients are estimated to minimize
                    the sum-of-squares of these offset values.  We always

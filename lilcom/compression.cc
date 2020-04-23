@@ -134,7 +134,7 @@ std::vector<char> CompressFloat(int tick_power,  /* e.g. -8 meaning tick=1.0/256
   is.Write(num_axes);
   is.Write(tick_power);
   for (int i = 0; i < num_axes; i++) {
-    regression_coeffs_float[i] = regression_coeffs[i] * (1.0 / 65536.0);
+    regression_coeffs_float[i] = regression_coeffs[i] * (1.0 / 256.0);
     is.Write(dims[i]);
     is.Write(regression_coeffs[i]);
   }
@@ -296,9 +296,9 @@ int DecompressFloat(const char *src,
     int32_t dim, coeff;
     if (!ris.Read(&dim) || !ris.Read(&coeff) || dim != dims[i] || dim < 1)
       return 4;
-    if (coeff < -65536 || coeff > 65536)
+    if (coeff < -256 || coeff > 256)
       return 5;
-    regression_coeffs[i] = coeff * (1.0 / 65536.0);
+    regression_coeffs[i] = coeff * (1.0 / 256.0);
   }
 
   if (!DecompressFloatInternal(&ris, pow(2.0, tick_power), array,

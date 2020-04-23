@@ -62,8 +62,8 @@ def compress(input,
 
   coeffs = regress_array(input, do_regression)
 
-  # int_coeffs will be in [-65536, 65536]
-  int_coeffs = [ round(x * 65536) for x in coeffs ]
+  # int_coeffs will be in [-256, 256]
+  int_coeffs = [ round(x * 256) for x in coeffs ]
   
   meta = [ tick_power ] + int_coeffs
 
