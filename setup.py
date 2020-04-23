@@ -1,4 +1,10 @@
-# Checking python version: If python 3 was not found then it returns 1 and does
+# Note to self on how to build and upload this:
+#  rm -r dist;  python3 ./setup.py sdist;   twine upload  dist/*
+# and then input my PyPi username and password.
+# I have to bump the version before doing this, or it won't allow the
+# upload.
+
+# Check python version: If python 3 was not found then it returns 1 and does
 #   not do anything
 from platform import python_version
 primer_version = python_version().split(".")
