@@ -18,6 +18,27 @@ pip3 install lilcom
 ```
 
 
+### How to use
+
+The most common usage pattern will be as follows (showing Python code):
+```
+import numpy as np
+import lilcom
+
+a = np.randn(300,500)
+a_compressed = lilcom.compress(a)
+
+# decompress a
+a_decompressed = lilcom.decompress(a_compressed)
+```
+The compression is lossy so `a_decompressed` will not be exactly the same
+as `a`.  The amount of error (absolute, not relative!)  is determined by the
+optional `tick_power` argument to lilcom.compress() (dfeault: -8), which is the
+power of 2 used for the step size between discretized values.  The maximum error
+per element is 2**(tick_power-1), e.g.  for tick_power=-8, it is 1/512.
+
+
+
 ### Using Github Repository
 To install lilcom first clone the repository;
 ```
@@ -36,26 +57,6 @@ To test it, you can then cd to `test` and run:
 python3 test_interface.py
 ```
 
-### How to use this compression method
-
-The most common usage pattern will be as follows (showing Python code):
-```
-# Let a be a NumPy ndarray with type np.float32 or np.float64
-
-# compress a.
-
-import lilcom
-a_compressed = lilcom.compress(a)
-
-# decompress a
-a_decompressed = lilcom.decompress(a_compressed)
-```
-Note: the compression is lossy so `a_decompressed` will not be
-exactly the same as `a`.  The amount of error is determined
-by the optional `tick_power` argument to lilcom.compress();
-the maximum error per element is 2**(tick_power-1), e.g.
-for tick_power=8, the maximum error per element is 1/512.
-
 
 
 ## Technical details
@@ -70,3 +71,5 @@ an algorithm that gives good compression when successive elements tend to
 have about the same magnitude.
 
 The core parts of the code are implemented in C++.
+
+
