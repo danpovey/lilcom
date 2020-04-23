@@ -24,6 +24,8 @@ import lilcom
 
 a = np.randn(300,500)
 a_compressed = lilcom.compress(a)
+# a_compressed is of type `bytes`, a byte string.
+# In this case it will use about 1.3 bytes per element.
 
 # decompress a
 a_decompressed = lilcom.decompress(a_compressed)
