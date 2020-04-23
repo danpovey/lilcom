@@ -1,10 +1,10 @@
 # lilcom
 
 
-This package lossily compresses 16-bit integer or floating-point NumPy arrays
-into NumPy arrays of characters, using between 4 and 8 bits per sample (this is
-selected by the user).  The main anticipated use is in machine learning
-applications.
+This package lossily compresses floating-point NumPy arrays
+into byte strings, with an accuracy specified by the user.
+The main anticipated use is in machine learning applications, for
+storing things like training data and models.
 
 This package requires Python 3 and is not compatible with Python 2.
 
