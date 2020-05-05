@@ -36,13 +36,11 @@
 class UintStream {
  public:
 
-
   /*  Constructor */
   UintStream(): most_recent_num_bits_(0),
                 started_(false),
                 flushed_(false),
                 num_pending_zeros_(0) { }
-
 
   /*
     Write the bits.  The lower-order `num_bits_in` of `bits_in` will
@@ -526,7 +524,7 @@ class IntStream: public UintStream {
     UintStream::Write(value >= 0 ? 2 * value : -(2 * value) - 1);
   }
 
-  /* Flush() and Code() are inherited from class IntStream. */
+  /* Flush() and Code() are inherited from class UintStream. */
 
 };
 
