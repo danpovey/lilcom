@@ -3,50 +3,16 @@ import numpy as np
 from . import lilcom_extension
 
 
-def test_compression_header():
-  dict = {'lpc.lpc_order':8}
-  h = lilcom_extension.create_compressor_config(42100, 2, 3, 4, **dict)
-  print("header is: {} = {}".format(h, lilcom_extension.compressor_config_to_str(h)))
 
-
-def test_compression():
-  num_channels = 2
-
-  h = lilcom_extension.create_compressor_config(42100, num_channels, 3, 4)
-
-  print("header is: {} = {}".format(h, lilcom_extension.compressor_config_to_str(h)))
-
-  a = ((np.random.rand(num_channels, 15) - 0.5) * 65535).astype(np.int16)
-
-  print("array is: {}, dtype={}", a, a.dtype)
-
-  bytes = lilcom_extension.compress_int16(a, h)
-
-  print("ans is ", bytes)
-
-  x = lilcom_extension.init_decompression_int16(bytes)
-  print("Ans from init-decompression is ", x)
-  (cf, num_channels, num_samples, sample_rate) = x
-
-  out_array = np.empty((num_channels, num_samples), dtype=np.int16)
-
-  ret = lilcom_extension.decompress_int16(cf, out_array)
-
-  print("Ret from decompress_int16 is ", ret)
-
-  print("Array after decompress_int16 is ", out_array)
-
-
-
-def compress(input, 
+def compress(input,
              tick_power=-8,
              do_regression=True):
   """
   Compresses a NumPy array lossily
-  
+
   Args:
     input:   A numpy.ndarray.  May be of type np.float or np.double.
-    tick_power:  Determines the accuracy; the input will be compressed to integer 
+    tick_power:  Determines the accuracy; the input will be compressed to integer
              multiples of 2^tick_power.
     do_regression:  If true, use regression on previous elements in the array
              (one regression coefficient per axis) to reduce the magnitudes of
@@ -64,7 +30,7 @@ def compress(input,
 
   # int_coeffs will be in [-256, 256]
   int_coeffs = [ round(x * 256) for x in coeffs ]
-  
+
   meta = [ tick_power ] + int_coeffs
 
   ans = lilcom_extension.compress_float(input, meta)
@@ -77,17 +43,17 @@ def compress(input,
 
 def regress_array(input, regression):
   """
-  Works out coefficients for linear regression on the previous sample, for 
-  each axis of the array. 
+  Works out coefficients for linear regression on the previous sample, for
+  each axis of the array.
 
      @param [in] input   The array to be compressed; must contain floats or doubles.
      @param [in] regression  True if we are doing regression; if false,
                          coefficients will be all zero.
 
   Returns a list of size len(input.shape), with either zero or regression
-  coefficients in the range [-1..1] for each corresponding axis.  Each axis's 
-  regression coefficient will be zero if regression == False, or the input's 
-  size on that axis was 1, or of the estimated regression coefficient had 
+  coefficients in the range [-1..1] for each corresponding axis.  Each axis's
+  regression coefficient will be zero if regression == False, or the input's
+  size on that axis was 1, or of the estimated regression coefficient had
   absolute value less than 0.2.
   """
 
@@ -115,7 +81,7 @@ def regress_array(input, regression):
     # swap the axes back
     input = np.swapaxes(input, 0, axis)
   return coeffs
-  
+
 
 def decompress(byte_string):
   """

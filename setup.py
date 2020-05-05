@@ -45,7 +45,7 @@ extension_mod = Extension("lilcom.lilcom_extension",
 setup(
     name = "lilcom",
     python_requires='>=3.5',
-    version = "1.0.0",
+    version = "1.1.0",
     author = "Daniel Povey, Meixu Song, Soroush Zargar, Mahsa Yarmohammadi, Jian Wu",
     author_email = "dpovey@gmail.com",
     description = ("Lossy-compression utility for sequence data in NumPy"),
