@@ -22,7 +22,7 @@ The most common usage pattern will be as follows (showing Python code):
 import numpy as np
 import lilcom
 
-a = np.randn(300,500)
+a = np.random.randn(300,500)
 a_compressed = lilcom.compress(a)
 # a_compressed is of type `bytes`, a byte string.
 # In this case it will use about 1.3 bytes per element.
