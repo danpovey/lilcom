@@ -114,3 +114,20 @@ def decompress(byte_string):
 
 
 
+def get_shape(byte_string):
+  """
+  Decompresses audio data compressed by compress() just enough to get the
+  shape it would be when decompressed.
+   Args:
+       input:    A bytes object as returned by compress()
+   Return:
+       On success returns a tuple representing the shape; on failure
+       raises an exception.
+  """
+
+  shape = lilcom_extension.get_float_matrix_shape(byte_string)
+
+  if shape is None:
+    raise ValueError("Could not work out shape of array from input: "
+                     "is not really compressed data?")
+  return shape
