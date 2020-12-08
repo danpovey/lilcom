@@ -23,12 +23,16 @@ if sys.version_info < (3,5):
 #from distutils.core import setup, Extension
 from setuptools import setup, Extension
 import os
-import numpy
 
 
 # Utility function to read the README file.
 def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
+
+class get_numpy_include(object):
+    def __str__(self):
+        import numpy
+        return numpy.get_include()
 
 extension_mod = Extension("lilcom.lilcom_extension",
                           sources=["lilcom/lilcom_extension.cc",
@@ -40,7 +44,7 @@ extension_mod = Extension("lilcom.lilcom_extension",
                           # signed integer arithmetic (which technically
                           # leads to undefined behavior).
                           extra_compile_args=["-g", "-Wall", "-UNDEBUG", "-Wno-c++11-compat-deprecated-writable-strings"], #, "-ftrapv"],
-                          include_dirs=[numpy.get_include()])
+                          include_dirs=[get_numpy_include()])
 
 setup(
     name = "lilcom",
@@ -56,6 +60,7 @@ setup(
     ext_modules=[extension_mod],
     long_description=read('README.md'),
     long_description_content_type="text/markdown",
+    setup_requires=["numpy"],
     install_requires=['numpy'],
     classifiers=[
         "Development Status :: 4 - Beta",
