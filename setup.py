@@ -43,7 +43,7 @@ extension_mod = Extension("lilcom.lilcom_extension",
                           # catch errors.  -ftrapv detects overflow in
                           # signed integer arithmetic (which technically
                           # leads to undefined behavior).
-                          extra_compile_args=["-g", "-Wall", "-UNDEBUG", "-Wno-c++11-compat-deprecated-writable-strings"], #, "-ftrapv"],
+                          #extra_compile_args=["-g", "-Wall", "-UNDEBUG"], #, "-Wno-c++11-compat-deprecated-writable-strings"], #, "-ftrapv"],
                           include_dirs=[get_numpy_include()])
 
 setup(
