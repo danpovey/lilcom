@@ -6,7 +6,7 @@
 
 # Check python version: If python 3 was not found then it returns 1 and does
 #   not do anything
-from platform import python_version
+from platform import python_version, system
 primer_version = python_version().split(".")
 if int(primer_version[0]) != 3:
     print ("This module only works with python3")
@@ -43,7 +43,7 @@ extension_mod = Extension("lilcom.lilcom_extension",
                           # catch errors.  -ftrapv detects overflow in
                           # signed integer arithmetic (which technically
                           # leads to undefined behavior).
-                          #extra_compile_args=["-g", "-Wall", "-UNDEBUG"], #, "-Wno-c++11-compat-deprecated-writable-strings"], #, "-ftrapv"],
+                          extra_compile_args=["-g", "-Wall", "-UNDEBUG", "-Wno-c++11-compat-deprecated-writable-strings"] if system != "Windows" else [], #, "-ftrapv"],
                           include_dirs=[get_numpy_include()])
 
 setup(

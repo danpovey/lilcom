@@ -6,7 +6,9 @@
 #include <stdint.h>
 #include <assert.h>
 #include <string.h>
-//#include <strings.h>
+#ifndef _MSC_VER
+#include <strings.h>
+#endif
 #include <stdlib.h>  /* for abs. */
 
 #ifdef _MSC_VER
@@ -29,16 +31,10 @@ static inline int __builtin_ctzl(unsigned long x) {
 }
 
 static inline int __builtin_clz(unsigned x) {
-    //unsigned long ret;
-    //_BitScanReverse(&ret, x);
-    //return (int)(31 ^ ret);
     return (int)__lzcnt(x);
 }
 
 static inline int __builtin_clzll(unsigned long long x) {
-    //unsigned long ret;
-    //_BitScanReverse64(&ret, x);
-    //return (int)(63 ^ ret);
     return (int)__lzcnt64(x);
 }
 
