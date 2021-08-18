@@ -24,7 +24,7 @@ def compress(input,
     raise ValueError("Expected number of axes to be in [1,15], got: ",
                      n_dim)
 
-  input = input.astype(np.float32)
+  input = np.ascontiguousarray(input, np.float32)
 
   coeffs = regress_array(input, do_regression)
 
