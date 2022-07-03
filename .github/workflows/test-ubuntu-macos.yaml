@@ -1,0 +1,43 @@
+name: Test Ubuntu
+
+on:
+  push:
+    branches:
+      - master
+      - fix-install-on-windows
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test_ubuntu:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-18.04, macos-10.15]
+        python-version: ["3.5", "3.6", "3.7", "3.8", "3.9", "3.10"]
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build lilcom
+        shell: bash
+        run: |
+          mkdir build
+          cd build
+          cmake ..
+          make -j 2
+
+      - name: Run tests
+        shell: bash
+        run: |
+          cd build
+          ctest --output-on-failure
