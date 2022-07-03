@@ -93,7 +93,6 @@ static py::object CompressesFloatWrapper(py::array_t<float> input,
     regression_coeffs[i] = int_coeff;
     dims[i] = input.shape(i);
     strides[i] = input.strides(i) / sizeof(float);
-    std::cout << "stride i: " << i << " " << strides[i] << "\n";
   }
 
   float *input_data = input.mutable_data();

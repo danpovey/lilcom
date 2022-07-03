@@ -40,6 +40,20 @@ include(pybind11)
 
 include_directories(${CMAKE_SOURCE_DIR})
 
+if(WIN32)
+  # disable various warnings for MSVC
+  # 4244: 'initializing': conversion from 'float' to 'int32_t',
+  # 4267: 'argument': conversion from 'size_t' to 'uint32_t', possible loss of data
+  set(disabled_warnings
+      /wd4244
+      /wd4267
+  )
+  message(STATUS "Disabled warnings: ${disabled_warnings}")
+  foreach(w IN LISTS disabled_warnings)
+    string(APPEND CMAKE_CXX_FLAGS " ${w} ")
+  endforeach()
+endif()
+
 pybind11_add_module(lilcom_extension
   lilcom/lilcom_extension.cc
   lilcom/compression.cc
@@ -53,9 +67,11 @@ endif()
 
 if(LILCOM_ENABLE_TESTS)
   add_executable(int_stream_test lilcom/int_stream_test.cc)
-  target_link_libraries(int_stream_test m) # -lm
   add_executable(bit_stream_test lilcom/bit_stream_test.cc)
-  target_link_libraries(bit_stream_test m) # -lm
+  if(NOT WIN32)
+    target_link_libraries(int_stream_test m) # -lm
+    target_link_libraries(bit_stream_test m) # -lm
+  endif()
 
   enable_testing()
   add_subdirectory(test)

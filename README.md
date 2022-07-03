@@ -42,7 +42,7 @@ per element is 2**(tick_power-1), e.g.  for tick_power=-8, it is 1/512.
 
 To install lilcom from github, first clone the repository;
 ```
-git clone git@github.com:danpovey/lilcom.git
+git clone https://github.com/danpovey/lilcom.git
 ```
 then run setup with `install` argument.
 ```

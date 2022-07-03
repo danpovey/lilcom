@@ -1,4 +1,4 @@
-name: Test Ubuntu
+name: Test Ubuntu and macOS
 
 on:
   push:
@@ -10,13 +10,13 @@ on:
       - master
 
 jobs:
-  test_ubuntu:
+  test_ubuntu_and_macos:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-18.04, macos-10.15]
-        python-version: ["3.5", "3.6", "3.7", "3.8", "3.9", "3.10"]
+        python-version: ["3.6", "3.7", "3.8", "3.9", "3.10"]
 
     steps:
       - uses: actions/checkout@v2
@@ -36,8 +36,24 @@ jobs:
           cmake ..
           make -j 2
 
+      - name: Show RPATH
+        if: startsWith(matrix.os, 'ubuntu')
+        shell: bash
+        run: |
+          readelf -d build/lib/*.so
+
+      - name: Show RPATH
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          otool -L build/lib/*.so
+          echo "-----------"
+          otool -l build/lib/*.so
+
       - name: Run tests
         shell: bash
         run: |
+          python3 -m pip install numpy
           cd build
-          ctest --output-on-failure
+          ctest --verbose --output-on-failure
+

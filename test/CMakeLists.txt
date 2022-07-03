@@ -12,7 +12,7 @@ function(lilcom_add_py_test source)
   get_filename_component(lilcom_path ${CMAKE_CURRENT_LIST_DIR} DIRECTORY)
 
   set_property(TEST ${name}
-    PROPERTY ENVIRONMENT "PYTHONPATH=${lilcom_path}/lilcom:$<TARGET_FILE_DIR:lilcom_extension>:$ENV{PYTHONPATH}"
+    PROPERTY ENVIRONMENT "PYTHONPATH=${lilcom_path}:$<TARGET_FILE_DIR:lilcom_extension>:$ENV{PYTHONPATH}"
   )
 endfunction()
 

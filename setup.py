@@ -18,9 +18,9 @@ if sys.version_info < (3,):
     print("Python 2 has reached end-of-life and is no longer supported by k2.")
     sys.exit(-1)
 
-if sys.version_info < (3, 5):
-    print("Python < 3.5 is not supported")
-    print("lilcom works only with python >= 3.5")
+if sys.version_info < (3, 6):
+    print("Python < 3.6 is not supported")
+    print("lilcom works only with python >= 3.6")
     sys.exit(-1)
 
 
@@ -41,10 +41,16 @@ def get_package_version():
 
 package_name = "lilcom"
 
+install_requires = [
+    "Cython; sys_platform=='win32' and python_version >= '3.10'",
+    "numpy<=1.19.5; python_version >= '3.6' and python_version < '3.7'",
+    "numpy<=1.21.6; python_version >= '3.7' and python_version < '3.8'",
+    "numpy<1.23.0; python_version >= '3.8' and python_version <= '3.10'",
+]
 
 setuptools.setup(
     name=package_name,
-    python_requires=">=3.5",
+    python_requires=">=3.6",
     version=get_package_version(),
     author="Daniel Povey, Meixu Song, Soroush Zargar, Mahsa Yarmohammadi, Jian Wu",
     author_email="dpovey@gmail.com",
@@ -52,13 +58,13 @@ setuptools.setup(
     license="MIT",
     keywords="compression numpy",
     packages=["lilcom"],
+    install_requires=install_requires,
     url="https://github.com/danpovey/lilcom",
     ext_modules=[cmake_extension("lilcom_extension")],
     cmdclass={"build_ext": BuildExtension, "bdist_wheel": bdist_wheel},
+    zip_safe=False,
     long_description=read_long_description(),
     long_description_content_type="text/markdown",
-    setup_requires=["numpy"],
-    install_requires=["numpy"],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Programming Language :: Python :: 3",

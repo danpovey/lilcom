@@ -1,0 +1,48 @@
+name: Test windows
+
+on:
+  push:
+    branches:
+      - master
+      - fix-install-on-windows
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test_windows:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2019]
+        python-version: ["3.6", "3.7", "3.8", "3.9", "3.10"]
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      # see https://github.com/microsoft/setup-msbuild
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v1.0.2
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build lilcom
+        shell: bash
+        run: |
+          python3 setup.py install --verbose
+
+      - name: Run tests
+        shell: bash
+        run: |
+          rm -rfv lilcom
+          python3 -c "import lilcom; print(lilcom.__file__)"
+          python3 -c "import lilcom_extension; print(lilcom_extension.__file__)"
+          python3 ./test/test_lilcom.py
+          python3 ./test/test_speed.py
+          python3 ./test/test_header.py
