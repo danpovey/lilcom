@@ -46,6 +46,7 @@ install_requires = [
     "numpy<=1.19.5; python_version >= '3.6' and python_version < '3.7'",
     "numpy<=1.21.6; python_version >= '3.7' and python_version < '3.8'",
     "numpy<1.23.0; python_version >= '3.8' and python_version <= '3.10'",
+    "numpy; python_version > '3.10'",
 ]
 
 setuptools.setup(
