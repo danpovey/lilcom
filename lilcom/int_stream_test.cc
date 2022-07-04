@@ -1,5 +1,11 @@
-#include <stdlib.h>
+#ifdef _MSC_VER
+// see https://docs.microsoft.com/en-us/cpp/c-runtime-library/math-constants?view=msvc-170
+#define _USE_MATH_DEFINES
+#endif
+
+#include <cmath>
 #include <iostream>
+#include <stdlib.h>
 #include "int_stream.h"
 
 

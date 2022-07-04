@@ -4,7 +4,7 @@
 import lilcom
 import numpy as np
 
-a = np.empty((0))
+a = np.empty((1))
 b = lilcom.compress(a)
 
 assert b[0] == 76

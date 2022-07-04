@@ -1,6 +1,6 @@
 import numpy as np
 
-from . import lilcom_extension
+import lilcom_extension
 
 
 

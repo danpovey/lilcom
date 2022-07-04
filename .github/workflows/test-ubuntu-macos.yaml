@@ -1,0 +1,58 @@
+name: Test Ubuntu and macOS
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test_ubuntu_and_macos:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-18.04, macos-10.15]
+        python-version: ["3.6", "3.7", "3.8", "3.9", "3.10"]
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build lilcom
+        shell: bash
+        run: |
+          mkdir build
+          cd build
+          cmake ..
+          make -j 2
+
+      - name: Show RPATH
+        if: startsWith(matrix.os, 'ubuntu')
+        shell: bash
+        run: |
+          readelf -d build/lib/*.so
+
+      - name: Show RPATH
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          otool -L build/lib/*.so
+          echo "-----------"
+          otool -l build/lib/*.so
+
+      - name: Run tests
+        shell: bash
+        run: |
+          python3 -m pip install numpy
+          cd build
+          ctest --verbose --output-on-failure
+

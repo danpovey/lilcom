@@ -6,62 +6,66 @@
 
 # Check python version: If python 3 was not found then it returns 1 and does
 #   not do anything
-from platform import python_version, system
-primer_version = python_version().split(".")
-if int(primer_version[0]) != 3:
-    print ("This module only works with python3")
-    print ("To setup the module simply run `python3 setup.py install`")
-    exit(1)
 
-
-# Checking the version of python interpreter. This code only works with python3.
+import re
 import sys
-if sys.version_info < (3,5):
-        sys.exit('Python < 3.5 is not supported')
+
+import setuptools
+
+from cmake.cmake_extension import BuildExtension, bdist_wheel, cmake_extension
+
+if sys.version_info < (3,):
+    print("Python 2 has reached end-of-life and is no longer supported by k2.")
+    sys.exit(-1)
+
+if sys.version_info < (3, 6):
+    print("Python < 3.6 is not supported")
+    print("lilcom works only with python >= 3.6")
+    sys.exit(-1)
 
 
-#from distutils.core import setup, Extension
-from setuptools import setup, Extension
-import os
+def read_long_description():
+    with open("README.md", encoding="utf8") as f:
+        readme = f.read()
+    return readme
 
 
-# Utility function to read the README file.
-def read(fname):
-    return open(os.path.join(os.path.dirname(__file__), fname)).read()
+def get_package_version():
+    with open("CMakeLists.txt") as f:
+        content = f.read()
 
-class get_numpy_include(object):
-    def __str__(self):
-        import numpy
-        return numpy.get_include()
+    match = re.search(r"set\(LILCOM_VERSION (.*)\)", content)
+    latest_version = match.group(1).strip('"')
+    return latest_version
 
-extension_mod = Extension("lilcom.lilcom_extension",
-                          sources=["lilcom/lilcom_extension.cc",
-                                   "lilcom/compression.cc"],
-                          # Actually it turns out that the optimization level
-                          # and debugging code makes very little difference to
-                          # the speed, so we're using options designed to
-                          # catch errors.  -ftrapv detects overflow in
-                          # signed integer arithmetic (which technically
-                          # leads to undefined behavior).
-                          extra_compile_args=["-g", "-Wall", "-UNDEBUG", "-Wno-c++11-compat-deprecated-writable-strings"] if system() != "Windows" else [], #, "-ftrapv"],
-                          include_dirs=[get_numpy_include()])
 
-setup(
-    name = "lilcom",
-    python_requires='>=3.5',
-    version = "1.1.1",
-    author = "Daniel Povey, Meixu Song, Soroush Zargar, Mahsa Yarmohammadi, Jian Wu",
-    author_email = "dpovey@gmail.com",
-    description = ("Lossy-compression utility for sequence data in NumPy"),
-    license = "MIT",
-    keywords = "compression numpy",
-    packages=['lilcom'],
-    url = "https://github.com/danpovey/lilcom",
-    ext_modules=[extension_mod],
-    long_description=read('README.md'),
+package_name = "lilcom"
+
+install_requires = [
+    "Cython; sys_platform=='win32' and python_version >= '3.10'",
+    "numpy<=1.19.5; python_version >= '3.6' and python_version < '3.7'",
+    "numpy<=1.21.6; python_version >= '3.7' and python_version < '3.8'",
+    "numpy<1.23.0; python_version >= '3.8' and python_version <= '3.10'",
+    "numpy; python_version > '3.10'",
+]
+
+setuptools.setup(
+    name=package_name,
+    python_requires=">=3.6",
+    version=get_package_version(),
+    author="Daniel Povey, Meixu Song, Soroush Zargar, Mahsa Yarmohammadi, Jian Wu",
+    author_email="dpovey@gmail.com",
+    description=("Lossy-compression utility for sequence data in NumPy"),
+    license="MIT",
+    keywords="compression numpy",
+    packages=["lilcom"],
+    install_requires=install_requires,
+    url="https://github.com/danpovey/lilcom",
+    ext_modules=[cmake_extension("lilcom_extension")],
+    cmdclass={"build_ext": BuildExtension, "bdist_wheel": bdist_wheel},
+    zip_safe=False,
+    long_description=read_long_description(),
     long_description_content_type="text/markdown",
-    setup_requires=["numpy"],
-    install_requires=['numpy'],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Programming Language :: Python :: 3",
@@ -69,5 +73,3 @@ setup(
         "License :: OSI Approved :: MIT License",
     ],
 )
-
-exit(0)

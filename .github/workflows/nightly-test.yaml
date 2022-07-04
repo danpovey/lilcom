@@ -1,0 +1,53 @@
+name: nightly-test
+
+on:
+  push:
+    branches:
+      - nightly
+  schedule:
+    # minute (0-59)
+    # hour (0-23)
+    # day of the month (1-31)
+    # month (1-12)
+    # day of the week (0-6)
+    # nightly build at 23:50 UTC time every day
+    - cron: "50 23 * * *"
+
+jobs:
+  nightly_test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-18.04, macos-10.15, windows-2019]
+        python-version: ["3.6", "3.7", "3.8", "3.9", "3.10"]
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      # see https://github.com/microsoft/setup-msbuild
+      - name: Add msbuild to PATH
+        if: startsWith(matrix.os, 'windows')
+        uses: microsoft/setup-msbuild@v1.0.2
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install lilcom
+        shell: bash
+        run: |
+          pip install --verbose git+https://github.com/danpovey/lilcom.git
+
+      - name: Run tests
+        shell: bash
+        run: |
+          rm -rfv lilcom
+          python3 -c "import lilcom; print(lilcom.__file__)"
+          python3 -c "import lilcom_extension; print(lilcom_extension.__file__)"
+          python3 ./test/test_lilcom.py
+          python3 ./test/test_speed.py
+          python3 ./test/test_header.py
