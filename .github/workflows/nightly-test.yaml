@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - nightly
-      - fix-install-on-windows
   schedule:
     # minute (0-59)
     # hour (0-23)
@@ -41,8 +40,7 @@ jobs:
       - name: Install lilcom
         shell: bash
         run: |
-          # pip install --verbose git+https://github.com/danpovey/lilcom.git
-          pip install --verbose git+https://github.com/csukuangfj/lilcom.git@fix-install-on-windows
+          pip install --verbose git+https://github.com/danpovey/lilcom.git
 
       - name: Run tests
         shell: bash
