@@ -3,3 +3,4 @@ include README.md
 include CMakeLists.txt
 recursive-include lilcom *.*
 recursive-include cmake *.*
+recursive-include test *.*
