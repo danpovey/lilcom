@@ -23,7 +23,8 @@ requirements:
     - numpy
   run:
     - python
-    - numpy
+    - {{ pin_compatible('numpy') }}
+# see https://conda-forge.org/docs/maintainer/knowledge_base.html
 
 about:
   home: https://github.com/danpovey/lilcom
