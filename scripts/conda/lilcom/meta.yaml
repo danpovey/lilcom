@@ -3,7 +3,7 @@ package:
   version: "1.4"
 
 source:
-  path: "{{ environ.get('KALDIFST_ROOT_DIR') }}"
+  path: "{{ environ.get('LILCOM_ROOT_DIR') }}"
 
 build:
   number: 0
