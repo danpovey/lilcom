@@ -20,10 +20,15 @@ requirements:
     - conda-build
     - cmake
     - python
-    - numpy
+    - numpy <=1.21   # [py==37]
+    - numpy <=1.23  # [py==38]
+    - numpy <=1.23   # [py>=39]
   run:
     - python
-    - {{ pin_compatible('numpy') }}
+    - numpy <=1.21   # [py==37]
+    - numpy <=1.23  # [py==38]
+    - numpy <=1.23   # [py>=39]
+
 # see https://conda-forge.org/docs/maintainer/knowledge_base.html
 
 about:
