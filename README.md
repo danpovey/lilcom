@@ -14,6 +14,11 @@ From PyPi you can install this with just
 ```
 pip3 install lilcom
 ```
+## Installation with conda
+
+```bash
+conda install -c lilcom lilcom
+```
 
 ### How to use
 

@@ -11,3 +11,8 @@ It is a python library so it would be imported by doing `import lilcom`.
 See the README.md for an example of how to use it, or see
 the interface code in lilcom/lilcom_interface.py.
 
+To install it using `conda`:
+
+```bash
+conda install -c lilcom lilcom
+```
