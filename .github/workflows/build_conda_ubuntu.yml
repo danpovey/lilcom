@@ -13,10 +13,11 @@ concurrency:
 
 jobs:
   build_conda_ubuntu:
-    runs-on: ubuntu-18.04
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-18.04]
         python-version: ["3.6", "3.7", "3.8", "3.9", "3.10"]
 
     steps:

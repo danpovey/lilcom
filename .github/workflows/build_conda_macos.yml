@@ -13,10 +13,11 @@ concurrency:
 
 jobs:
   build_conda_macos:
-    runs-on: macos-10.15
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [macos-10.15]
         python-version: ["3.6", "3.7", "3.8", "3.9", "3.10"]
 
     steps:
