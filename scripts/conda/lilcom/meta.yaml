@@ -1,0 +1,43 @@
+package:
+  name: lilcom
+  version: "1.4"
+
+source:
+  path: "{{ environ.get('LILCOM_ROOT_DIR') }}"
+
+build:
+  number: 0
+  string: py{{ environ.get('LILCOM_PYTHON_VERSION') }}
+  script: {{ PYTHON }} setup.py install --single-version-externally-managed --record=record.txt
+
+requirements:
+  build:
+    - {{ compiler('c') }} # [win]
+    - {{ compiler('cxx') }} # [win]
+
+  host:
+    - anaconda-client
+    - conda-build
+    - cmake
+    - python
+    - numpy <=1.21   # [py==37]
+    - numpy <=1.23  # [py==38]
+    - numpy <=1.23   # [py>=39]
+  run:
+    - python
+    - numpy <=1.21   # [py==37]
+    - numpy <=1.23  # [py==38]
+    - numpy <=1.23   # [py>=39]
+
+# see https://conda-forge.org/docs/maintainer/knowledge_base.html
+
+about:
+  home: https://github.com/danpovey/lilcom
+  license: Apache V2
+  license_file: LICENSE
+  summary: Small compression utility
+  description: |
+    This package lossily compresses floating-point NumPy arrays into byte
+    strings, with an accuracy specified by the user. The main anticipated use
+    is in machine learning applications, for storing things like training data
+    and models.
