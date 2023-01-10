@@ -61,12 +61,8 @@ pybind11_add_module(lilcom_extension
 )
 
 if(UNIX AND NOT APPLE)
-  target_link_libraries(lilcom_extension PRIVATE ${PYTHON_LIBRARY})
-
   # Fix https://github.com/lhotse-speech/lhotse/issues/800
   target_link_libraries(lilcom_extension PUBLIC "-Wl,-rpath,${LILCOM_RPATH_ORIGIN}/../..")
-elseif(WIN32)
-  target_link_libraries(lilcom_extension PRIVATE ${PYTHON_LIBRARIES})
 endif()
 
 if(LILCOM_ENABLE_TESTS)
