@@ -11,6 +11,11 @@ import setuptools
 from setuptools.command.build_ext import build_ext
 
 
+def is_for_pypi():
+    ans = os.environ.get("LILCOM_IS_FOR_PYPI", None)
+    return ans is not None
+
+
 def is_macos():
     return platform.system() == "Darwin"
 
@@ -27,7 +32,7 @@ try:
             _bdist_wheel.finalize_options(self)
             # In this case, the generated wheel has a name in the form
             # sherpa-xxx-pyxx-none-any.whl
-            if not is_macos():
+            if is_for_pypi() and not is_macos():
                 self.root_is_pure = True
             else:
                 # The generated wheel has a name ending with

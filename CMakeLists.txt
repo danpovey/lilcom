@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
 project(lilcom)
 
 # Remember to also change the line 3 of ./scripts/conda/lilcom/meta.yaml
-set(LILCOM_VERSION "1.5.1")
+set(LILCOM_VERSION "1.6")
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
@@ -61,12 +61,8 @@ pybind11_add_module(lilcom_extension
 )
 
 if(UNIX AND NOT APPLE)
-  target_link_libraries(lilcom_extension PRIVATE ${PYTHON_LIBRARY})
-
   # Fix https://github.com/lhotse-speech/lhotse/issues/800
   target_link_libraries(lilcom_extension PUBLIC "-Wl,-rpath,${LILCOM_RPATH_ORIGIN}/../..")
-elseif(WIN32)
-  target_link_libraries(lilcom_extension PRIVATE ${PYTHON_LIBRARIES})
 endif()
 
 if(LILCOM_ENABLE_TESTS)
