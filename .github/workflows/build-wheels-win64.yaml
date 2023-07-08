@@ -1,4 +1,4 @@
-name: build-wheels-macos
+name: build-wheels-win64
 
 on:
   push:
@@ -10,17 +10,17 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: build-wheels-macos-${{ github.ref }}
+  group: build-wheels-win64${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build_wheels_macos:
+  build_wheels_win64:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest]
+        os: [windows-latest]
 
     steps:
       - uses: actions/checkout@v2
@@ -31,9 +31,7 @@ jobs:
         uses: pypa/cibuildwheel@v2.11.4
         env:
           CIBW_BEFORE_BUILD: "pip install -U cmake numpy"
-          CIBW_SKIP: "cp27-* cp35-* *-win32 pp* *-musllinux*"
-          CIBW_ENVIRONMENT: LILCOM_CMAKE_ARGS="-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'"
-          CIBW_ARCHS: "universal2"
+          CIBW_SKIP: "*-win32"
           CIBW_BUILD_VERBOSITY: 3
 
       - name: Display wheels
@@ -56,4 +54,3 @@ jobs:
           python3 -m pip install wheel twine setuptools
 
           twine upload ./wheelhouse/*.whl
-
