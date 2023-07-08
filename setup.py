@@ -41,13 +41,6 @@ def get_package_version():
 
 package_name = "lilcom"
 
-install_requires = [
-    "Cython; sys_platform=='win32' and python_version >= '3.10'",
-    "numpy<=1.19.5; python_version >= '3.6' and python_version < '3.7'",
-    "numpy<=1.21.6; python_version >= '3.7' and python_version < '3.8'",
-    "numpy<1.23.0; python_version >= '3.8' and python_version < '3.10'",
-    "numpy; python_version >= '3.10'",
-]
 
 setuptools.setup(
     name=package_name,
@@ -59,7 +52,7 @@ setuptools.setup(
     license="MIT",
     keywords="compression numpy",
     packages=["lilcom"],
-    install_requires=install_requires,
+    install_requires=["numpy"],
     url="https://github.com/danpovey/lilcom",
     ext_modules=[cmake_extension("lilcom_extension")],
     cmdclass={"build_ext": BuildExtension, "bdist_wheel": bdist_wheel},

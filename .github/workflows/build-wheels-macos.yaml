@@ -1,4 +1,4 @@
-name: build-wheels
+name: build-wheels-macos
 
 on:
   push:
@@ -9,17 +9,17 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: build-wheels-${{ github.ref }}
+  group: build-wheels-macos-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build_wheels:
+  build_wheels_macos:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [macos-latest]
 
     steps:
       - uses: actions/checkout@v2
@@ -30,7 +30,9 @@ jobs:
         uses: pypa/cibuildwheel@v2.11.4
         env:
           CIBW_BEFORE_BUILD: "pip install -U cmake numpy"
-          CIBW_SKIP: "cp27-* cp35-* pp* *-musllinux*"
+          CIBW_SKIP: "cp27-* cp35-* *-win32 pp* *-musllinux*"
+          CIBW_ENVIRONMENT: LILCOM_CMAKE_ARGS="-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'"
+          CIBW_ARCHS: "universal2"
           CIBW_BUILD_VERBOSITY: 3
 
       - name: Display wheels
@@ -54,15 +56,3 @@ jobs:
 
           twine upload ./wheelhouse/*.whl
 
-      - name: Build sdist
-        shell: bash
-        run: |
-          python3 setup.py sdist
-          ls -l dist/*
-
-      - name: Publish sdist to PyPI
-        env:
-          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
-          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-        run: |
-          twine upload dist/*.tar.gz
