@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
 project(lilcom)
 
 # Remember to also change the line 3 of ./scripts/conda/lilcom/meta.yaml
-set(LILCOM_VERSION "1.6")
+set(LILCOM_VERSION "1.7")
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
@@ -22,9 +22,10 @@ set(CMAKE_INSTALL_RPATH ${LILCOM_RPATH_ORIGIN})
 set(CMAKE_BUILD_RPATH ${LILCOM_RPATH_ORIGIN})
 
 set(BUILD_SHARED_LIBS ON)
-if(WIN32)
-  message(STATUS "Set BUILD_SHARED_LIBS to OFF for Windows")
-  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+# See
+# https://stackoverflow.com/questions/33062728/cmake-link-shared-library-on-windows
+if(BUILD_SHARED_LIBS AND MSVC)
+  set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 endif()
 
 if(NOT CMAKE_BUILD_TYPE)
