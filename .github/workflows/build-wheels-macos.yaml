@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - wheel
-      - fix-numpy
     tags:
       - '*'
   workflow_dispatch:
@@ -47,13 +46,13 @@ jobs:
         with:
           path: ./wheelhouse/*.whl
 
-      # - name: Publish wheels to PyPI
-      #   env:
-      #     TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
-      #     TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-      #   run: |
-      #     python3 -m pip install --upgrade pip
-      #     python3 -m pip install wheel twine setuptools
-      #
-      #     twine upload ./wheelhouse/*.whl
+      - name: Publish wheels to PyPI
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install wheel twine setuptools
+
+          twine upload ./wheelhouse/*.whl
 
