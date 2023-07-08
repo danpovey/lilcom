@@ -30,7 +30,7 @@ jobs:
         uses: pypa/cibuildwheel@v2.11.4
         env:
           CIBW_BEFORE_BUILD: "pip install -U cmake numpy"
-          CIBW_SKIP: "cp311-* *-win32"
+          CIBW_SKIP: "cp311-* cp312-* *-win32 pp*"
           CIBW_BUILD_VERBOSITY: 3
 
       - name: Display wheels
