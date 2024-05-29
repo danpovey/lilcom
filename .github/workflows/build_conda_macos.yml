@@ -60,12 +60,12 @@ jobs:
         run: |
           ./scripts/build_conda.sh
 
-      - name: Display generated files
-        run: |
-          ls -lh /usr/local/miniconda/envs/lilcom/conda-bld/osx-*
+      # - name: Display generated files
+      #   run: |
+      #     ls -lh /usr/local/miniconda/envs/lilcom/conda-bld/osx-*
 
-      - name: Upload generated files
-        uses: actions/upload-artifact@v2
-        with:
-          name: cpu-python-${{ matrix.python-version }}-${{ matrix.os }}
-          path: /usr/local/miniconda/envs/lilcom/conda-bld/osx-*/*.tar.bz2
+      # - name: Upload generated files
+      #   uses: actions/upload-artifact@v2
+      #   with:
+      #     name: cpu-python-${{ matrix.python-version }}-${{ matrix.os }}
+      #     path: /usr/local/miniconda/envs/lilcom/conda-bld/osx-*/*.tar.bz2
