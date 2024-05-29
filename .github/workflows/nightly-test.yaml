@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - nightly
+  workflow_dispatch:
   schedule:
     # minute (0-59)
     # hour (0-23)
@@ -20,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.6", "3.7", "3.8", "3.9", "3.10"]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v2
