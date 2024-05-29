@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest]
+        os: [macos-latest, macos-14]
         python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
 
     steps:
@@ -62,10 +62,10 @@ jobs:
 
       - name: Display generated files
         run: |
-          ls -lh /usr/local/miniconda/envs/lilcom/conda-bld/osx-64
+          ls -lh /usr/local/miniconda/envs/lilcom/conda-bld/osx-*
 
       - name: Upload generated files
         uses: actions/upload-artifact@v2
         with:
           name: cpu-python-${{ matrix.python-version }}-${{ matrix.os }}
-          path: /usr/local/miniconda/envs/lilcom/conda-bld/osx-64/*.tar.bz2
+          path: /usr/local/miniconda/envs/lilcom/conda-bld/osx-*/*.tar.bz2
