@@ -6,6 +6,7 @@ on:
       - '*'
     branches:
       - conda
+  workflow_dispatch:
 
 concurrency:
   group: build_conda_macos-${{ github.ref }}
@@ -17,8 +18,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest]
-        python-version: ["3.6", "3.7", "3.8", "3.9", "3.10", "3.11"]
+        os: [macos-latest, macos-14]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
 
     steps:
       # refer to https://github.com/actions/checkout
@@ -26,7 +27,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: conda-incubator/setup-miniconda@v2
+      - uses: conda-incubator/setup-miniconda@v3
         with:
           auto-update-conda: true
           python-version: ${{ matrix.python-version }}
@@ -59,12 +60,12 @@ jobs:
         run: |
           ./scripts/build_conda.sh
 
-      - name: Display generated files
-        run: |
-          ls -lh /usr/local/miniconda/envs/lilcom/conda-bld/osx-64
+      # - name: Display generated files
+      #   run: |
+      #     ls -lh /usr/local/miniconda/envs/lilcom/conda-bld/osx-*
 
-      - name: Upload generated files
-        uses: actions/upload-artifact@v2
-        with:
-          name: cpu-python-${{ matrix.python-version }}-${{ matrix.os }}
-          path: /usr/local/miniconda/envs/lilcom/conda-bld/osx-64/*.tar.bz2
+      # - name: Upload generated files
+      #   uses: actions/upload-artifact@v2
+      #   with:
+      #     name: cpu-python-${{ matrix.python-version }}-${{ matrix.os }}
+      #     path: /usr/local/miniconda/envs/lilcom/conda-bld/osx-*/*.tar.bz2
