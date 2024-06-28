@@ -38,7 +38,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install python dependecies
+      - name: Install python dependencies
         shell: bash
         run: |
           pip install setuptools wheel
