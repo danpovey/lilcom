@@ -38,6 +38,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install python dependecies
+        shell: bash
+        run: |
+          pip install setuptools wheel
+
       - name: Install lilcom
         shell: bash
         run: |
