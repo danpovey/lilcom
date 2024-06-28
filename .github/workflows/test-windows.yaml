@@ -37,7 +37,7 @@ jobs:
         run: |
           pip install setuptools wheel
 
-          if [[ ${{ matrix.python-version == "3.8" ]]; then
+          if [[ ${{ matrix.python-version }} == "3.8" ]]; then
             pip install numpy==1.24.0
           fi
 
