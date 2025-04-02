@@ -14,22 +14,24 @@ concurrency:
 
 jobs:
   build_wheels_macos:
-    name: Build wheels on ${{ matrix.os }}
+    name: ${{ matrix.python-version }} ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest]
+        python-version: ["cp38", "cp39", "cp310", "cp311", "cp312", "cp313"]
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       # see https://cibuildwheel.readthedocs.io/en/stable/changelog/
       # for a list of versions
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.16.5
+        uses: pypa/cibuildwheel@v2.21.3
         env:
-          CIBW_BEFORE_BUILD: "pip install -U cmake numpy"
+          CIBW_BEFORE_BUILD: "pip install -U cmake==3.31.6 numpy setuptools wheel"
+          CIBW_BUILD: "${{ matrix.python-version}}-* "
           CIBW_SKIP: "cp27-* cp35-* *-win32 pp* *-musllinux*"
           CIBW_ENVIRONMENT: LILCOM_CMAKE_ARGS="-DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'"
           CIBW_ARCHS: "universal2"
@@ -42,8 +44,9 @@ jobs:
 
           ls -lh ./wheelhouse/*.whl
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v4
         with:
+          name: ${{ matrix.python-version }}
           path: ./wheelhouse/*.whl
 
       - name: Publish wheels to PyPI
@@ -52,7 +55,6 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
           python3 -m pip install --break-system-packages --upgrade pip
-          python3 -m pip install --break-system-packages wheel twine setuptools
+          python3 -m pip install --break-system-packages wheel twine==5.0.0 setuptools
 
           twine upload ./wheelhouse/*.whl
-
