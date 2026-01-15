@@ -50,6 +50,7 @@ jobs:
           path: ./wheelhouse/*.whl
 
       - name: Publish wheels to PyPI
+        if: github.repository_owner == 'danpovey'
         env:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
@@ -66,6 +67,7 @@ jobs:
           ls -l dist/*
 
       - name: Publish sdist to PyPI
+        if: github.repository_owner == 'danpovey' && matrix.python-version == 'cp38'
         env:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
