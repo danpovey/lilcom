@@ -1,6 +1,6 @@
 package:
   name: lilcom
-  version: "1.8.1"
+  version: "1.8.2"
 
 source:
   path: "{{ environ.get('LILCOM_ROOT_DIR') }}"
