@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-latest]
-        python-version: ["cp38", "cp39", "cp310", "cp311", "cp312", "cp313"]
+        python-version: ["cp38", "cp39", "cp310", "cp311", "cp312", "cp313", "cp314"]
 
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
       # see https://cibuildwheel.readthedocs.io/en/stable/changelog/
       # for a list of versions
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.21.3
+        uses: pypa/cibuildwheel@v3.3.1
         env:
           CIBW_BEFORE_BUILD: "pip install -U cmake==3.31.6 numpy setuptools wheel"
           CIBW_BUILD: "${{ matrix.python-version}}-* "
